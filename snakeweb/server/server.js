@@ -9,7 +9,7 @@ const rooms = new Map();
 console.log("Snake server running on port 8080");
 
 function generateRoomId() {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const chars = "0123456789";
   let result = "";
   for (let i = 0; i < 4; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
   return result;
@@ -138,6 +138,8 @@ function handleMessage(ws, msg) {
         // Check who is connected in sim state?
         if (!room.state.players[1].connected) pid = 1;
         else if (!room.state.players[2].connected) pid = 2;
+        else if (!room.state.players[3].connected) pid = 3;
+        else if (!room.state.players[4].connected) pid = 4;
         else {
           send(ws, { type: 'error', message: 'Room full' });
           return;
@@ -165,14 +167,18 @@ function handleMessage(ws, msg) {
     case 'pause': {
       if (!ws.room) return;
       const r = rooms.get(ws.room);
-      if (r) Sim.togglePause(r.state, "player_request");
+      if (r && ws.playerId) Sim.togglePause(r.state, ws.playerId);
       break;
     }
 
     case 'resume': { // "Resume game" button
       if (!ws.room) return;
       const r = rooms.get(ws.room);
-      if (r) Sim.resumeGame(r.state);
+      if (r && ws.playerId) {
+        // If the player is "Dead" and stuck in countdown/waiting, effectively unpause them?
+        // Actually, resume is explicit "I am ready".
+        Sim.resumeGame(r.state, ws.playerId);
+      }
       break;
     }
 

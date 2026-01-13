@@ -1,4 +1,16 @@
 import { randInt } from "./utils.js";
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const configPath = path.join(__dirname, 'game_config.json');
+let config = { TICKS_PER_MOVE: { fast: 1, medium: 2, slow: 4 } };
+try {
+  config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+} catch (e) {
+  console.error("Failed to load game_config.json, using defaults", e);
+}
 
 export const DIRS = {
   UP: { x: 0, y: -1 },
@@ -21,12 +33,14 @@ export function newGameState({ w = 30, h = 22 } = {}) {
     tick: 0,
     paused: true,
     reasonPaused: "start",
-    speed: null,          // "slow"|"medium"|"fast"
+    speed: "slow",            // "slow"|"medium"|"fast"
     speedLocked: false,
     apple: null,
     players: {
       1: newPlayerState(1, w, h),
-      2: newPlayerState(2, w, h)
+      2: newPlayerState(2, w, h),
+      3: newPlayerState(3, w, h),
+      4: newPlayerState(4, w, h)
     }
   };
   spawnApple(state);
@@ -34,21 +48,19 @@ export function newGameState({ w = 30, h = 22 } = {}) {
 }
 
 function newPlayerState(id, w, h) {
-  if (id === 1) {
-    return basePlayer(id, "RIGHT");
-  } else {
-    return basePlayer(id, "LEFT");
-  }
+  const dirs = { 1: "RIGHT", 2: "LEFT", 3: "RIGHT", 4: "LEFT" };
+  return basePlayer(id, dirs[id]);
 }
 
-function basePlayer(id, dir) {
+export function basePlayer(id, dir) {
   return {
     id,
     connected: false,
     name: "",
-    skin: null,
+    skin: "coral",
     lives: 3,
     state: "WAITING", // "ALIVE", "DEAD", "COUNTDOWN", "WAITING"
+    paused: true, // Start paused (waiting for ready)
     countdown: 0,
     dir,
     pendingDir: dir,
@@ -56,19 +68,6 @@ function basePlayer(id, dir) {
     body: [],
     lengthAtLastDeath: 3
   };
-}
-
-export function setPlayerConnected(state, playerId, connected) {
-  const p = state.players[playerId];
-  p.connected = connected;
-  if (connected) {
-    if (p.state === "WAITING") {
-      respawnPlayer(state, playerId);
-    }
-  } else {
-    p.state = "WAITING";
-    p.body = [];
-  }
 }
 
 function killPlayer(state, pid, why) {
@@ -94,24 +93,25 @@ function respawnPlayer(state, pid) {
   const p = state.players[pid];
   const len = Math.max(3, p.lengthAtLastDeath);
 
-  // Recreate at spawn, same direction
+  p.body = [];
   if (pid === 1) {
-    p.dir = "RIGHT";
-    p.pendingDir = "RIGHT";
-    p.body = [];
+    p.dir = "RIGHT"; p.pendingDir = "RIGHT";
     for (let i = 0; i < len; i++) p.body.push({ x: 2 - i, y: 2 });
-  } else {
-    p.dir = "LEFT";
-    p.pendingDir = "LEFT";
-    p.body = [];
+  } else if (pid === 2) {
+    p.dir = "LEFT"; p.pendingDir = "LEFT";
     for (let i = 0; i < len; i++) p.body.push({ x: state.w - 3 + i, y: state.h - 3 });
+  } else if (pid === 3) {
+    p.dir = "RIGHT"; p.pendingDir = "RIGHT";
+    for (let i = 0; i < len; i++) p.body.push({ x: 2 - i, y: state.h - 3 });
+  } else if (pid === 4) {
+    p.dir = "LEFT"; p.pendingDir = "LEFT";
+    for (let i = 0; i < len; i++) p.body.push({ x: state.w - 3 + i, y: 2 });
   }
+
   p.grow = 0;
   p.state = "ALIVE";
   delete p.deathReason;
 }
-
-
 
 export function setPlayerMeta(state, playerId, { name }) {
   if (name != null) state.players[playerId].name = String(name).slice(0, 20);
@@ -126,48 +126,73 @@ export function tryLockSpeed(state, speed) {
 }
 
 export function trySelectSkin(state, playerId, skin) {
-  const skins = ["coral", "viper", "corn", "brillan", "usa"];
-  if (!skins.includes(skin)) return { ok: false, reason: "bad_skin" };
-
-  // no duplicates
-  for (const pid of [1, 2]) {
-    if (pid !== playerId && state.players[pid].skin === skin) {
-      return { ok: false, reason: "taken" };
-    }
-  }
+  // Always allow skin selection (duplicates permitted)
   state.players[playerId].skin = skin;
   return { ok: true };
 }
 
-export function togglePause(state, reason = "toggle") {
-  state.paused = !state.paused;
-  state.reasonPaused = state.paused ? reason : null;
+export function setPlayerConnected(state, playerId, connected) {
+  const p = state.players[playerId];
+  p.connected = connected;
+  if (connected) {
+    p.paused = true; // Start paused when joining/rejoining room
+    if (p.state === "WAITING") {
+      respawnPlayer(state, playerId);
+    }
+  } else {
+    p.state = "WAITING";
+    p.body = [];
+    p.paused = true;
+  }
+}
+
+export function togglePause(state, playerId) {
+  if (!playerId) return;
+  const p = state.players[playerId];
+  p.paused = !p.paused;
+
+  // Any interaction clears the system-level pause (Lobby)
+  if (state.paused && state.reasonPaused === 'start') {
+    state.paused = false;
+    state.reasonPaused = null;
+  }
 }
 
 export function forcePause(state, reason) {
-  state.paused = true;
+  // Force pause everyone (e.g. system event)? 
+  // For now, set everyone to paused.
+  state.players[1].paused = true;
+  state.players[2].paused = true;
+  state.paused = true; // System pause
   state.reasonPaused = reason;
 }
 
-export function resumeGame(state) {
-  // Only resume if both connected? For now: allow if at least one.
-  state.paused = false;
-  state.reasonPaused = null;
+export function resumeGame(state, playerId) {
+  if (!playerId) return;
+  const p = state.players[playerId];
+  p.paused = false;
+
+  if (state.paused) {
+    state.paused = false;
+    state.reasonPaused = null;
+  }
 }
+
+function updateGlobalPause(state) {
+  // Deprecated for "Individual Pause" mode.
+  // logic moved to toggle/resume.
+}
+
+// ...
 
 export function newGame(state) {
   const w = state.w, h = state.h;
-  const keep = {
-    w, h,
-    // Keep chosen speed/lock and skins? Spec implies “new game reset room”.
-    // We'll reset everything except connections+names for now.
-  };
-
   const fresh = newGameState({ w, h });
   // preserve connections + names so rejoin feels smooth
   for (const pid of [1, 2]) {
     fresh.players[pid].connected = state.players[pid].connected;
     fresh.players[pid].name = state.players[pid].name;
+    fresh.players[pid].skin = state.players[pid].skin;
   }
   return fresh;
 }
@@ -181,15 +206,15 @@ export function queueInput(state, playerId, dir) {
 }
 
 export function step(state) {
-  if (state.paused) return;
+  if (state.paused) return; // System pause (Lobby) blocks everything
 
   state.tick++;
 
   // Handle Countdowns
-  for (const pid of [1, 2]) {
+  for (const pid of [1, 2, 3, 4]) {
     const p = state.players[pid];
     if (p.state === "COUNTDOWN") {
-      if (state.tick % 6 === 0) { // Approx 1 sec if tick rate is 150ms? No, 150ms * 6 = 900ms ~ 1s
+      if (state.tick % 6 === 0) {
         p.countdown--;
         if (p.countdown <= 0) {
           respawnPlayer(state, pid);
@@ -198,11 +223,18 @@ export function step(state) {
     }
   }
 
-  // Apply inputs, then move both snakes simultaneously
+  // Speed Control: Only move snakes on certain ticks
+  const ticksPerMove = config.TICKS_PER_MOVE[state.speed || "medium"] || 2;
+  const isMoveTick = (state.tick % ticksPerMove === 0);
+
+  if (!isMoveTick) return;
+
+  // Apply inputs, then move snakes simultaneously
   const moves = {};
-  for (const pid of [1, 2]) {
+  for (const pid of [1, 2, 3, 4]) {
     const p = state.players[pid];
     if (p.state !== "ALIVE") continue;
+    if (p.paused) continue;
 
     p.dir = p.pendingDir;
     const d = DIRS[p.dir];
@@ -210,32 +242,41 @@ export function step(state) {
     moves[pid] = { x: head.x + d.x, y: head.y + d.y };
   }
 
-  // Head-to-head: both ALIVE heads same cell
-  if (moves[1] && moves[2] && moves[1].x === moves[2].x && moves[1].y === moves[2].y) {
-    killPlayer(state, 1, "head_to_head");
-    killPlayer(state, 2, "head_to_head");
-    return;
-  }
-
   // Build occupancy maps (for collision checks)
-  const occ = new Map(); // key -> pid owning that cell
-  for (const pid of [1, 2]) {
+  const occ = new Map();
+  for (const pid of [1, 2, 3, 4]) {
     const p = state.players[pid];
     if (p.state !== "ALIVE") continue;
-    for (let i = 0; i < p.body.length; i++) {
-      const c = p.body[i];
+    for (let c of p.body) {
       occ.set(key(c.x, c.y), pid);
     }
   }
 
-  // Determine deaths and apple eats before mutating bodies
-  const eatsApple = { 1: false, 2: false };
-  const dies = { 1: false, 2: false };
+  const eatsApple = { 1: false, 2: false, 3: false, 4: false };
+  const dies = { 1: false, 2: false, 3: false, 4: false };
 
-  for (const pid of [1, 2]) {
+  // Head-to-head collisions (mutual destruction if moving to same cell)
+  const moveTargets = new Map(); // key -> list of pids
+  for (const pid of [1, 2, 3, 4]) {
+    if (!moves[pid]) continue;
+    const k = key(moves[pid].x, moves[pid].y);
+    if (!moveTargets.has(k)) moveTargets.set(k, []);
+    moveTargets.get(k).push(pid);
+  }
+
+  for (const [k, pids] of moveTargets) {
+    if (pids.length > 1) {
+      for (const pid of pids) dies[pid] = true;
+    }
+  }
+
+  // Individual collision / wall / apple checks
+  for (const pid of [1, 2, 3, 4]) {
     const p = state.players[pid];
-    if (p.state !== "ALIVE") continue;
+    if (p.state !== "ALIVE" || dies[pid]) continue;
+
     const nh = moves[pid];
+    if (!nh) continue;
 
     // wall
     if (nh.x < 0 || nh.y < 0 || nh.x >= state.w || nh.y >= state.h) {
@@ -256,11 +297,9 @@ export function step(state) {
   }
 
   // Apply moves
-  for (const pid of [1, 2]) {
+  for (const pid of [1, 2, 3, 4]) {
+    if (!moves[pid] || dies[pid]) continue;
     const p = state.players[pid];
-    if (p.state !== "ALIVE") continue;
-    if (dies[pid]) continue;
-
     const nh = moves[pid];
     p.body.unshift({ x: nh.x, y: nh.y });
 
@@ -276,28 +315,24 @@ export function step(state) {
   }
 
   // Resolve apple
-  if (eatsApple[1] || eatsApple[2]) {
-    spawnApple(state);
-  }
+  let anyEat = false;
+  for (const pid of [1, 2, 3, 4]) if (eatsApple[pid]) anyEat = true;
+  if (anyEat) spawnApple(state);
 
   // Resolve deaths
-  for (const pid of [1, 2]) {
+  for (const pid of [1, 2, 3, 4]) {
     if (dies[pid]) {
       killPlayer(state, pid, "collision");
     }
   }
 }
 
-
-
 function spawnApple(state) {
-  // Place apple in a free cell
   const forbidden = new Set();
-  for (const pid of [1, 2]) {
+  for (const pid of [1, 2, 3, 4]) {
     const p = state.players[pid];
     for (const c of p.body) forbidden.add(key(c.x, c.y));
   }
-
   for (let tries = 0; tries < 500; tries++) {
     const x = randInt(state.w);
     const y = randInt(state.h);
@@ -306,7 +341,6 @@ function spawnApple(state) {
       return;
     }
   }
-  // fallback: no apple if grid is full
   state.apple = null;
 }
 

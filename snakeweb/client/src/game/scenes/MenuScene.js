@@ -118,7 +118,7 @@ export default class MenuScene extends Phaser.Scene {
 
         rooms.forEach((r, idx) => {
             const y = idx * 40;
-            const text = `${r.id} (${r.players}/2)`;
+            const text = `${r.id} (${r.players}/4)`;
             const btn = this.add.text(0, y, text, { fontSize: '18px', color: '#000', backgroundColor: '#EEE', padding: { x: 5, y: 2 } })
                 .setOrigin(0.5)
                 .setInteractive({ useHandCursor: true });

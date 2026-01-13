@@ -1,0 +1,66 @@
+{
+    "coral": {
+        "name": "Coral Snake",
+        "head": "0xFFFFFF",
+        "pattern": [
+            "#000000",
+            "#000000",
+            "#000000",
+            "#FFFF00",
+            "#FF0000",
+            "#FF0000",
+            "#FF0000",
+            "#FFFF00"
+        ]
+    },
+    "viper": {
+        "name": "Green Viper",
+        "head": "0x90EE90",
+        "pattern": [
+            "#006400"
+        ]
+    },
+    "corn": {
+        "name": "Corn Snake",
+        "head": "0xFFA500",
+        "pattern": [
+            "#FFA500",
+            "#8B4513",
+            "#FFFDD0"
+        ]
+    },
+    "brillan": {
+        "name": "Brillan Snake",
+        "head": "0x808080",
+        "pattern": [
+            "#FFFFFF",
+            "#FFFFFF",
+            "#0000FF",
+            "#0000FF"
+        ]
+    },
+    "usa": {
+        "name": "USA Snake",
+        "head": "0xFF7F7F",
+        "pattern": [
+            "#FF0000",
+            "#FF0000",
+            "#FFFFFF",
+            "#FFFFFF",
+            "#0000FF",
+            "#0000FF"
+        ]
+    },
+    "false_coral": {
+        "name": "False Coral",
+        "head": "0xFFFFFF",
+        "pattern": [
+            "#FF0000",
+            "#FF0000",
+            "#FF0000",
+            "#000000",
+            "#FFFF00",
+            "#000000"
+        ]
+    }
+}

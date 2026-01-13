@@ -1,0 +1,277 @@
+# Snake Game - Project Specifications
+
+## Overview
+A multiplayer, web-based Snake game with server-authoritative, deterministic gameplay. Built with Phaser 3 (client) and Node.js + WebSockets (server).
+
+## Architecture
+
+### Technology Stack
+- **Server**: Node.js with WebSocket (ws library)
+- **Client**: Phaser 3 game framework
+- **Deployment**: Docker Compose (client on port 5173, server on port 8080)
+
+### Core Design Principles
+- **Server-Authoritative**: All game logic runs on the server
+- **Deterministic Simulation**: Game state is computed server-side and broadcast to clients
+- **Client Rendering**: Clients receive state updates and render accordingly
+- **Real-time Communication**: WebSocket-based bidirectional messaging
+
+## Game Features
+
+### Multiplayer
+- **Room System**: 4-character join codes
+  - Server-generated room IDs are 4 numeric digits (e.g., "1234")
+  - Current Menu input accepts alphanumeric characters (joining non-numeric codes will fail)
+- **Capacity**: Up to 4 players per room
+- **Player Assignment**: Players assigned IDs 1-4 based on join order
+- **Spawn Points**: 4 corners of the grid
+  - P1: Top-left, facing RIGHT
+  - P2: Bottom-right, facing LEFT
+  - P3: Bottom-left, facing RIGHT
+  - P4: Top-right, facing LEFT
+
+### Gameplay Mechanics
+- **Grid**: 30x22 cells, 25px cell size
+- **Movement**: WASD or Arrow keys
+- **Lives System**: 3 lives per player
+- **Respawn**: Press SPACE when dead
+- **Apple Eating**: Grows snake by 2 segments
+- **Collision**: Wall hits, self-collision, or head-to-head collisions cause death
+- **Speed Control**: Configurable via `server/game_config.json`
+  - Fast: 1 tick per move (150ms)
+  - Medium: 2 ticks per move (300ms)
+  - Slow: 4 ticks per move (600ms)
+
+### Pause System
+- **Individual Pause**: Each player can pause independently (press P or SPACE)
+- **Non-Blocking**: Other players continue playing when one player pauses
+- **System Pause**: Global pause during lobby (reasonPaused: "start")
+- **Visual Feedback**: Paused players see skin selection menu
+
+### Snake Skins
+- **Configuration**: Defined in `client/src/game/skins.json`
+- **Available Skins**:
+  - Coral Snake
+  - Green Viper
+  - Corn Snake
+  - Brillan Snake
+  - USA Snake
+  - False Coral
+- **Duplicate Skins**: Multiple players can use the same skin
+- **Skin Selection**:
+  - Visual menu appears when paused
+  - Shows color previews for each skin
+  - Click to select
+  - Changes apply immediately and are visible to all players
+
+### Visual Design
+- **Opponent Distinction**:
+  - Local player: Full opacity (100%), black outline
+  - Opponents: Muted (60% opacity), gray outline (2px)
+- **Lives Display**: Only local player's lives shown (red circles, top-right)
+- **UI Elements**:
+  - Room code display
+  - Player list with pause status
+  - Available slots indicator
+  - Speed setting
+
+## Configuration Files
+
+### `server/game_config.json`
+```json
+{
+    "TICKS_PER_MOVE": {
+        "fast": 1,
+        "medium": 2,
+        "slow": 4
+    }
+}
+```
+
+### `client/src/game/skins.json`
+```json
+{
+    "coral": { 
+        "name": "Coral Snake", 
+        "head": "0xFFFFFF", 
+        "pattern": ["#000000", "#000000", "#000000", "#FFFF00", "#FF0000", "#FF0000", "#FF0000", "#FFFF00"] 
+    },
+    "viper": { 
+        "name": "Green Viper", 
+        "head": "0x90EE90", 
+        "pattern": ["#006400"] 
+    },
+    ...
+}
+```
+
+## Server Implementation
+
+### File Structure
+- `server/server.js`: WebSocket server, room management, message routing
+- `server/sim.js`: Game simulation logic, state management
+- `server/utils.js`: Utility functions
+- `server/game_config.json`: Speed configuration
+
+### Key Functions (sim.js)
+- `newGameState()`: Initialize game state with 4 players
+- `step(state)`: Main game loop (runs every ~150ms)
+- `queueInput(state, playerId, dir)`: Queue player input
+- `respawnPlayer(state, pid)`: Respawn player at spawn point
+- `killPlayer(state, pid, reason)`: Handle player death
+- `togglePause(state, playerId)`: Toggle individual pause
+- `resumeGame(state, playerId)`: Resume from pause
+- `trySelectSkin(state, playerId, skin)`: Change player skin
+- `tryLockSpeed(state, speed)`: Set game speed (locks speed immediately)
+
+### Message Protocol
+**Client → Server:**
+- `create_room`: Create new room
+- `join_room`: Join existing room
+- `get_rooms`: Request active rooms list
+- `input`: Send movement direction
+- `pause`: Toggle pause
+- `resume`: Resume game
+- `request_respawn`: Request respawn after death
+- `select_skin`: Change snake skin
+- `select_speed`: Set game speed (locks speed immediately)
+- `restart`: Reset room to a fresh game state (server-supported)
+
+**Server → Client:**
+- `state`: Game state update (broadcast every tick)
+- `room_joined`: Confirmation of room join
+- `error`: Error message
+- `room_list`: List of available rooms
+
+## Client Implementation
+
+### File Structure
+- `client/src/game/scenes/MenuScene.js`: Room creation/joining UI
+- `client/src/game/scenes/PlayScene.js`: Main gameplay rendering
+- `client/src/game/skins.json`: Snake skin definitions
+- `client/src/net.js`: WebSocket client wrapper
+
+### PlayScene Components
+- **Lobby Container**: Speed and skin selection before game starts
+- **Skin Menu Container**: Visual skin selector (appears when paused)
+- **Graphics**: Canvas rendering for snakes, grid, apple
+- **UI Text**: Room info, player list, status
+- **Center Text**: Overlays for pause, death, countdown
+
+### Input Handling
+- Standard Phaser `update()` loop for movement polling
+- Event listeners for one-shot actions (SPACE, P)
+- Window focus management for reliable keyboard capture
+
+## State Management
+
+### Game State Structure
+```javascript
+{
+    w: 30,              // Grid width
+    h: 22,              // Grid height
+    tick: 0,            // Current tick
+    paused: true,       // System-level pause
+    reasonPaused: "start", // Reason for pause
+    speed: "medium",    // Current speed setting
+    speedLocked: false, // Speed locked after game starts
+    apple: { x, y },    // Apple position
+    players: {
+        1: { /* player object */ },
+        2: { /* player object */ },
+        3: { /* player object */ },
+        4: { /* player object */ }
+    }
+}
+```
+
+### Player Object Structure
+```javascript
+{
+    id: 1,
+    connected: false,
+    name: "",
+    skin: null,
+    lives: 3,
+    state: "WAITING",    // "ALIVE", "DEAD", "COUNTDOWN", "WAITING"
+    paused: true,        // Individual pause state
+    countdown: 0,        // Respawn countdown
+    dir: "RIGHT",        // Current direction
+    pendingDir: "RIGHT", // Next direction
+    grow: 0,             // Growth pending
+    body: [],            // Array of {x, y} segments
+    lengthAtLastDeath: 3 // For respawn length
+}
+```
+
+## Development Workflow
+
+### Running Locally
+```bash
+docker compose up --build
+```
+Access at `http://localhost:5173`
+
+WebSocket server at `ws://localhost:8080` (client constructs URL from `window.location.hostname` + port `8080`).
+
+### Testing Multiplayer
+1. Open multiple browser tabs
+2. Create room in first tab
+3. Join same room code in other tabs
+4. Test with up to 4 players
+
+### Modifying Configuration
+- Edit `server/game_config.json` for speed changes
+- Edit `client/src/game/skins.json` for skin colors
+- Rebuild containers after changes
+
+## Known Behaviors
+
+### Input System
+- Uses standard Phaser `update()` loop for reliable polling
+- WASD and Arrow keys both supported
+- No 180-degree turns allowed
+- Input queued and applied on next movement tick
+
+### Pause Mechanics
+- Individual pause shows skin selection menu
+- System pause (lobby) shows setup UI overlay
+- Dead state overrides pause state
+- Countdown state hides skin menu
+
+### Collision Detection
+- Head-to-head: Both players die
+- Multiple head-to-head: All involved players die
+- Wall collision: Instant death
+- Body collision: Instant death
+
+## UI/UX Features
+
+### Lobby (Pre-Game)
+- Speed selection buttons (Slow/Medium/Fast)
+- Skin selection with visual previews
+- "Start" button (enabled only after selecting both a speed and your skin)
+
+## Known Gaps / Mismatches
+- Client currently hardcodes WS port `8080` in `Net.connect()` and does not use `VITE_API_URL` from docker-compose.
+- Menu join-code input accepts alphanumeric, but server-generated room IDs are 4 numeric digits.
+- `reasonPaused: "player_disconnect"` exists in client UI messaging, but server does not currently set that system pause reason.
+
+### In-Game
+- Minimal HUD (room code, player list, lives)
+- Visual distinction between local and opponent snakes
+- Pause status indicators
+- Center overlays for important states
+
+### Skin Selection Menu (Pause)
+- White background panel
+- "SELECT YOUR SNAKE" title
+- Visual snake previews (8 segments)
+- Clickable skin name buttons
+- Auto-dismiss on selection
+
+## Future Considerations
+- The codebase is designed to be educational and simple
+- Server-authoritative design prevents cheating
+- Configuration files allow easy tweaking without code changes
+- 4-player support is fully implemented but can scale to more with minimal changes
