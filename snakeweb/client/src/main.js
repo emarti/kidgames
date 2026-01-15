@@ -7,11 +7,15 @@ import { Net } from './net.js';
 // Global game object to hold net connection
 export const gameConfig = {
     type: Phaser.AUTO,
-    width: 800,
-    height: 600,
+    width: window.innerWidth,
+    height: window.innerHeight,
     parent: 'app',
     backgroundColor: '#AAAAAA', // Matches CSS
     pixelArt: true,
+    scale: {
+        mode: Phaser.Scale.RESIZE,
+        autoCenter: Phaser.Scale.CENTER_BOTH
+    },
     scene: [BootScene, MenuScene, PlayScene]
 };
 

@@ -199,6 +199,13 @@ function handleMessage(ws, msg) {
       break;
     }
 
+    case 'select_walls_mode': {
+      if (!ws.room) return;
+      const r = rooms.get(ws.room);
+      if (r) Sim.setWallsMode(r.state, msg.mode);
+      break;
+    }
+
     case 'select_skin': {
       if (!ws.room) return;
       const r = rooms.get(ws.room);

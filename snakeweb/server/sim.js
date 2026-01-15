@@ -35,6 +35,7 @@ export function newGameState({ w = 30, h = 22 } = {}) {
     reasonPaused: "start",
     speed: "slow",            // "slow"|"medium"|"fast"
     speedLocked: false,
+    wallsMode: "walls",       // "walls" | "no_walls"
     apple: null,
     players: {
       1: newPlayerState(1, w, h),
@@ -118,10 +119,16 @@ export function setPlayerMeta(state, playerId, { name }) {
 }
 
 export function tryLockSpeed(state, speed) {
-  if (state.speedLocked) return false;
   if (!["slow", "medium", "fast"].includes(speed)) return false;
   state.speed = speed;
-  state.speedLocked = true;
+  // Speed is intentionally changeable from the pause/setup UI.
+  state.speedLocked = false;
+  return true;
+}
+
+export function setWallsMode(state, mode) {
+  if (!["walls", "no_walls"].includes(mode)) return false;
+  state.wallsMode = mode;
   return true;
 }
 
@@ -229,6 +236,8 @@ export function step(state) {
 
   if (!isMoveTick) return;
 
+  const wrap = (state.wallsMode === 'no_walls');
+
   // Apply inputs, then move snakes simultaneously
   const moves = {};
   for (const pid of [1, 2, 3, 4]) {
@@ -239,7 +248,16 @@ export function step(state) {
     p.dir = p.pendingDir;
     const d = DIRS[p.dir];
     const head = p.body[0];
-    moves[pid] = { x: head.x + d.x, y: head.y + d.y };
+
+    let nx = head.x + d.x;
+    let ny = head.y + d.y;
+
+    if (wrap) {
+      nx = (nx + state.w) % state.w;
+      ny = (ny + state.h) % state.h;
+    }
+
+    moves[pid] = { x: nx, y: ny };
   }
 
   // Build occupancy maps (for collision checks)
@@ -279,9 +297,11 @@ export function step(state) {
     if (!nh) continue;
 
     // wall
-    if (nh.x < 0 || nh.y < 0 || nh.x >= state.w || nh.y >= state.h) {
-      dies[pid] = true;
-      continue;
+    if (!wrap) {
+      if (nh.x < 0 || nh.y < 0 || nh.x >= state.w || nh.y >= state.h) {
+        dies[pid] = true;
+        continue;
+      }
     }
 
     // collision: self or other

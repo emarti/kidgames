@@ -25,6 +25,10 @@ export default class PlayScene extends Phaser.Scene {
         return Boolean(state.speed) && Boolean(me && me.skin);
     }
 
+    isTouchDevice() {
+        return (('ontouchstart' in window) || (navigator.maxTouchPoints > 0));
+    }
+
     create() {
         this.graphics = this.add.graphics();
         this.uiText = this.add.text(10, 10, '', { fontSize: '16px', color: '#000' });
@@ -34,15 +38,16 @@ export default class PlayScene extends Phaser.Scene {
         // Input
         this.setupInput();
 
-        // Lobby UIContainer
-        this.lobbyContainer = this.add.container(400, 300);
-        this.createLobbyUI();
-        this.lobbyContainer.setVisible(false);
+        // Setup/Pause Container (used for initial lobby and individual pause)
+        this.setupContainer = this.add.container(400, 300);
+        this.createSetupUI();
+        this.setupContainer.setVisible(false);
 
-        // Skin Menu Container
-        this.skinMenuContainer = this.add.container(400, 300);
-        this.createSkinMenu();
-        this.skinMenuContainer.setVisible(false);
+        // Touch controls (D-pad + pause) for tablets/phones
+        this.touchControlsEnabled = this.isTouchDevice();
+        if (this.touchControlsEnabled) {
+            this.createTouchControls();
+        }
 
         // Net listener
         this.onState = (e) => this.renderState(e.detail);
@@ -137,91 +142,40 @@ export default class PlayScene extends Phaser.Scene {
         }
     }
 
-    createSkinMenu() {
-        const bg = this.add.rectangle(0, 0, 600, 400, 0xFFFFFF, 0.95);
-        this.skinMenuContainer.add(bg);
-
-        const title = this.add.text(0, -180, 'SELECT YOUR SNAKE', { fontSize: '28px', color: '#000', fontStyle: 'bold' }).setOrigin(0.5);
-        this.skinMenuContainer.add(title);
-
-        let y = -120;
-        const skinKeys = Object.keys(SKINS);
-
-        this.skinMenuButtons = {};
-
-        skinKeys.forEach((key) => {
-            // Draw skin sample
-            const g = this.add.graphics();
-            this.skinMenuContainer.add(g);
-            this.drawSkinSample(g, -250, y - 10, key);
-
-            // Clickable button
-            const btn = this.add.text(0, y, SKINS[key].name, {
-                fontSize: '20px', backgroundColor: UI_BTN_BG, color: UI_BTN_TEXT, padding: { x: 15, y: 8 }
-            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-
-            btn._selected = false;
-            btn.on('pointerover', () => {
-                if (!btn._selected) btn.setBackgroundColor(UI_BTN_BG_HOVER);
-            });
-            btn.on('pointerout', () => {
-                if (!btn._selected) btn.setBackgroundColor(UI_BTN_BG);
-            });
-
-            btn.on('pointerdown', () => {
-                this.game.net.send('select_skin', { skin: key });
-            });
-
-            this.skinMenuContainer.add(btn);
-            this.skinMenuButtons[key] = btn;
-            y += 50;
-        });
-
-        // Continue button (resume from individual pause)
-        const continueBtn = this.add.text(0, 170, 'Continue', {
-            fontSize: '22px', backgroundColor: UI_BTN_BG, color: UI_BTN_TEXT, padding: { x: 18, y: 10 }
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-
-        continueBtn._selected = false;
-        continueBtn.on('pointerover', () => continueBtn.setBackgroundColor(UI_BTN_BG_HOVER));
-        continueBtn.on('pointerout', () => continueBtn.setBackgroundColor(UI_BTN_BG));
-        continueBtn.on('pointerdown', () => {
-            this.game.net.send('resume');
-        });
-
-        this.skinMenuContainer.add(continueBtn);
-    }
-
-    updateSkinMenuUI(state) {
-        const net = this.game.net;
-        if (!state || !net || !net.playerId) return;
-        const myP = state.players?.[net.playerId];
-        const selectedSkin = myP?.skin || null;
-
-        if (!this.skinMenuButtons) return;
-        for (const [skinKey, btn] of Object.entries(this.skinMenuButtons)) {
-            const selected = (selectedSkin && skinKey === selectedSkin);
-            btn._selected = selected;
-            btn.setBackgroundColor(selected ? UI_BTN_BG_SELECTED : UI_BTN_BG);
-            btn.setColor(UI_BTN_TEXT);
-        }
-    }
-
     renderState(state) {
         this.graphics.clear();
 
+        const layout = this.computeLayout();
+        const gridPxW = GRID_W * layout.cellSize;
+        const gridPxH = GRID_H * layout.cellSize;
+
         // 1. Draw Grid Background
         this.graphics.fillStyle(0xDDDDDD);
-        this.graphics.fillRect(OFFSET_X, OFFSET_Y, GRID_W * CELL_SIZE, GRID_H * CELL_SIZE);
+        this.graphics.fillRect(layout.offsetX, layout.offsetY, gridPxW, gridPxH);
+
+        // Walls border indicator (only when walls are enabled)
+        if ((state.wallsMode || 'walls') === 'walls') {
+            // Draw the stroke OUTSIDE the playable grid so the snake can hug the
+            // true edge without visually intersecting the wall.
+            const wallW = Math.max(4, Math.floor(layout.cellSize / 2));
+            const inset = wallW / 2;
+            this.graphics.lineStyle(wallW, 0x777777, 1);
+            this.graphics.strokeRect(
+                layout.offsetX - inset,
+                layout.offsetY - inset,
+                gridPxW + wallW,
+                gridPxH + wallW
+            );
+        }
 
         // 2. Draw Apple
         if (state.apple) {
             this.graphics.fillStyle(0xFF0000);
             this.graphics.fillRect(
-                OFFSET_X + state.apple.x * CELL_SIZE + 2,
-                OFFSET_Y + state.apple.y * CELL_SIZE + 2,
-                CELL_SIZE - 4,
-                CELL_SIZE - 4
+                layout.offsetX + state.apple.x * layout.cellSize + 2,
+                layout.offsetY + state.apple.y * layout.cellSize + 2,
+                layout.cellSize - 4,
+                layout.cellSize - 4
             );
         }
 
@@ -260,32 +214,21 @@ export default class PlayScene extends Phaser.Scene {
         // 5. Overlays
         // Lobby
         if (state.paused && state.reasonPaused === 'start') {
-            this.lobbyContainer.setVisible(true);
-            this.updateLobbyUI(state);
+            this.setupContainer.setVisible(true);
+            this.updateSetupUI(state, 'start');
             this.centerText.setText("");
             return;
         } else {
-            this.lobbyContainer.setVisible(false);
+            this.setupContainer.setVisible(false);
         }
 
         let centerMsg = "";
 
-        // Show skin menu if player is paused (individual pause)
+        // Show setup UI if player is paused (individual pause)
         if (myP && myP.paused && !state.paused) {
-            this.skinMenuContainer.setVisible(true);
-            this.updateSkinMenuUI(state);
-            centerMsg = ""; // No center text when menu is showing
-        } else {
-            this.skinMenuContainer.setVisible(false);
-
-            // System Level Pause (Lobby, Disconnect)
-            if (state.paused) {
-                if (state.reasonPaused === 'player_disconnect') {
-                    centerMsg = "Player Disconnected";
-                } else {
-                    centerMsg = "PAUSED";
-                }
-            }
+            this.setupContainer.setVisible(true);
+            this.updateSetupUI(state, 'pause');
+            centerMsg = "";
         }
 
         // Status Text Updates for Other Player Pause
@@ -299,10 +242,10 @@ export default class PlayScene extends Phaser.Scene {
         // Override for my status (Dead takes precedence)
         if (myP && myP.state === "DEAD") {
             centerMsg = "CRASHED!\nClick to Restart";
-            this.skinMenuContainer.setVisible(false); // Hide menu when dead
+            this.setupContainer.setVisible(false); // Hide menu when dead
         } else if (myP && myP.state === "COUNTDOWN") {
             centerMsg = `Get Ready...\n${myP.countdown}`;
-            this.skinMenuContainer.setVisible(false); // Hide menu during countdown
+            this.setupContainer.setVisible(false); // Hide menu during countdown
         }
 
         this.centerText.setText(centerMsg);
@@ -318,9 +261,10 @@ export default class PlayScene extends Phaser.Scene {
         const strokeAlpha = isMe ? 0.2 : 0.6;
         const strokeWidth = isMe ? 1 : 2;
 
+        const layout = this.computeLayout();
         p.body.forEach((seg, i) => {
-            const x = OFFSET_X + seg.x * CELL_SIZE;
-            const y = OFFSET_Y + seg.y * CELL_SIZE;
+            const x = layout.offsetX + seg.x * layout.cellSize;
+            const y = layout.offsetY + seg.y * layout.cellSize;
 
             let color = 0x00FF00;
             if (i === 0) {
@@ -333,11 +277,11 @@ export default class PlayScene extends Phaser.Scene {
             }
 
             this.graphics.fillStyle(color, alpha);
-            this.graphics.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+            this.graphics.fillRect(x, y, layout.cellSize, layout.cellSize);
 
             // Outline for visibility
             this.graphics.lineStyle(strokeWidth, strokeColor, strokeAlpha);
-            this.graphics.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
+            this.graphics.strokeRect(x, y, layout.cellSize, layout.cellSize);
         });
     }
 
@@ -376,53 +320,56 @@ export default class PlayScene extends Phaser.Scene {
         }
     }
 
-    createLobbyUI() {
-        const bg = this.add.rectangle(0, 0, 750, 500, 0xFFFFFF, 0.95);
-        this.lobbyContainer.add(bg);
+    createSetupUI() {
+        const bg = this.add.rectangle(0, 0, 750, 520, 0xFFFFFF, 0.95);
+        this.setupContainer.add(bg);
 
-        const title = this.add.text(0, -220, 'GAME SETUP', { fontSize: '32px', color: '#000', fontStyle: 'bold' }).setOrigin(0.5);
-        this.lobbyContainer.add(title);
+        this.setupTitle = this.add.text(0, -235, 'GAME SETUP', { fontSize: '32px', color: '#000', fontStyle: 'bold' }).setOrigin(0.5);
+        this.setupContainer.add(this.setupTitle);
 
-        // Speed Section
-        this.lobbySpeedButtons = {
-            slow: this.addLobbyButton(-150, -180, 'Slow', () => this.game.net.send('select_speed', { speed: 'slow' })),
-            medium: this.addLobbyButton(0, -180, 'Medium', () => this.game.net.send('select_speed', { speed: 'medium' })),
-            fast: this.addLobbyButton(150, -180, 'Fast', () => this.game.net.send('select_speed', { speed: 'fast' }))
+        // Speed
+        this.setupContainer.add(this.add.text(-300, -190, 'Speed:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
+        this.speedButtons = {
+            slow: this.addSetupButton(-150, -190, 'Slow', () => this.game.net.send('select_speed', { speed: 'slow' })),
+            medium: this.addSetupButton(0, -190, 'Medium', () => this.game.net.send('select_speed', { speed: 'medium' })),
+            fast: this.addSetupButton(150, -190, 'Fast', () => this.game.net.send('select_speed', { speed: 'fast' }))
         };
 
-        // Skin Section
-        // List skins in rows: [Sample Blocks] [Name Button]
-        let y = -120;
+        // Walls mode
+        this.setupContainer.add(this.add.text(-300, -140, 'Walls:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
+        this.wallsButtons = {
+            walls: this.addSetupButton(-80, -140, 'Walls', () => this.game.net.send('select_walls_mode', { mode: 'walls' })),
+            no_walls: this.addSetupButton(120, -140, 'No Walls', () => this.game.net.send('select_walls_mode', { mode: 'no_walls' }))
+        };
+
+        // Skins
+        this.setupContainer.add(this.add.text(-300, -90, 'Snake:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
+        let y = -50;
         const skinKeys = Object.keys(SKINS);
-
-        this.lobbySkinButtons = {};
-
-        skinKeys.forEach((key, idx) => {
-            // Left side: Pattern sample
-            // Draw this later in update or static? Static graphics object added to container
+        this.skinButtons = {};
+        skinKeys.forEach((key) => {
             const g = this.add.graphics();
-            this.lobbyContainer.add(g);
+            this.setupContainer.add(g);
             this.drawSkinSample(g, -300, y - 10, key);
-
-            // Checkbox/Button
-            this.lobbySkinButtons[key] = this.addLobbyButton(-50, y, SKINS[key].name, () => this.game.net.send('select_skin', { skin: key }));
-
+            this.skinButtons[key] = this.addSetupButton(-50, y, SKINS[key].name, () => this.game.net.send('select_skin', { skin: key }));
             y += 40;
         });
 
-        this.startHelp = this.add.text(0, 160, 'Select a speed and a skin', { fontSize: '20px', color: '#000' }).setOrigin(0.5);
-        this.lobbyContainer.add(this.startHelp);
+        this.setupHelp = this.add.text(0, 175, '', { fontSize: '20px', color: '#000' }).setOrigin(0.5);
+        this.setupContainer.add(this.setupHelp);
 
-        this.startButton = this.addLobbyButton(0, 210, 'Start', () => {
+        this.startButton = this.addSetupButton(-90, 220, 'Start', () => {
             const net = this.game.net;
             if (!net.latestState) return;
-            if (this.isLobbyReady(net.latestState)) {
-                net.send('resume');
-            }
+            if (this.isLobbyReady(net.latestState)) net.send('resume');
+        });
+
+        this.continueButton = this.addSetupButton(90, 220, 'Continue', () => {
+            this.game.net.send('resume');
         });
     }
 
-    addLobbyButton(x, y, label, cb) {
+    addSetupButton(x, y, label, cb) {
         const btn = this.add.text(x, y, label, {
             fontSize: '18px', backgroundColor: UI_BTN_BG, color: UI_BTN_TEXT, padding: { x: 10, y: 5 }
         }).setOrigin(0.5).setInteractive({ useHandCursor: true });
@@ -437,14 +384,23 @@ export default class PlayScene extends Phaser.Scene {
         });
 
         btn.on('pointerdown', cb);
-        this.lobbyContainer.add(btn);
+        this.setupContainer.add(btn);
         return btn;
     }
 
-    updateLobbyUI(state) {
-        // Selection highlighting
-        if (this.lobbySpeedButtons) {
-            for (const [speedKey, btn] of Object.entries(this.lobbySpeedButtons)) {
+    updateSetupUI(state, mode) {
+        // mode: 'start' | 'pause'
+        const net = this.game.net;
+        const myP = net && net.playerId ? state.players?.[net.playerId] : null;
+        const mySkin = myP?.skin || null;
+
+        if (this.setupTitle) this.setupTitle.setText(mode === 'start' ? 'GAME SETUP' : 'PAUSED');
+        if (this.startButton) this.startButton.setVisible(mode === 'start');
+        if (this.continueButton) this.continueButton.setVisible(mode !== 'start');
+
+        // Speed selection highlight
+        if (this.speedButtons) {
+            for (const [speedKey, btn] of Object.entries(this.speedButtons)) {
                 const selected = (state.speed === speedKey);
                 btn._selected = selected;
                 btn.setBackgroundColor(selected ? UI_BTN_BG_SELECTED : UI_BTN_BG);
@@ -452,11 +408,19 @@ export default class PlayScene extends Phaser.Scene {
             }
         }
 
-        const net = this.game.net;
-        const myP = net && net.playerId ? state.players?.[net.playerId] : null;
-        const mySkin = myP?.skin || null;
-        if (this.lobbySkinButtons) {
-            for (const [skinKey, btn] of Object.entries(this.lobbySkinButtons)) {
+        // Walls selection highlight
+        if (this.wallsButtons) {
+            for (const [key, btn] of Object.entries(this.wallsButtons)) {
+                const selected = (state.wallsMode === key);
+                btn._selected = selected;
+                btn.setBackgroundColor(selected ? UI_BTN_BG_SELECTED : UI_BTN_BG);
+                btn.setColor(UI_BTN_TEXT);
+            }
+        }
+
+        // Skin selection highlight
+        if (this.skinButtons) {
+            for (const [skinKey, btn] of Object.entries(this.skinButtons)) {
                 const selected = (mySkin && skinKey === mySkin);
                 btn._selected = selected;
                 btn.setBackgroundColor(selected ? UI_BTN_BG_SELECTED : UI_BTN_BG);
@@ -464,16 +428,100 @@ export default class PlayScene extends Phaser.Scene {
             }
         }
 
-        // Enable/disable Start button based on required selections.
         const ready = this.isLobbyReady(state);
-        if (this.startButton) {
+        if (this.startButton && mode === 'start') {
             this.startButton.setAlpha(ready ? 1 : 0.5);
             if (ready) this.startButton.setInteractive({ useHandCursor: true });
             else this.startButton.disableInteractive();
         }
-        if (this.startHelp) {
-            this.startHelp.setText(ready ? 'Ready' : 'Select a speed and a skin');
+
+        if (this.setupHelp) {
+            if (mode === 'start') this.setupHelp.setText(ready ? 'Ready' : 'Select your snake');
+            else this.setupHelp.setText('');
         }
+    }
+
+    computeLayout() {
+        const W = this.scale?.width || 800;
+        const H = this.scale?.height || 600;
+
+        // Reserve space for touch controls in the bottom-right.
+        const reserve = this.touchControlsEnabled ? { w: 240, h: 280 } : { w: 0, h: 0 };
+        const availableW = Math.max(200, W - reserve.w);
+        const availableH = Math.max(200, H - reserve.h);
+
+        // Reserve a small margin so the (outside) wall stroke isn't clipped.
+        // Keep it consistent regardless of whether walls are enabled.
+        const wallInsetForCell = (cellSize) => Math.max(4, Math.floor(cellSize / 2)) / 2;
+
+        let cellSize = Math.max(12, Math.floor(Math.min(availableW / GRID_W, availableH / GRID_H)));
+        for (let i = 0; i < 2; i++) {
+            const inset = wallInsetForCell(cellSize);
+            const innerW = Math.max(1, availableW - (inset * 2));
+            const innerH = Math.max(1, availableH - (inset * 2));
+            cellSize = Math.max(12, Math.floor(Math.min(innerW / GRID_W, innerH / GRID_H)));
+        }
+
+        const gridPxW = GRID_W * cellSize;
+        const gridPxH = GRID_H * cellSize;
+        const inset = wallInsetForCell(cellSize);
+
+        const playAreaW = gridPxW + (inset * 2);
+        const playAreaH = gridPxH + (inset * 2);
+
+        const offsetX = Math.floor((availableW - playAreaW) / 2) + inset;
+        const offsetY = Math.floor((availableH - playAreaH) / 2) + inset;
+
+        return { cellSize, offsetX, offsetY };
+    }
+
+    createTouchControls() {
+        this.touchContainer = this.add.container(0, 0);
+        this.touchContainer.setDepth(200);
+
+        const btnSize = 64;
+        const pad = 14;
+        const clusterW = (btnSize * 3) + (pad * 2);
+        const clusterH = (btnSize * 2) + pad;
+
+        const makeBtn = (label, cb) => {
+            const t = this.add.text(0, 0, label, {
+                fontSize: '28px', backgroundColor: UI_BTN_BG, color: UI_BTN_TEXT, padding: { x: 18, y: 14 }
+            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+            t.on('pointerdown', cb);
+            return t;
+        };
+
+        this.touchPauseBtn = makeBtn('Pause', () => {
+            const net = this.game.net;
+            if (!net.latestState) return;
+            if (net.latestState.paused && net.latestState.reasonPaused === 'start') return;
+            net.send('pause');
+        });
+
+        this.touchUpBtn = makeBtn('▲', () => this.game.net.send('input', { dir: 'UP' }));
+        this.touchLeftBtn = makeBtn('◀', () => this.game.net.send('input', { dir: 'LEFT' }));
+        this.touchDownBtn = makeBtn('▼', () => this.game.net.send('input', { dir: 'DOWN' }));
+        this.touchRightBtn = makeBtn('▶', () => this.game.net.send('input', { dir: 'RIGHT' }));
+
+        this.touchContainer.add([this.touchPauseBtn, this.touchUpBtn, this.touchLeftBtn, this.touchDownBtn, this.touchRightBtn]);
+
+        const positionTouch = () => {
+            const W = this.scale.width;
+            const H = this.scale.height;
+            const baseX = W - 20 - (clusterW / 2);
+            const baseY = H - 20 - (clusterH / 2);
+
+            this.touchUpBtn.setPosition(baseX, baseY - (btnSize / 2) - (pad / 2));
+            this.touchLeftBtn.setPosition(baseX - (btnSize + pad), baseY + (btnSize / 2) + (pad / 2));
+            this.touchDownBtn.setPosition(baseX, baseY + (btnSize / 2) + (pad / 2));
+            this.touchRightBtn.setPosition(baseX + (btnSize + pad), baseY + (btnSize / 2) + (pad / 2));
+
+            this.touchPauseBtn.setPosition(baseX, baseY - btnSize - pad - 26);
+        };
+
+        positionTouch();
+        this.scale.on('resize', positionTouch);
     }
 
     shutdown() {
