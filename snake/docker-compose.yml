@@ -1,16 +1,22 @@
 services:
-  snake:
-    container_name: snake-dev
-    build: .
-    working_dir: /workspace
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    ports:
+      - "8080:8080"
     volumes:
-      - ".:/workspace"
-      - "/tmp/.X11-unix:/tmp/.X11-unix"
+      - ./server:/app
+      - /app/node_modules
+
+  client:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.client
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./client:/app
+      - /app/node_modules
     environment:
-      - DISPLAY=${DISPLAY:-host.docker.internal:0}
-      - QT_X11_NO_MITSHM=1
-      - SDL_AUDIODRIVER=dummy
-      - SDL_RENDER_DRIVER=software
-      - LIBGL_ALWAYS_INDIRECT=1
-    stdin_open: true
-    tty: true
+      - VITE_API_URL=ws://localhost:8080
