@@ -11,11 +11,17 @@ export class Net extends EventTarget {
     connect() {
         if (this.socket) return;
 
-        // Assume localhost for now, or infer from window.location
+        // WebSocket endpoint selection:
+        // - If VITE_API_URL is set, use it (e.g. ws://localhost:8080 for dev).
+        // - Otherwise, default to localhost:8080 in dev.
+        // - In production, use same-origin and a stable path behind the reverse proxy.
+        const configuredUrl = import.meta.env.VITE_API_URL;
         const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const host = window.location.hostname;
-        const port = '8080'; // Hardcoded for dev
-        this.socket = new WebSocket(`${protocol}://${host}:${port}`);
+        const defaultDevUrl = 'ws://localhost:8080';
+        const defaultProdUrl = `${protocol}://${window.location.host}/games/snake/ws`;
+        const wsUrl = configuredUrl ?? (import.meta.env.DEV ? defaultDevUrl : defaultProdUrl);
+
+        this.socket = new WebSocket(wsUrl);
 
         this.socket.onopen = () => {
             this.connected = true;

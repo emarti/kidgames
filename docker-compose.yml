@@ -1,0 +1,42 @@
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: gateway
+    environment:
+      # Set to your real hostname on Lightsail (e.g. edmarti.com)
+      # Default to localhost:80 for local dev to avoid auto-HTTPS/local CA noise.
+      - DOMAIN=${DOMAIN:-localhost:80}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - snake-backend
+      - maze-backend
+    restart: unless-stopped
+
+  snake-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: snake-backend
+    expose:
+      - "8080"
+    restart: unless-stopped
+
+  maze-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: maze-backend
+    expose:
+      - "8080"
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
