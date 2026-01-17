@@ -15,11 +15,11 @@
 
   # WebSocket endpoint (reverse-proxied to the game server)
   handle /games/snake/ws* {
-    reverse_proxy {$SNAKE_BACKEND:snake-backend:8080}
+    reverse_proxy {$GAMES_BACKEND:games-backend:8080}
   }
 
   handle /games/maze/ws* {
-    reverse_proxy {$MAZE_BACKEND:maze-backend:8080}
+    reverse_proxy {$GAMES_BACKEND:games-backend:8080}
   }
 
   # Static content for /games/*

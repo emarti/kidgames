@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: kidgames-ws
+    runtime: node
+    rootDir: apps/ws
+    buildCommand: npm install --no-audit --no-fund --progress=false
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+
+  - type: static
+    name: kidgames-web
+    runtime: static
+    rootDir: apps/web
+    buildCommand: bash ./build.sh
+    staticPublishPath: apps/web/dist
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      # Set this to your WebSocket service URL, e.g.:
+      # wss://YOUR-WS-SERVICE.onrender.com
+      - key: VITE_WS_URL
+        sync: false

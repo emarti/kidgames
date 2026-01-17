@@ -34,8 +34,8 @@ export default class MenuScene extends Phaser.Scene {
         this.input.keyboard.on('keydown', (event) => {
             if (event.keyCode === 8 && this.inputCode.length > 0) {
                 this.inputCode = this.inputCode.slice(0, -1);
-            } else if (event.key.length === 1 && this.inputCode.length < 4 && /[a-zA-Z0-9]/.test(event.key)) {
-                this.inputCode += event.key.toUpperCase();
+            } else if (event.key.length === 1 && this.inputCode.length < 4 && /[0-9]/.test(event.key)) {
+                this.inputCode += event.key;
             }
             this.updateCodeDisplay();
         });

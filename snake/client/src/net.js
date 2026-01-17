@@ -15,7 +15,7 @@ export class Net extends EventTarget {
         // - If VITE_API_URL is set, use it (e.g. ws://localhost:8080 for dev).
         // - Otherwise, default to localhost:8080 in dev.
         // - In production, use same-origin and a stable path behind the reverse proxy.
-        const configuredUrl = import.meta.env.VITE_API_URL;
+        const configuredUrl = import.meta.env.VITE_WS_URL ?? import.meta.env.VITE_API_URL;
         const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const defaultDevUrl = 'ws://localhost:8080';
         const defaultProdUrl = `${protocol}://${window.location.host}/games/snake/ws`;
@@ -25,6 +25,8 @@ export class Net extends EventTarget {
 
         this.socket.onopen = () => {
             this.connected = true;
+            // Unified backend expects a hello handshake selecting the game.
+            this.socket.send(JSON.stringify({ type: 'hello', gameId: 'snake', protocol: 1 }));
             console.log("WS Connected");
             this.dispatchEvent(new Event('connected'));
         };

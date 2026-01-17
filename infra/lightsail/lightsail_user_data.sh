@@ -17,7 +17,7 @@ fi
 # - Install backend deps
 # - Deploy static files to /srv
 # - Configure Caddy reverse proxy
-# - Create systemd services for both WebSocket backends
+# - Create a systemd service for the unified WebSocket backend
 #
 # How to use:
 # - Paste this whole script into the Lightsail “Launch script” (user data) box.
@@ -41,8 +41,7 @@ SWAP_GB="${SWAP_GB:-4}"
 # Increase if `vite build` fails with "JavaScript heap out of memory".
 BUILD_MAX_OLD_SPACE_MB="${BUILD_MAX_OLD_SPACE_MB:-1024}"
 
-SNAKE_PORT="${SNAKE_PORT:-8081}"
-MAZE_PORT="${MAZE_PORT:-8082}"
+GAMES_PORT="${GAMES_PORT:-8080}"
 
 log() { echo "[lightsail] $*"; }
 
@@ -135,8 +134,7 @@ else
 fi
 
 log "Installing backend deps"
-npm_install "$APP_DIR/snake/server" server
-npm_install "$APP_DIR/maze/server" server
+npm_install "$APP_DIR/apps/ws" server
 
 log "Building clients (Vite base paths under /games/*)"
 npm_install "$APP_DIR/snake/client" client
@@ -160,45 +158,25 @@ mkdir -p /etc/systemd/system/caddy.service.d
 cat > /etc/systemd/system/caddy.service.d/override.conf <<EOF
 [Service]
 Environment=SITE_ADDR=$SITE_ADDR
-Environment=SNAKE_BACKEND=127.0.0.1:$SNAKE_PORT
-Environment=MAZE_BACKEND=127.0.0.1:$MAZE_PORT
+Environment=GAMES_BACKEND=127.0.0.1:$GAMES_PORT
 Environment=GAMES_ROOT=/srv
 EOF
 
 log "Stopping existing backend services (if any)"
-systemctl stop snake-backend maze-backend 2>/dev/null || true
+systemctl stop games-backend snake-backend maze-backend 2>/dev/null || true
 
-log "Creating systemd service: snake-backend"
-cat > /etc/systemd/system/snake-backend.service <<EOF
+log "Creating systemd service: games-backend"
+cat > /etc/systemd/system/games-backend.service <<EOF
 [Unit]
-Description=Snake WebSocket Server
+Description=Games WebSocket Server (unified)
 After=network.target
 
 [Service]
 Type=simple
 User=$APP_USER
-WorkingDirectory=$APP_DIR/snake/server
+WorkingDirectory=$APP_DIR/apps/ws
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/env PORT=$SNAKE_PORT /usr/bin/node server.js
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-log "Creating systemd service: maze-backend"
-cat > /etc/systemd/system/maze-backend.service <<EOF
-[Unit]
-Description=Maze WebSocket Server
-After=network.target
-
-[Service]
-Type=simple
-User=$APP_USER
-WorkingDirectory=$APP_DIR/maze/server
-Environment=NODE_ENV=production
-ExecStart=/usr/bin/env PORT=$MAZE_PORT /usr/bin/node server.js
+ExecStart=/usr/bin/env PORT=$GAMES_PORT /usr/bin/node src/server.js
 Restart=always
 RestartSec=2
 
@@ -208,15 +186,14 @@ EOF
 
 log "Reloading systemd and starting services"
 systemctl daemon-reload
-systemctl reset-failed snake-backend maze-backend 2>/dev/null || true
-systemctl enable --now snake-backend maze-backend
-systemctl restart snake-backend maze-backend
+systemctl reset-failed games-backend 2>/dev/null || true
+systemctl enable --now games-backend
+systemctl restart games-backend
 systemctl restart caddy
 
 log "Done. Useful commands:"
 log "- Check Caddy logs:    journalctl -u caddy -n 200 --no-pager"
-log "- Check Snake logs:    journalctl -u snake-backend -n 200 --no-pager"
-log "- Check Maze logs:     journalctl -u maze-backend -n 200 --no-pager"
+log "- Check WS logs:       journalctl -u games-backend -n 200 --no-pager"
 if [[ -n "$PUBLIC_URL" ]]; then
   log "- Visit: $PUBLIC_URL"
 else

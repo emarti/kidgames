@@ -1,0 +1,212 @@
+import * as Sim from './maze_sim.js';
+import { make4DigitRoomId, nowMs } from './maze_utils.js';
+import { normalizeRoomCode, safeSend } from '../shared.js';
+
+export function createMazeHost() {
+  const rooms = new Map(); // roomId -> { id, state, clients: [], updatedAt }
+
+  const ROOM_EXPIRE_MS = 10 * 60 * 1000;
+
+  function broadcast(room, msg) {
+    const data = JSON.stringify(msg);
+    for (const client of room.clients) {
+      if (client.readyState === 1) client.send(data);
+    }
+  }
+
+  function send(ws, msg) {
+    safeSend(ws, msg);
+  }
+
+  function countConnectedPlayers(state) {
+    let n = 0;
+    for (const pid of [1, 2, 3, 4]) {
+      if (state.players?.[pid]?.connected) n++;
+    }
+    return n;
+  }
+
+  function generateRoomIdUnique() {
+    for (let i = 0; i < 1000; i++) {
+      const id = make4DigitRoomId();
+      if (!rooms.has(id)) return id;
+    }
+    return make4DigitRoomId();
+  }
+
+  // Fixed tick loop for all maze rooms
+  setInterval(() => {
+    const now = nowMs();
+    const toDelete = [];
+
+    for (const [roomId, room] of rooms) {
+      if (room.clients.length === 0) {
+        if (now - room.updatedAt > ROOM_EXPIRE_MS) toDelete.push(roomId);
+        continue;
+      }
+
+      room.updatedAt = now;
+      Sim.step(room.state, now);
+      broadcast(room, { type: 'state', state: room.state });
+    }
+
+    for (const id of toDelete) {
+      rooms.delete(id);
+      console.log(`[ws][maze] Room ${id} expired`);
+    }
+  }, 150);
+
+  function onConnect(ws) {
+    ws.room = null;
+    ws.playerId = null;
+  }
+
+  function onClose(ws) {
+    if (!ws.room) return;
+    const room = rooms.get(ws.room);
+    if (!room) return;
+
+    room.clients = room.clients.filter((c) => c !== ws);
+    if (ws.playerId) Sim.setPlayerConnected(room.state, ws.playerId, false);
+    room.updatedAt = nowMs();
+
+    ws.room = null;
+    ws.playerId = null;
+  }
+
+  function handleMessage(ws, msg) {
+    switch (msg.type) {
+      case 'get_rooms': {
+        const list = [];
+        for (const [id, r] of rooms) {
+          list.push({ id, players: countConnectedPlayers(r.state) });
+        }
+        send(ws, { type: 'room_list', rooms: list });
+        break;
+      }
+
+      case 'create_room': {
+        const roomId = generateRoomIdUnique();
+        const state = Sim.newGameState();
+        const room = { id: roomId, state, clients: [ws], updatedAt: nowMs() };
+        rooms.set(roomId, room);
+
+        ws.room = roomId;
+        ws.playerId = 1;
+        Sim.setPlayerConnected(state, 1, true);
+
+        send(ws, { type: 'room_joined', roomId, playerId: 1, state });
+        break;
+      }
+
+      case 'join_room': {
+        const requestedId = normalizeRoomCode(msg.roomId);
+        if (!requestedId) {
+          send(ws, { type: 'error', message: 'Invalid room code (must be 4 digits)' });
+          return;
+        }
+
+        if (ws.room && ws.room !== requestedId) {
+          onClose(ws);
+        }
+
+        const room = rooms.get(requestedId);
+        if (!room) {
+          send(ws, { type: 'error', message: 'Room not found' });
+          return;
+        }
+
+        if (room.clients.includes(ws) && ws.playerId) {
+          send(ws, { type: 'room_joined', roomId: room.id, playerId: ws.playerId, state: room.state });
+          return;
+        }
+
+        let pid = null;
+        if (!room.state.players[1].connected) pid = 1;
+        else if (!room.state.players[2].connected) pid = 2;
+        else if (!room.state.players[3].connected) pid = 3;
+        else if (!room.state.players[4].connected) pid = 4;
+
+        if (!pid) {
+          send(ws, { type: 'error', message: 'Room full' });
+          return;
+        }
+
+        if (!room.clients.includes(ws)) room.clients.push(ws);
+        ws.room = room.id;
+        ws.playerId = pid;
+        Sim.setPlayerConnected(room.state, pid, true);
+
+        send(ws, { type: 'room_joined', roomId: room.id, playerId: pid, state: room.state });
+        break;
+      }
+
+      case 'select_vision_mode': {
+        if (!ws.room) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        Sim.setVisionMode(room.state, msg.mode);
+        break;
+      }
+
+      case 'select_avatar': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        Sim.trySelectAvatar(room.state, ws.playerId, msg.avatar);
+        break;
+      }
+
+      case 'select_color': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        Sim.trySelectColor(room.state, ws.playerId, msg.color);
+        break;
+      }
+
+      case 'restart': {
+        if (!ws.room) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        Sim.restart(room.state);
+        break;
+      }
+
+      case 'pause': {
+        if (!ws.room) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        Sim.pause(room.state);
+        break;
+      }
+
+      case 'resume': {
+        if (!ws.room) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        Sim.resume(room.state);
+        break;
+      }
+
+      case 'input': {
+        if (!ws.room) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        Sim.applyInput(room.state, ws.playerId, msg.dir, nowMs());
+        break;
+      }
+
+      default:
+        // ignore
+        break;
+    }
+  }
+
+  return {
+    gameId: 'maze',
+    onConnect,
+    onClose,
+    handleMessage,
+  };
+}

@@ -4,9 +4,9 @@ This repo can be deployed to a single Lightsail **Instance** (VM) without Docker
 
 - Caddy runs on the VM and serves static files under `/games/*`
 - Caddy reverse-proxies WebSockets by path:
-  - `/games/snake/ws` → Snake backend
-  - `/games/maze/ws` → Maze backend
-- Two Node.js backends run under `systemd`
+  - `/games/snake/ws` → unified games backend
+  - `/games/maze/ws` → unified games backend
+- One Node.js backend runs under `systemd`
 
 ## Endpoints
 
@@ -30,7 +30,7 @@ These steps apply whether you use the launch script or do a manual install.
     - **TCP 22 (SSH)**: restrict to your IP if possible.
     - **TCP 80 (HTTP)**: open to the world.
     - **TCP 443 (HTTPS)**: open to the world.
-  - You do *not* need to expose backend ports (Snake/Maze) publicly; Caddy talks to them on localhost.
+  - You do *not* need to expose backend ports publicly; Caddy talks to the backend on localhost.
 6. DNS:
   - If you are deploying the VM directly on its own hostname (not using CloudFront), create an **A record** for that hostname pointing to the instance Static IP.
   - If you are using CloudFront Option B (recommended for `www.edmarti.com/games/*`), Route 53 will point `www.edmarti.com` to CloudFront; you do *not* point `www.edmarti.com` to the VM.
@@ -51,7 +51,7 @@ Before launching, edit the variables at the top of the script:
   - For direct hosting with Caddy TLS: set `SITE_ADDR=your-hostname` (e.g. `games.edmarti.com`)
 - Optional: `PUBLIC_URL` (helpful log output, e.g. `https://www.edmarti.com/games/`)
 - `REPO_URL` (your git URL)
-- Optional: `REPO_BRANCH`, `APP_USER`, `SNAKE_PORT`, `MAZE_PORT`
+- Optional: `REPO_BRANCH`, `APP_USER`, `GAMES_PORT`
 
 The launch script cannot set up DNS for you.
 
@@ -100,15 +100,14 @@ cd games
 cd ~/games
 
 # Prefer npm ci when package-lock.json exists; otherwise use npm install.
-(cd snake/server && (test -f package-lock.json && npm ci --omit=dev || npm install --omit=dev))
-(cd maze/server && (test -f package-lock.json && npm ci --omit=dev || npm install --omit=dev))
+(cd apps/ws && (test -f package-lock.json && npm ci --omit=dev || npm install --omit=dev))
 
 (cd snake/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/snake/ npm run build)
 (cd maze/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/maze/ npm run build)
 ```
 
 If `npm install` gets killed during client install/build, that’s usually an out-of-memory kill on small instances.
-Either use a bigger plan or add swap (the launch script defaults to creating 2GB swap).
+Either use a bigger plan or add swap (the launch script defaults to creating 4GB swap).
 
 If `vite build` fails with `JavaScript heap out of memory`, increase Node’s heap for the build (the launch script supports this):
 
@@ -138,8 +137,7 @@ sudo mkdir -p /etc/systemd/system/caddy.service.d
 sudo tee /etc/systemd/system/caddy.service.d/override.conf >/dev/null <<'EOF'
 [Service]
 Environment=SITE_ADDR=:80
-Environment=SNAKE_BACKEND=127.0.0.1:8081
-Environment=MAZE_BACKEND=127.0.0.1:8082
+Environment=GAMES_BACKEND=127.0.0.1:8080
 Environment=GAMES_ROOT=/srv
 EOF
 
@@ -147,44 +145,22 @@ sudo systemctl daemon-reload
 sudo systemctl restart caddy
 ```
 
-### 6) Create systemd services for the backends
+### 6) Create systemd service for the unified backend
 
-Snake backend (port 8081):
+Unified games backend (default port 8080):
 
 ```bash
-sudo tee /etc/systemd/system/snake-backend.service >/dev/null <<'EOF'
+sudo tee /etc/systemd/system/games-backend.service >/dev/null <<'EOF'
 [Unit]
-Description=Snake WebSocket Server
+Description=Games WebSocket Server (unified)
 After=network.target
 
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/games/snake/server
+WorkingDirectory=/home/ubuntu/games/apps/ws
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/env PORT=8081 /usr/bin/node server.js
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-Maze backend (port 8082):
-
-```bash
-sudo tee /etc/systemd/system/maze-backend.service >/dev/null <<'EOF'
-[Unit]
-Description=Maze WebSocket Server
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/games/maze/server
-Environment=NODE_ENV=production
-ExecStart=/usr/bin/env PORT=8082 /usr/bin/node server.js
+ExecStart=/usr/bin/env PORT=8080 /usr/bin/node src/server.js
 Restart=always
 RestartSec=2
 
@@ -197,14 +173,39 @@ Enable + start services:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl reset-failed snake-backend maze-backend || true
-sudo systemctl enable --now snake-backend maze-backend
-sudo systemctl restart snake-backend maze-backend
-sudo systemctl status snake-backend maze-backend caddy --no-pager
+sudo systemctl reset-failed games-backend || true
+sudo systemctl enable --now games-backend
+sudo systemctl restart games-backend
+sudo systemctl status games-backend caddy --no-pager
 
-# Quick sanity check: both backends should be listening on 8081 and 8082
-sudo ss -ltnp | egrep ':(8081|8082)\b'
+# Quick sanity check: backend should be listening on 8080
+sudo ss -ltnp | egrep ':8080\b'
 ```
+
+## Smoke test (recommended)
+
+Run these on the VM to confirm the backend and Caddy are wired correctly.
+
+Backend health (should print `ok`):
+
+```bash
+curl -sS http://127.0.0.1:8080/
+```
+
+Caddy is serving `/games/` (expect `200` or a `308` redirect depending on the exact URL):
+
+```bash
+curl -I http://127.0.0.1/games/
+curl -I http://127.0.0.1/games/snake/
+curl -I http://127.0.0.1/games/maze/
+```
+
+End-to-end sanity (browser):
+
+- Visit `/games/` → open Snake/Maze.
+- Create a room and join it from a second browser.
+
+If you see `Missing hello handshake` in WS logs, it usually means something is connecting to the backend without the initial hello message.
 
 ## Verify
 
@@ -220,8 +221,7 @@ curl -I https://www.edmarti.com/games/
 
 ```bash
 sudo journalctl -u caddy -n 200 --no-pager
-sudo journalctl -u snake-backend -n 200 --no-pager
-sudo journalctl -u maze-backend -n 200 --no-pager
+sudo journalctl -u games-backend -n 200 --no-pager
 ```
 
 ## Updating
@@ -230,17 +230,17 @@ sudo journalctl -u maze-backend -n 200 --no-pager
 cd ~/games
 git pull
 
-(cd snake/server && npm ci)
-(cd maze/server && npm ci)
+# Prefer npm ci when package-lock.json exists; otherwise use npm install.
+(cd apps/ws && (test -f package-lock.json && npm ci --omit=dev || npm install --omit=dev))
 
-(cd snake/client && npm ci && VITE_BASE=/games/snake/ npm run build)
-(cd maze/client && npm ci && VITE_BASE=/games/maze/ npm run build)
+(cd snake/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/snake/ npm run build)
+(cd maze/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/maze/ npm run build)
 
 sudo rsync -a --delete ~/games/infra/site/games/ /srv/games/
 sudo rsync -a --delete ~/games/snake/client/dist/ /srv/games/snake/
 sudo rsync -a --delete ~/games/maze/client/dist/ /srv/games/maze/
 
-sudo systemctl restart snake-backend maze-backend caddy
+sudo systemctl restart games-backend caddy
 ```
 
 ## Local development (Docker)
@@ -255,10 +255,10 @@ docker compose up --build
 ## Troubleshooting
 
 - HTTPS not issuing: DNS not pointing at instance yet, or ports 80/443 not open.
-- `502` from Caddy: check `sudo systemctl status snake-backend maze-backend`.
+- `502` from Caddy: check `sudo systemctl status games-backend`.
 - Caddy can’t read files: confirm `/srv` permissions are readable by Caddy (`chmod -R a+rX /srv`).
-- Snake backend flapping with `EADDRINUSE :::8080`: the process is trying to bind port 8080 (default) and something already owns it. Ensure the unit sets the port (for example `ExecStart=/usr/bin/env PORT=8081 ...`), then reload+restart:
-  - `sudo systemctl daemon-reload && sudo systemctl restart snake-backend`
+- Backend flapping with `EADDRINUSE :::8080`: something already owns 8080. Ensure the unit sets the port, then reload+restart:
+  - `sudo systemctl daemon-reload && sudo systemctl restart games-backend`
   - Find what owns 8080: `sudo ss -ltnp | grep ':8080'` (or `sudo lsof -iTCP:8080 -sTCP:LISTEN -n -P`)
 
 ## Route 53 (DNS) notes (S3 on `www`, Lightsail only for `/games`)

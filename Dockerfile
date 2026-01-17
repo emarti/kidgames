@@ -1,39 +1,20 @@
 # Single Dockerfile for the /games stack.
-# Use build targets to produce separate images. The gateway is the public
-# entrypoint; each game can have its own backend target.
 #
-# Current targets:
-# - target: snake-backend
-# - target: maze-backend
-# - target: gateway
+# Targets:
+# - games-backend: unified WebSocket backend for all games
+# - gateway: Caddy serving /games/* and reverse-proxying /games/*/ws
 
 ########################
-# Snake backend (one of potentially many game backends)
+# Unified WebSocket backend (all games)
 ########################
-FROM node:20-slim AS snake-backend
+FROM node:20-slim AS games-backend
 
 WORKDIR /app
 
-COPY snake/server/package.json ./
-RUN npm install
+COPY apps/ws/package.json ./
+RUN npm install --no-audit --no-fund
 
-COPY snake/server/ ./
-
-EXPOSE 8080
-CMD ["npm", "start"]
-
-
-########################
-# Maze backend
-########################
-FROM node:20-slim AS maze-backend
-
-WORKDIR /app
-
-COPY maze/server/package.json ./
-RUN npm install
-
-COPY maze/server/ ./
+COPY apps/ws/ ./
 
 EXPOSE 8080
 CMD ["npm", "start"]
@@ -47,7 +28,7 @@ FROM node:20-slim AS snake-client-build
 WORKDIR /app
 
 COPY snake/client/package.json ./
-RUN npm install
+RUN npm install --no-audit --no-fund
 
 COPY snake/client/ ./
 
@@ -64,7 +45,7 @@ FROM node:20-slim AS maze-client-build
 WORKDIR /app
 
 COPY maze/client/package.json ./
-RUN npm install
+RUN npm install --no-audit --no-fund
 
 COPY maze/client/ ./
 

@@ -1,4 +1,4 @@
-import { randInt, clamp } from './utils.js';
+import { randInt, clamp } from './maze_utils.js';
 
 // Client constants (must match maze/client/src/game/scenes/PlayScene.js)
 const WALL_N = 1;

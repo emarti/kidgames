@@ -11,7 +11,7 @@ export class Net extends EventTarget {
   connect() {
     if (this.socket) return;
 
-    const configuredUrl = import.meta.env.VITE_API_URL;
+    const configuredUrl = import.meta.env.VITE_WS_URL ?? import.meta.env.VITE_API_URL;
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const defaultDevUrl = 'ws://localhost:8080';
     const defaultProdUrl = `${protocol}://${window.location.host}/games/maze/ws`;
@@ -21,6 +21,8 @@ export class Net extends EventTarget {
 
     this.socket.onopen = () => {
       this.connected = true;
+      // Unified backend expects a hello handshake selecting the game.
+      this.socket.send(JSON.stringify({ type: 'hello', gameId: 'maze', protocol: 1 }));
       this.dispatchEvent(new Event('connected'));
     };
 
