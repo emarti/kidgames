@@ -1,12 +1,17 @@
 import { WebSocketServer } from 'ws';
 import * as Sim from './sim.js';
 
-const wss = new WebSocketServer({ port: 8080 });
+const port = Number.parseInt(process.env.PORT ?? '8080', 10);
+if (!Number.isFinite(port) || port <= 0) {
+  throw new Error(`Invalid PORT: ${process.env.PORT}`);
+}
+
+const wss = new WebSocketServer({ port });
 
 // Rooms: roomId -> { state, clients: [ws1, ws2], updatedAt }
 const rooms = new Map();
 
-console.log("Snake server running on port 8080");
+console.log(`Snake server running on port ${port}`);
 
 function generateRoomId() {
   const chars = "0123456789";

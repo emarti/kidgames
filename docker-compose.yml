@@ -5,9 +5,9 @@ services:
       dockerfile: Dockerfile
       target: gateway
     environment:
-      # Set to your real hostname on Lightsail (e.g. edmarti.com)
+      # Caddy site address (matches infra/caddy/Caddyfile)
       # Default to localhost:80 for local dev to avoid auto-HTTPS/local CA noise.
-      - DOMAIN=${DOMAIN:-localhost:80}
+      - SITE_ADDR=${SITE_ADDR:-localhost:80}
     ports:
       - "80:80"
       - "443:443"

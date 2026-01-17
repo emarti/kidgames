@@ -8,7 +8,7 @@ A multiplayer, web-based Snake game with server-authoritative, deterministic gam
 ### Technology Stack
 - **Server**: Node.js with WebSocket (ws library)
 - **Client**: Phaser 3 game framework
-- **Deployment**: Docker Compose (client on port 5173, server on port 8080)
+- **Deployment**: Native VM hosting (Caddy + systemd + Node.js). Docker Compose is used for local debugging.
 
 ### Core Design Principles
 - **Server-Authoritative**: All game logic runs on the server

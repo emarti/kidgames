@@ -1,4 +1,4 @@
-{$DOMAIN:localhost} {
+{$SITE_ADDR::80} {
   encode zstd gzip
 
   # Convenience redirect (nice for a single-purpose VM)
@@ -15,14 +15,14 @@
 
   # WebSocket endpoint (reverse-proxied to the game server)
   handle /games/snake/ws* {
-    reverse_proxy snake-backend:8080
+    reverse_proxy {$SNAKE_BACKEND:snake-backend:8080}
   }
 
   handle /games/maze/ws* {
-    reverse_proxy maze-backend:8080
+    reverse_proxy {$MAZE_BACKEND:maze-backend:8080}
   }
 
   # Static content for /games/*
-  root * /srv
+  root * {$GAMES_ROOT:/srv}
   file_server
 }

@@ -2,12 +2,17 @@ import { WebSocketServer } from 'ws';
 import * as Sim from './sim.js';
 import { make4DigitRoomId, nowMs } from './utils.js';
 
-const wss = new WebSocketServer({ port: 8080 });
+const port = Number.parseInt(process.env.PORT ?? '8080', 10);
+if (!Number.isFinite(port) || port <= 0) {
+  throw new Error(`Invalid PORT: ${process.env.PORT}`);
+}
+
+const wss = new WebSocketServer({ port });
 
 // Rooms: roomId -> { id, state, clients, updatedAt }
 const rooms = new Map();
 
-console.log('Maze server running on port 8080');
+console.log(`Maze server running on port ${port}`);
 
 function broadcast(room, msg) {
   const data = JSON.stringify(msg);
