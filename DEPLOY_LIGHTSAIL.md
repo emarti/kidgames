@@ -22,7 +22,7 @@ These steps apply whether you use the launch script or do a manual install.
 
 1. In the AWS console, go to **Lightsail** → **Create instance**.
 2. Pick a Linux blueprint (Ubuntu LTS recommended) and a plan size.
-3. (Optional but recommended) In **Advanced details**, paste the contents of `infra/lightsail/lightsail_user_data.sh` into **Launch script**.
+3. (Optional but recommended) In **Advanced details**, paste the contents of `infra/lightsail/lightsail_boot.sh` into **Launch script**.
 4. Create the instance.
 5. In Lightsail **Networking**:
   - Create/attach a **Static IP** so the public IP won’t change.
@@ -42,7 +42,7 @@ These steps apply whether you use the launch script or do a manual install.
 
 Lightsail supports a “Launch script” (cloud-init user data) that runs once on first boot.
 
-Use: `infra/lightsail/lightsail_user_data.sh`
+Use: `infra/lightsail/lightsail_boot.sh`
 
 Before launching, edit the variables at the top of the script:
 
@@ -111,7 +111,7 @@ Either use a bigger plan or add swap (the launch script defaults to creating 4GB
 
 If `vite build` fails with `JavaScript heap out of memory`, increase Node’s heap for the build (the launch script supports this):
 
-- Re-run with: `BUILD_MAX_OLD_SPACE_MB=1024 sudo -E bash infra/lightsail/lightsail_user_data.sh`
+- Re-run with: `BUILD_MAX_OLD_SPACE_MB=1024 sudo -E bash infra/lightsail/lightsail_boot.sh`
 - If still failing, try `1536` or pick a larger Lightsail plan.
 
 ### 4) Deploy static files
@@ -229,6 +229,12 @@ sudo journalctl -u games-backend -n 200 --no-pager
 ```bash
 cd ~/games
 git pull
+
+# Alternative (recommended): run the restart helper script, which installs deps,
+# rebuilds clients, rsyncs to /srv, and restarts services.
+sudo -E bash infra/lightsail/lightsail_restart.sh
+
+# Manual steps (equivalent to the restart script):
 
 # Prefer npm ci when package-lock.json exists; otherwise use npm install.
 (cd apps/ws && (test -f package-lock.json && npm ci --omit=dev || npm install --omit=dev))

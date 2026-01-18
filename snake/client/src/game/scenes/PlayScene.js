@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import SKINS from '../skins.json';
+import { createTouchControls, getTouchControlsReserve, isTouchDevice } from '@games/touch-controls';
 
 const CELL_SIZE = 25;
 const GRID_W = 30;
@@ -25,10 +26,6 @@ export default class PlayScene extends Phaser.Scene {
         return Boolean(state.speed) && Boolean(me && me.skin);
     }
 
-    isTouchDevice() {
-        return (('ontouchstart' in window) || (navigator.maxTouchPoints > 0));
-    }
-
     create() {
         this.graphics = this.add.graphics();
         this.uiText = this.add.text(10, 10, '', { fontSize: '16px', color: '#000' });
@@ -44,9 +41,17 @@ export default class PlayScene extends Phaser.Scene {
         this.setupContainer.setVisible(false);
 
         // Touch controls (D-pad + pause) for tablets/phones
-        this.touchControlsEnabled = this.isTouchDevice();
+        this.touchControlsEnabled = isTouchDevice();
         if (this.touchControlsEnabled) {
-            this.createTouchControls();
+            this.touchControls = createTouchControls(this, {
+                onDir: (dir) => this.game.net.send('input', { dir }),
+                onPause: () => {
+                    const net = this.game.net;
+                    if (!net.latestState) return;
+                    if (net.latestState.paused && net.latestState.reasonPaused === 'start') return;
+                    net.send('pause');
+                },
+            });
         }
 
         // Net listener
@@ -196,20 +201,8 @@ export default class PlayScene extends Phaser.Scene {
             this.drawSnake(p, isMe);
         });
 
-        // 4. UI Text
-        let info = `Room: ${this.game.net.roomId}\n`;
-        const connectedPlayers = [1, 2, 3, 4].map(pid => state.players[pid]).filter(p => p.connected);
-
-        connectedPlayers.forEach(p => {
-            info += `P${p.id}: ${p.name || 'Player'} ${p.paused ? '(PAUSED)' : ''}\n`;
-        });
-
-        if (connectedPlayers.length < 4) {
-            info += `${4 - connectedPlayers.length} slots free\n`;
-        }
-
-        if (state.speed) info += `Speed: ${state.speed}`;
-        this.uiText.setText(info);
+        // 4. UI Text (room only)
+        this.uiText.setText(`Room: ${this.game.net.roomId}`);
 
         // 5. Overlays
         // Lobby
@@ -229,14 +222,6 @@ export default class PlayScene extends Phaser.Scene {
             this.setupContainer.setVisible(true);
             this.updateSetupUI(state, 'pause');
             centerMsg = "";
-        }
-
-        // Status Text Updates for Other Player Pause
-        const othersPaused = [1, 2, 3, 4].filter(pid => pid !== myId && state.players[pid].connected && state.players[pid].paused);
-        if (othersPaused.length > 0) {
-            const names = othersPaused.map(pid => state.players[pid].name || `P${pid}`).join(", ");
-            info += `\nPAUSED: ${names}`;
-            this.uiText.setText(info);
         }
 
         // Override for my status (Dead takes precedence)
@@ -446,7 +431,7 @@ export default class PlayScene extends Phaser.Scene {
         const H = this.scale?.height || 600;
 
         // Reserve space for touch controls in the bottom-right.
-        const reserve = this.touchControlsEnabled ? { w: 240, h: 280 } : { w: 0, h: 0 };
+        const reserve = getTouchControlsReserve({ enabled: this.touchControlsEnabled });
         const availableW = Math.max(200, W - reserve.w);
         const availableH = Math.max(200, H - reserve.h);
 
@@ -473,55 +458,6 @@ export default class PlayScene extends Phaser.Scene {
         const offsetY = Math.floor((availableH - playAreaH) / 2) + inset;
 
         return { cellSize, offsetX, offsetY };
-    }
-
-    createTouchControls() {
-        this.touchContainer = this.add.container(0, 0);
-        this.touchContainer.setDepth(200);
-
-        const btnSize = 64;
-        const pad = 14;
-        const clusterW = (btnSize * 3) + (pad * 2);
-        const clusterH = (btnSize * 2) + pad;
-
-        const makeBtn = (label, cb) => {
-            const t = this.add.text(0, 0, label, {
-                fontSize: '28px', backgroundColor: UI_BTN_BG, color: UI_BTN_TEXT, padding: { x: 18, y: 14 }
-            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-            t.on('pointerdown', cb);
-            return t;
-        };
-
-        this.touchPauseBtn = makeBtn('Pause', () => {
-            const net = this.game.net;
-            if (!net.latestState) return;
-            if (net.latestState.paused && net.latestState.reasonPaused === 'start') return;
-            net.send('pause');
-        });
-
-        this.touchUpBtn = makeBtn('▲', () => this.game.net.send('input', { dir: 'UP' }));
-        this.touchLeftBtn = makeBtn('◀', () => this.game.net.send('input', { dir: 'LEFT' }));
-        this.touchDownBtn = makeBtn('▼', () => this.game.net.send('input', { dir: 'DOWN' }));
-        this.touchRightBtn = makeBtn('▶', () => this.game.net.send('input', { dir: 'RIGHT' }));
-
-        this.touchContainer.add([this.touchPauseBtn, this.touchUpBtn, this.touchLeftBtn, this.touchDownBtn, this.touchRightBtn]);
-
-        const positionTouch = () => {
-            const W = this.scale.width;
-            const H = this.scale.height;
-            const baseX = W - 20 - (clusterW / 2);
-            const baseY = H - 20 - (clusterH / 2);
-
-            this.touchUpBtn.setPosition(baseX, baseY - (btnSize / 2) - (pad / 2));
-            this.touchLeftBtn.setPosition(baseX - (btnSize + pad), baseY + (btnSize / 2) + (pad / 2));
-            this.touchDownBtn.setPosition(baseX, baseY + (btnSize / 2) + (pad / 2));
-            this.touchRightBtn.setPosition(baseX + (btnSize + pad), baseY + (btnSize / 2) + (pad / 2));
-
-            this.touchPauseBtn.setPosition(baseX, baseY - btnSize - pad - 26);
-        };
-
-        positionTouch();
-        this.scale.on('resize', positionTouch);
     }
 
     shutdown() {

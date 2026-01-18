@@ -2,7 +2,8 @@
   encode zstd gzip
 
   # Convenience redirect (nice for a single-purpose VM)
-  redir / /games/ 308
+  @rootOnly path /
+  redir @rootOnly https://martilab.com 308
 
   @gamesNoSlash path /games
   redir @gamesNoSlash /games/ 308

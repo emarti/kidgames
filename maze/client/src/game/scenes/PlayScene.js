@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { drawAvatarPixels, listAvatars } from '../avatars.js';
+import { createTouchControls, getTouchControlsReserve, isTouchDevice } from '@games/touch-controls';
 
 const UI_BTN_BG = '#777777';
 const UI_BTN_BG_HOVER = '#888888';
@@ -31,7 +32,27 @@ export default class PlayScene extends Phaser.Scene {
     this.createSetupUI();
     this.setupContainer.setVisible(false);
 
+    // Keep fixed UI centered on resize (important on phones/tablets)
+    const positionFixedUI = () => {
+      const W = this.scale?.width || 800;
+      const H = this.scale?.height || 600;
+      this.centerText.setPosition(W / 2, H / 2);
+      this.setupContainer.setPosition(W / 2, H / 2);
+    };
+    positionFixedUI();
+    this.scale.on('resize', positionFixedUI);
+    this.events.once('shutdown', () => this.scale.off('resize', positionFixedUI));
+
     this.setupInput();
+
+    // Touch controls (D-pad + pause) for tablets/phones (shared with Snake)
+    this.touchControlsEnabled = isTouchDevice();
+    if (this.touchControlsEnabled) {
+      this.touchControls = createTouchControls(this, {
+        onDir: (dir) => this.game.net.send('input', { dir }),
+        onPause: () => this.togglePause(),
+      });
+    }
 
     this.onState = (e) => this.renderState(e.detail);
     this.game.net.addEventListener('state', this.onState);
@@ -52,13 +73,7 @@ export default class PlayScene extends Phaser.Scene {
 
       // Pause toggle (Space / P)
       if (event.code === 'Space' || event.code === 'KeyP') {
-        if (state.paused && state.reasonPaused === 'start') {
-          net.send('resume');
-        } else if (state.paused) {
-          net.send('resume');
-        } else {
-          net.send('pause');
-        }
+        this.togglePause();
         return;
       }
 
@@ -71,6 +86,15 @@ export default class PlayScene extends Phaser.Scene {
 
       if (dir) net.send('input', { dir });
     });
+  }
+
+  togglePause() {
+    const net = this.game.net;
+    const state = net.latestState;
+    if (!state) return;
+
+    if (state.paused) net.send('resume');
+    else net.send('pause');
   }
 
   createSetupUI() {
@@ -175,17 +199,19 @@ export default class PlayScene extends Phaser.Scene {
     const W = this.scale?.width || 800;
     const H = this.scale?.height || 600;
     const margin = 20;
-    const hudTop = 60;
 
-    const availableW = Math.max(200, W - margin * 2);
-    const availableH = Math.max(200, H - margin * 2 - hudTop);
+    const reserve = getTouchControlsReserve({ enabled: this.touchControlsEnabled });
+    const hudTop = Math.max(36, Math.min(60, Math.floor(H * 0.12)));
+
+    const availableW = Math.max(160, W - (margin * 2) - reserve.w);
+    const availableH = Math.max(160, H - (margin * 2) - hudTop - reserve.h);
 
     const cellSize = Math.max(12, Math.floor(Math.min(availableW / state.w, availableH / state.h)));
     const gridPxW = state.w * cellSize;
     const gridPxH = state.h * cellSize;
 
-    const offsetX = Math.floor((W - gridPxW) / 2);
-    const offsetY = Math.floor((H - gridPxH) / 2) + Math.floor(hudTop / 2);
+    const offsetX = Math.floor(margin + (availableW - gridPxW) / 2);
+    const offsetY = Math.floor(margin + hudTop + (availableH - gridPxH) / 2);
 
     return { cellSize, offsetX, offsetY };
   }

@@ -25,16 +25,21 @@ CMD ["npm", "start"]
 ########################
 FROM node:20-slim AS snake-client-build
 
-WORKDIR /app
+WORKDIR /repo
 
-COPY snake/client/package.json ./
-RUN npm install --no-audit --no-fund
+# Shared local package dependency used by both clients
+COPY packages/touch-controls/ ./packages/touch-controls/
 
-COPY snake/client/ ./
+# Install deps (cache-friendly)
+COPY snake/client/package*.json ./snake/client/
+RUN cd snake/client && npm install --no-audit --no-fund
+
+# App source
+COPY snake/client/ ./snake/client/
 
 # Host snake under /games/snake/
 ENV VITE_BASE=/games/snake/
-RUN npm run build
+RUN cd snake/client && npm run build
 
 
 ########################
@@ -42,16 +47,21 @@ RUN npm run build
 ########################
 FROM node:20-slim AS maze-client-build
 
-WORKDIR /app
+WORKDIR /repo
 
-COPY maze/client/package.json ./
-RUN npm install --no-audit --no-fund
+# Shared local package dependency used by both clients
+COPY packages/touch-controls/ ./packages/touch-controls/
 
-COPY maze/client/ ./
+# Install deps (cache-friendly)
+COPY maze/client/package*.json ./maze/client/
+RUN cd maze/client && npm install --no-audit --no-fund
+
+# App source
+COPY maze/client/ ./maze/client/
 
 # Host maze under /games/maze/
 ENV VITE_BASE=/games/maze/
-RUN npm run build
+RUN cd maze/client && npm run build
 
 
 ########################
@@ -66,11 +76,11 @@ COPY infra/site/ /srv/
 
 # Snake client build output lives at /games/snake/
 RUN mkdir -p /srv/games/snake
-COPY --from=snake-client-build /app/dist/ /srv/games/snake/
+COPY --from=snake-client-build /repo/snake/client/dist/ /srv/games/snake/
 
 # Maze client build output lives at /games/maze/
 RUN mkdir -p /srv/games/maze
-COPY --from=maze-client-build /app/dist/ /srv/games/maze/
+COPY --from=maze-client-build /repo/maze/client/dist/ /srv/games/maze/
 
 # Caddy config
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile

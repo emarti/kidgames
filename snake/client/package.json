@@ -12,6 +12,7 @@
         "vite": "^5.0.0"
     },
     "dependencies": {
-        "phaser": "^3.80.0"
+        "phaser": "^3.80.0",
+        "@games/touch-controls": "file:../../packages/touch-controls"
     }
 }
