@@ -44,7 +44,10 @@ npm_install() {
 
   if [[ -f "$dir/package-lock.json" || -f "$dir/npm-shrinkwrap.json" ]]; then
     log "Installing npm deps via npm ci ($mode): $dir"
-    su - "$APP_USER" -c "cd '$dir' && npm ci $omit_flag --no-audit --no-fund --progress=false"
+    if ! su - "$APP_USER" -c "cd '$dir' && npm ci $omit_flag --no-audit --no-fund --progress=false"; then
+      log "npm ci failed (lockfile drift is common after dependency updates); falling back to npm install ($mode): $dir"
+      su - "$APP_USER" -c "cd '$dir' && npm install $omit_flag --no-audit --no-fund --progress=false"
+    fi
   else
     log "No lockfile found; using npm install ($mode): $dir"
     su - "$APP_USER" -c "cd '$dir' && npm install $omit_flag --no-audit --no-fund --progress=false"

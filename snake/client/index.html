@@ -2,12 +2,31 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Snake Web</title>
     <style>
-      body { margin: 0; padding: 0; overflow: hidden; background-color: #AAAAAA; }
-      #app { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
-      canvas { box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background-color: #AAAAAA;
+      }
+
+      /* iOS Safari: prefer dynamic viewport height to avoid top clipping */
+      #app {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100dvh;
+        min-height: 100vh;
+      }
+
+      canvas {
+        display: block;
+        box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      }
     </style>
   </head>
   <body>

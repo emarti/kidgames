@@ -203,15 +203,40 @@ export default class PlayScene extends Phaser.Scene {
     const reserve = getTouchControlsReserve({ enabled: this.touchControlsEnabled });
     const hudTop = Math.max(36, Math.min(60, Math.floor(H * 0.12)));
 
-    const availableW = Math.max(160, W - (margin * 2) - reserve.w);
-    const availableH = Math.max(160, H - (margin * 2) - hudTop - reserve.h);
+    // Compute the biggest possible maze area for the screen, then only nudge it
+    // away from the bottom-right touch control cluster if needed.
+    const availableW = Math.max(160, W - (margin * 2));
+    const availableH = Math.max(160, H - (margin * 2) - hudTop);
 
     const cellSize = Math.max(12, Math.floor(Math.min(availableW / state.w, availableH / state.h)));
     const gridPxW = state.w * cellSize;
     const gridPxH = state.h * cellSize;
 
-    const offsetX = Math.floor(margin + (availableW - gridPxW) / 2);
-    const offsetY = Math.floor(margin + hudTop + (availableH - gridPxH) / 2);
+    let offsetX = Math.floor(margin + (availableW - gridPxW) / 2);
+    let offsetY = Math.floor(margin + hudTop + (availableH - gridPxH) / 2);
+
+    // If the centered maze would overlap the reserved bottom-right corner,
+    // shift either left or up by the minimal amount.
+    if (this.touchControlsEnabled && reserve.w > 0 && reserve.h > 0) {
+      const playX0 = offsetX;
+      const playY0 = offsetY;
+      const playX1 = playX0 + gridPxW;
+      const playY1 = playY0 + gridPxH;
+
+      const cornerX0 = W - reserve.w;
+      const cornerY0 = H - reserve.h;
+
+      const overlapsCorner = (playX1 > cornerX0) && (playY1 > cornerY0);
+      if (overlapsCorner) {
+        const shiftLeft = playX1 - cornerX0;
+        const shiftUp = playY1 - cornerY0;
+        if (shiftLeft < shiftUp) offsetX -= shiftLeft;
+        else offsetY -= shiftUp;
+
+        offsetX = Math.max(margin, Math.min(W - margin - gridPxW, offsetX));
+        offsetY = Math.max(margin + hudTop, Math.min(H - margin - gridPxH, offsetY));
+      }
+    }
 
     return { cellSize, offsetX, offsetY };
   }

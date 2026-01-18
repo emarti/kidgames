@@ -430,10 +430,11 @@ export default class PlayScene extends Phaser.Scene {
         const W = this.scale?.width || 800;
         const H = this.scale?.height || 600;
 
-        // Reserve space for touch controls in the bottom-right.
+        // Compute the biggest possible playfield for the full screen, then only
+        // nudge it away from the bottom-right touch control cluster if needed.
         const reserve = getTouchControlsReserve({ enabled: this.touchControlsEnabled });
-        const availableW = Math.max(200, W - reserve.w);
-        const availableH = Math.max(200, H - reserve.h);
+        const availableW = Math.max(200, W);
+        const availableH = Math.max(200, H);
 
         // Reserve a small margin so the (outside) wall stroke isn't clipped.
         // Keep it consistent regardless of whether walls are enabled.
@@ -454,8 +455,35 @@ export default class PlayScene extends Phaser.Scene {
         const playAreaW = gridPxW + (inset * 2);
         const playAreaH = gridPxH + (inset * 2);
 
-        const offsetX = Math.floor((availableW - playAreaW) / 2) + inset;
-        const offsetY = Math.floor((availableH - playAreaH) / 2) + inset;
+        let offsetX = Math.floor((availableW - playAreaW) / 2) + inset;
+        let offsetY = Math.floor((availableH - playAreaH) / 2) + inset;
+
+        // If the centered play area would overlap the reserved bottom-right corner,
+        // shift either left or up by the minimal amount.
+        if (this.touchControlsEnabled && reserve.w > 0 && reserve.h > 0) {
+            const playX0 = offsetX - inset;
+            const playY0 = offsetY - inset;
+            const playX1 = playX0 + playAreaW;
+            const playY1 = playY0 + playAreaH;
+
+            const cornerX0 = W - reserve.w;
+            const cornerY0 = H - reserve.h;
+
+            const overlapsCorner = (playX1 > cornerX0) && (playY1 > cornerY0);
+            if (overlapsCorner) {
+                const shiftLeft = playX1 - cornerX0;
+                const shiftUp = playY1 - cornerY0;
+                if (shiftLeft < shiftUp) {
+                    offsetX -= shiftLeft;
+                } else {
+                    offsetY -= shiftUp;
+                }
+
+                // Clamp so we don't shift off-screen.
+                offsetX = Math.max(inset, Math.min(W - inset - gridPxW, offsetX));
+                offsetY = Math.max(inset, Math.min(H - inset - gridPxH, offsetY));
+            }
+        }
 
         return { cellSize, offsetX, offsetY };
     }
