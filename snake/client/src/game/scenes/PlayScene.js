@@ -23,19 +23,20 @@ export default class PlayScene extends Phaser.Scene {
         return cell.x >= 0 && cell.x < GRID_W && cell.y >= 0 && cell.y < GRID_H;
     }
 
-    spawnCrashFireworks(headCell) {
+    spawnCrashFireworks(headCell, dimScreen) {
         if (!headCell) return;
         this.fireworks.push({
             head: { x: headCell.x, y: headCell.y },
             t0: this.time.now,
+            dim: Boolean(dimScreen),
             // Slow, readable crash streaks (>= 1s)
             duration: 1200,
             sparks: Array.from({ length: 24 }).map((_, i) => ({
                 a: (Math.PI * 2 * i) / 24,
                 s: 3.0 + (i % 4) * 0.9,
                 c: this.rainbowColors[i % this.rainbowColors.length],
-                px: null,
-                py: null,
+                x0: null,
+                y0: null,
             }))
         });
     }
@@ -47,11 +48,6 @@ export default class PlayScene extends Phaser.Scene {
             return;
         }
 
-        // Fade previous streaks instead of clearing, for persistence.
-        // Match the game's background color (#AAAAAA).
-        this.fxGraphics.fillStyle(0xAAAAAA, 0.16);
-        this.fxGraphics.fillRect(0, 0, this.scale.width, this.scale.height);
-
         const layout = this.computeLayout();
         const cellSize = layout.cellSize;
 
@@ -60,7 +56,21 @@ export default class PlayScene extends Phaser.Scene {
             const age = now - fw.t0;
             if (age >= fw.duration) continue;
             active.push(fw);
+        }
 
+        const shouldDim = active.some((fw) => fw && fw.dim);
+        if (shouldDim) {
+            // Fade previous streaks for persistence (local crash only).
+            // Match the game's background color (#AAAAAA).
+            this.fxGraphics.fillStyle(0xAAAAAA, 0.16);
+            this.fxGraphics.fillRect(0, 0, this.scale.width, this.scale.height);
+        } else {
+            // Spectators: no full-screen wash.
+            this.fxGraphics.clear();
+        }
+
+        for (const fw of active) {
+            const age = now - fw.t0;
             const t = age / fw.duration;
             // Keep strokes visible for longer; fade gently.
             const alpha = Math.max(0, 1 - (t * 0.7));
@@ -68,24 +78,21 @@ export default class PlayScene extends Phaser.Scene {
             const cx = layout.offsetX + (fw.head.x + 0.5) * cellSize;
             const cy = layout.offsetY + (fw.head.y + 0.5) * cellSize;
 
-            // Straight-line streaks (key-like, persistent)
+            // Straight-line streaks
             for (const sp of fw.sparks) {
                 const ease = 1 - Math.pow(1 - t, 2);
                 const dist = (cellSize * 0.10) + (cellSize * 1.55) * sp.s * ease;
                 const sx = cx + Math.cos(sp.a) * dist;
                 const sy = cy + Math.sin(sp.a) * dist;
 
-                if (sp.px == null || sp.py == null) {
-                    sp.px = cx;
-                    sp.py = cy;
+                if (sp.x0 == null || sp.y0 == null) {
+                    sp.x0 = cx;
+                    sp.y0 = cy;
                 }
 
                 const lw = Math.max(2, Math.floor(cellSize * 0.10));
                 this.fxGraphics.lineStyle(lw, sp.c, 0.95 * alpha);
-                this.fxGraphics.lineBetween(sp.px, sp.py, sx, sy);
-
-                sp.px = sx;
-                sp.py = sy;
+                this.fxGraphics.lineBetween(sp.x0, sp.y0, sx, sy);
             }
         }
 
@@ -245,6 +252,8 @@ export default class PlayScene extends Phaser.Scene {
     renderState(state) {
         this.graphics.clear();
 
+        const myId = this.game.net.playerId;
+
         const layout = this.computeLayout();
         const gridPxW = GRID_W * layout.cellSize;
         const gridPxH = GRID_H * layout.cellSize;
@@ -292,13 +301,12 @@ export default class PlayScene extends Phaser.Scene {
             if (prev === 'ALIVE' && p.state === 'DEAD') {
                 const head = this.lastHeads[pid];
                 // Only render fireworks when the crash happens on-grid.
-                if (this.isCellInBounds(head)) this.spawnCrashFireworks(head);
+                if (this.isCellInBounds(head)) this.spawnCrashFireworks(head, pid === myId);
             }
             this.prevPlayerStates[pid] = p.state;
         }
 
         // 3. Draw Snakes
-        const myId = this.game.net.playerId;
         const myP = state.players[myId];
 
         // Draw local lives (Only for self)
