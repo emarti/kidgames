@@ -13,6 +13,18 @@
             "#FFFF00"
         ]
     },
+    "false_coral": {
+        "name": "False Coral",
+        "head": "0xFFFFFF",
+        "pattern": [
+            "#FF0000",
+            "#FF0000",
+            "#FF0000",
+            "#000000",
+            "#FFFF00",
+            "#000000"
+        ]
+    },
     "viper": {
         "name": "Green Viper",
         "head": "0x90EE90",
@@ -51,15 +63,49 @@
             "#0000FF"
         ]
     },
-    "false_coral": {
-        "name": "False Coral",
+    "china": {
+        "name": "China Snake",
         "head": "0xFFFFFF",
         "pattern": [
             "#FF0000",
             "#FF0000",
             "#FF0000",
+            "#FFFFFF"
+        ]
+    },
+    "blippi": {
+        "name": "Blippi Snake",
+        "head": "0xFFFFFF",
+        "pattern": [
+            "#517AB2",
+            "#517AB2",
+            "#F47B20",
+            "#517AB2",
+            "#517AB2",
+            "#F47B20"
+        ]
+    },
+    "meekah": {
+        "name": "Meekah Snake",
+        "head": "0x000000",
+        "pattern": [
+            "#8A2BE2",
+            "#8A2BE2",
+            "#FFD700",
+            "#8A2BE2",
+            "#8A2BE2",
+            "#FFD700"
+        ]
+    },
+    "milk": {
+        "name": "Milk Snake",
+        "head": "0xFF0000",
+        "pattern": [
+            "#FFFFFF",
+            "#FFFFFF",
             "#000000",
-            "#FFFF00",
+            "#FF0000",
+            "#FF0000",
             "#000000"
         ]
     }

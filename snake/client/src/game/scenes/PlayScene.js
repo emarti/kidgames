@@ -18,6 +18,83 @@ export default class PlayScene extends Phaser.Scene {
         super({ key: 'PlayScene' });
     }
 
+    isCellInBounds(cell) {
+        if (!cell) return false;
+        return cell.x >= 0 && cell.x < GRID_W && cell.y >= 0 && cell.y < GRID_H;
+    }
+
+    spawnCrashFireworks(headCell) {
+        if (!headCell) return;
+        this.fireworks.push({
+            head: { x: headCell.x, y: headCell.y },
+            t0: this.time.now,
+            // Slow, readable crash streaks (>= 1s)
+            duration: 1200,
+            sparks: Array.from({ length: 24 }).map((_, i) => ({
+                a: (Math.PI * 2 * i) / 24,
+                s: 3.0 + (i % 4) * 0.9,
+                c: this.rainbowColors[i % this.rainbowColors.length],
+                px: null,
+                py: null,
+            }))
+        });
+    }
+
+    renderFireworks(now) {
+        if (!this.fxGraphics) return;
+        if (!this.fireworks || this.fireworks.length === 0) {
+            this.fxGraphics.clear();
+            return;
+        }
+
+        // Fade previous streaks instead of clearing, for persistence.
+        // Match the game's background color (#AAAAAA).
+        this.fxGraphics.fillStyle(0xAAAAAA, 0.16);
+        this.fxGraphics.fillRect(0, 0, this.scale.width, this.scale.height);
+
+        const layout = this.computeLayout();
+        const cellSize = layout.cellSize;
+
+        const active = [];
+        for (const fw of this.fireworks) {
+            const age = now - fw.t0;
+            if (age >= fw.duration) continue;
+            active.push(fw);
+
+            const t = age / fw.duration;
+            // Keep strokes visible for longer; fade gently.
+            const alpha = Math.max(0, 1 - (t * 0.7));
+
+            const cx = layout.offsetX + (fw.head.x + 0.5) * cellSize;
+            const cy = layout.offsetY + (fw.head.y + 0.5) * cellSize;
+
+            // Straight-line streaks (key-like, persistent)
+            for (const sp of fw.sparks) {
+                const ease = 1 - Math.pow(1 - t, 2);
+                const dist = (cellSize * 0.10) + (cellSize * 1.55) * sp.s * ease;
+                const sx = cx + Math.cos(sp.a) * dist;
+                const sy = cy + Math.sin(sp.a) * dist;
+
+                if (sp.px == null || sp.py == null) {
+                    sp.px = cx;
+                    sp.py = cy;
+                }
+
+                const lw = Math.max(2, Math.floor(cellSize * 0.10));
+                this.fxGraphics.lineStyle(lw, sp.c, 0.95 * alpha);
+                this.fxGraphics.lineBetween(sp.px, sp.py, sx, sy);
+
+                sp.px = sx;
+                sp.py = sy;
+            }
+        }
+
+        this.fireworks = active;
+
+        // If there are no active fireworks left, clear the FX layer.
+        if (this.fireworks.length === 0) this.fxGraphics.clear();
+    }
+
     isLobbyReady(state) {
         const net = this.game.net;
         if (!state || !net || !net.playerId) return false;
@@ -28,9 +105,25 @@ export default class PlayScene extends Phaser.Scene {
 
     create() {
         this.graphics = this.add.graphics();
+        this.fxGraphics = this.add.graphics();
+        this.fxGraphics.setDepth(90);
         this.uiText = this.add.text(10, 10, '', { fontSize: '16px', color: '#000' });
         this.centerText = this.add.text(400, 300, '', { fontSize: '32px', color: '#000', backgroundColor: '#FFFFFFAA' }).setOrigin(0.5);
         this.centerText.setDepth(100);
+
+        this.prevPlayerStates = {};
+        this.lastHeads = {};
+        this.fireworks = [];
+        this.rainbowColors = [
+            0xFF0000, // red
+            0xFF7F00, // orange
+            0xFFFF00, // yellow
+            0x00FF00, // green
+            0x00FFFF, // cyan
+            0x0000FF, // blue
+            0x8A2BE2, // violet
+            0xFF00FF, // magenta
+        ];
 
         // Input
         this.setupInput();
@@ -129,6 +222,8 @@ export default class PlayScene extends Phaser.Scene {
     update(time, delta) {
         // Standard Game Loop
         const net = this.game.net;
+        // Fireworks are purely client-side; render them even if no state yet.
+        this.renderFireworks(this.time.now);
         if (!net.latestState) return;
 
         // Poll for held keys
@@ -182,6 +277,24 @@ export default class PlayScene extends Phaser.Scene {
                 layout.cellSize - 4,
                 layout.cellSize - 4
             );
+        }
+
+        // Track transitions / last known head positions (needed because the server
+        // clears body immediately on death).
+        for (const pid of [1, 2, 3, 4]) {
+            const p = state.players[pid];
+            if (!p) continue;
+            if (p.state === 'ALIVE' && p.body && p.body.length > 0) {
+                this.lastHeads[pid] = { x: p.body[0].x, y: p.body[0].y };
+            }
+
+            const prev = this.prevPlayerStates[pid];
+            if (prev === 'ALIVE' && p.state === 'DEAD') {
+                const head = this.lastHeads[pid];
+                // Only render fireworks when the crash happens on-grid.
+                if (this.isCellInBounds(head)) this.spawnCrashFireworks(head);
+            }
+            this.prevPlayerStates[pid] = p.state;
         }
 
         // 3. Draw Snakes
@@ -248,6 +361,9 @@ export default class PlayScene extends Phaser.Scene {
 
         const layout = this.computeLayout();
         p.body.forEach((seg, i) => {
+            // Respawns intentionally place body segments off-grid so the snake
+            // "enters" the board. Don't render any squares outside the play area.
+            if (!this.isCellInBounds(seg)) return;
             const x = layout.offsetX + seg.x * layout.cellSize;
             const y = layout.offsetY + seg.y * layout.cellSize;
 
@@ -306,7 +422,7 @@ export default class PlayScene extends Phaser.Scene {
     }
 
     createSetupUI() {
-        const bg = this.add.rectangle(0, 0, 750, 520, 0xFFFFFF, 0.95);
+        const bg = this.add.rectangle(0, 0, 750, 540, 0xFFFFFF, 0.95);
         this.setupContainer.add(bg);
 
         this.setupTitle = this.add.text(0, -235, 'GAME SETUP', { fontSize: '32px', color: '#000', fontStyle: 'bold' }).setOrigin(0.5);
@@ -323,21 +439,30 @@ export default class PlayScene extends Phaser.Scene {
         // Walls mode
         this.setupContainer.add(this.add.text(-300, -140, 'Walls:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
         this.wallsButtons = {
-            walls: this.addSetupButton(-80, -140, 'Walls', () => this.game.net.send('select_walls_mode', { mode: 'walls' })),
-            no_walls: this.addSetupButton(120, -140, 'No Walls', () => this.game.net.send('select_walls_mode', { mode: 'no_walls' }))
+            walls: this.addSetupButton(-150, -140, 'Walls', () => this.game.net.send('select_walls_mode', { mode: 'walls' })),
+            no_walls: this.addSetupButton(0, -140, 'No Walls', () => this.game.net.send('select_walls_mode', { mode: 'no_walls' })),
+            klein: this.addSetupButton(180, -140, 'Klein Bottle', () => this.game.net.send('select_walls_mode', { mode: 'klein' }))
         };
 
         // Skins
         this.setupContainer.add(this.add.text(-300, -90, 'Snake:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
-        let y = -50;
         const skinKeys = Object.keys(SKINS);
         this.skinButtons = {};
-        skinKeys.forEach((key) => {
+        const startY = -50;
+        const rowStep = 40;
+        const col0 = { sampleX: -300, buttonX: -50 };
+        const col1 = { sampleX: 35, buttonX: 285 };
+        const rows = Math.ceil(skinKeys.length / 2);
+
+        skinKeys.forEach((key, index) => {
+            const col = (index < rows) ? 0 : 1;
+            const row = (index < rows) ? index : (index - rows);
+            const y = startY + (row * rowStep);
+            const layout = col === 0 ? col0 : col1;
             const g = this.add.graphics();
             this.setupContainer.add(g);
-            this.drawSkinSample(g, -300, y - 10, key);
-            this.skinButtons[key] = this.addSetupButton(-50, y, SKINS[key].name, () => this.game.net.send('select_skin', { skin: key }));
-            y += 40;
+            this.drawSkinSample(g, layout.sampleX, y - 10, key);
+            this.skinButtons[key] = this.addSetupButton(layout.buttonX, y, SKINS[key].name, () => this.game.net.send('select_skin', { skin: key }));
         });
 
         this.setupHelp = this.add.text(0, 175, '', { fontSize: '20px', color: '#000' }).setOrigin(0.5);

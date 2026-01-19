@@ -127,7 +127,7 @@ export function tryLockSpeed(state, speed) {
 }
 
 export function setWallsMode(state, mode) {
-  if (!["walls", "no_walls"].includes(mode)) return false;
+  if (!["walls", "no_walls", "klein"].includes(mode)) return false;
   state.wallsMode = mode;
   return true;
 }
@@ -236,7 +236,8 @@ export function step(state) {
 
   if (!isMoveTick) return;
 
-  const wrap = (state.wallsMode === 'no_walls');
+  const mode = state.wallsMode || 'walls';
+  const wrap = (mode === 'no_walls' || mode === 'klein');
 
   // Apply inputs, then move snakes simultaneously
   const moves = {};
@@ -253,6 +254,18 @@ export function step(state) {
     let ny = head.y + d.y;
 
     if (wrap) {
+      if (mode === 'klein') {
+        // Klein bottle: left/right wrap normally; top/bottom wrap with a twist.
+        // When crossing the top/bottom edge, mirror the x coordinate.
+        if (ny < 0) {
+          ny = state.h - 1;
+          nx = (state.w - 1) - nx;
+        } else if (ny >= state.h) {
+          ny = 0;
+          nx = (state.w - 1) - nx;
+        }
+      }
+
       nx = (nx + state.w) % state.w;
       ny = (ny + state.h) % state.h;
     }
