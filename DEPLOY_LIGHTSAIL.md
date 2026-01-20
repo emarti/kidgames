@@ -32,8 +32,7 @@ These steps apply whether you use the launch script or do a manual install.
     - **TCP 443 (HTTPS)**: open to the world.
   - You do *not* need to expose backend ports publicly; Caddy talks to the backend on localhost.
 6. DNS:
-  - If you are deploying the VM directly on its own hostname (not using CloudFront), create an **A record** for that hostname pointing to the instance Static IP.
-  - If you are using CloudFront Option B (recommended for `www.edmarti.com/games/*`), Route 53 will point `www.edmarti.com` to CloudFront; you do *not* point `www.edmarti.com` to the VM.
+  - Create an **A record** for `www.brillanmarti.com` pointing to the instance Static IP.
 7. Connect to the VM:
   - Use the Lightsail web SSH button, or
   - `ssh ubuntu@YOUR_DOMAIN` (or `ssh ubuntu@STATIC_IP`) from your machine.
@@ -47,9 +46,8 @@ Use: `infra/lightsail/lightsail_boot.sh`
 Before launching, edit the variables at the top of the script:
 
 - `SITE_ADDR`
-  - For CloudFront Option B: set `SITE_ADDR=:80`
-  - For direct hosting with Caddy TLS: set `SITE_ADDR=your-hostname` (e.g. `games.edmarti.com`)
-- Optional: `PUBLIC_URL` (helpful log output, e.g. `https://www.edmarti.com/games/`)
+  - For direct hosting with Caddy TLS: set `SITE_ADDR=www.brillanmarti.com`
+- Optional: `PUBLIC_URL` (helpful log output, e.g. `https://www.brillanmarti.com/games/`)
 - `REPO_URL` (your git URL)
 - Optional: `REPO_BRANCH`, `APP_USER`, `GAMES_PORT`
 
@@ -136,7 +134,7 @@ Configure env vars for the Caddy service:
 sudo mkdir -p /etc/systemd/system/caddy.service.d
 sudo tee /etc/systemd/system/caddy.service.d/override.conf >/dev/null <<'EOF'
 [Service]
-Environment=SITE_ADDR=:80
+Environment=SITE_ADDR=www.brillanmarti.com
 Environment=GAMES_BACKEND=127.0.0.1:8080
 Environment=GAMES_ROOT=/srv
 EOF
@@ -213,8 +211,8 @@ If you see `Missing hello handshake` in WS logs, it usually means something is c
 # If accessing the origin VM directly (useful for debugging):
 curl -I http://YOUR_LIGHTSAIL_STATIC_IP/games/
 
-# If using CloudFront Option B (the normal user-facing check):
-curl -I https://www.edmarti.com/games/
+# User-facing check:
+curl -I https://www.brillanmarti.com/games/
 ```
 
 ## Logs
@@ -267,52 +265,12 @@ docker compose up --build
   - `sudo systemctl daemon-reload && sudo systemctl restart games-backend`
   - Find what owns 8080: `sudo ss -ltnp | grep ':8080'` (or `sudo lsof -iTCP:8080 -sTCP:LISTEN -n -P`)
 
-## Route 53 (DNS) notes (S3 on `www`, Lightsail only for `/games`)
+## DNS notes
 
-Important: DNS records (including Route 53) can only route by **hostname**, not by **path**. That means you cannot have Route 53 send only `www.edmarti.com/games/*` to Lightsail while keeping `www.edmarti.com/` on S3 using DNS alone.
+This deployment assumes the Lightsail VM directly serves `www.brillanmarti.com`.
 
-You have two workable options:
-
-### Option A (simplest): use a dedicated subdomain for games
-
-- Keep `www.edmarti.com` pointing to S3 (unchanged).
-- Create a new record like `games.edmarti.com` pointing to the Lightsail **Static IP**.
-- Update this project’s `SITE_ADDR` to `games.edmarti.com`.
-
-Result: users visit `https://games.edmarti.com/games/` (or you can redirect/link to it from the main site).
-
-### Option B (same hostname): put CloudFront in front and route by path
-
-If you specifically want `https://www.edmarti.com/games/*` to go to Lightsail while other paths stay on S3:
-
-- Create a CloudFront distribution with **two origins**:
-  - Origin 1 (default): your existing S3 / CloudFront origin for `www.edmarti.com`
-  - Origin 2: your Lightsail instance as a **custom origin** (use the Lightsail Static IP)
-- Add a behavior that routes `/games*` to the Lightsail origin.
-  - Use `/games*` (not just `/games/*`) so `/games` also matches.
-  - Allowed methods: `GET, HEAD, OPTIONS`.
-  - Cache policy: `CachingDisabled` (managed policy) to avoid caching WS upgrade responses.
-  - Origin request policy: `AllViewer` (managed policy) so WS upgrade headers are forwarded.
-  - Viewer protocol policy: `Redirect HTTP to HTTPS` (recommended).
-  - Origin protocol policy: `HTTP only` (recommended; the VM does not need to terminate TLS).
-- In Route 53, point `www.edmarti.com` to CloudFront (Alias A/AAAA).
-
-Notes:
-
-- This keeps a single hostname while allowing path-based routing.
-- WebSockets should work through CloudFront as long as the `/games*` behavior forwards the required headers and is not cached.
-
-Lightsail VM settings for Option B:
-
-- You only need inbound **TCP 80** from the internet (CloudFront will connect to it).
-- You can keep **TCP 443** closed on the VM if you want.
-
-Launch script settings for Option B:
-
-- Set `SITE_ADDR=:80`
-- Set `PUBLIC_URL=https://www.edmarti.com/games/`
-
-Once your hostname resolves to the component terminating TLS (CloudFront in Option B), `https://www.edmarti.com/games/` should work.
+- Point `www.brillanmarti.com` (A/AAAA) to the instance Static IP.
+- Keep ports 80/443 open to the internet so Caddy can obtain/renew TLS.
 
 ## Appendix: if the repo is private
 

@@ -1,37 +1,14 @@
 import * as Sim from './maze_sim.js';
-import { make4DigitRoomId, nowMs } from './maze_utils.js';
-import { normalizeRoomCode, safeSend } from '../shared.js';
+import { normalizeRoomCode } from '../shared.js';
+import { countConnectedPlayers, generateRoomIdUnique, nowMs, safeBroadcast, send } from './room_utils.js';
 
 export function createMazeHost() {
   const rooms = new Map(); // roomId -> { id, state, clients: [], updatedAt }
 
   const ROOM_EXPIRE_MS = 10 * 60 * 1000;
 
-  function broadcast(room, msg) {
-    const data = JSON.stringify(msg);
-    for (const client of room.clients) {
-      if (client.readyState === 1) client.send(data);
-    }
-  }
-
-  function send(ws, msg) {
-    safeSend(ws, msg);
-  }
-
-  function countConnectedPlayers(state) {
-    let n = 0;
-    for (const pid of [1, 2, 3, 4]) {
-      if (state.players?.[pid]?.connected) n++;
-    }
-    return n;
-  }
-
-  function generateRoomIdUnique() {
-    for (let i = 0; i < 1000; i++) {
-      const id = make4DigitRoomId();
-      if (!rooms.has(id)) return id;
-    }
-    return make4DigitRoomId();
+  function generateRoomIdUniqueForHost() {
+    return generateRoomIdUnique(rooms);
   }
 
   // Fixed tick loop for all maze rooms
@@ -47,7 +24,7 @@ export function createMazeHost() {
 
       room.updatedAt = now;
       Sim.step(room.state, now);
-      broadcast(room, { type: 'state', state: room.state });
+      safeBroadcast(room, { type: 'state', state: room.state });
     }
 
     for (const id of toDelete) {
@@ -86,7 +63,7 @@ export function createMazeHost() {
       }
 
       case 'create_room': {
-        const roomId = generateRoomIdUnique();
+        const roomId = generateRoomIdUniqueForHost();
         const state = Sim.newGameState();
         const room = { id: roomId, state, clients: [ws], updatedAt: nowMs() };
         rooms.set(roomId, room);

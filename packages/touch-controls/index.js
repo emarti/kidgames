@@ -36,31 +36,57 @@ export function isTouchDevice() {
   return false;
 }
 
-export function getTouchControlsReserve({ enabled, keyW = 78, keyH = 54, gap = 8, margin = 20, extraW = 8, extraH = 16 } = {}) {
+export function getTouchControlsReserve({
+  enabled,
+  keyW = 78,
+  keyH = 54,
+  gap = 8,
+  margin = 20,
+  extraW = 8,
+  extraH = 16,
+  includeAction = false,
+  actionW,
+  actionH,
+} = {}) {
   if (!enabled) return { w: 0, h: 0 };
 
   const dpadW = (keyW * 3) + (gap * 2);
   const dpadH = (keyH * 2) + gap;
   const pauseW = (keyW * 2) + gap;
   const pauseH = keyH;
-  const totalH = dpadH + gap + pauseH;
+
+  const resolvedActionW = actionW ?? pauseW;
+  const resolvedActionH = actionH ?? keyH;
+  const actionRowH = includeAction ? (gap + resolvedActionH) : 0;
+
+  const totalH = dpadH + gap + pauseH + actionRowH;
+
+  const totalW = Math.max(dpadW, pauseW, includeAction ? resolvedActionW : 0);
 
   return {
     // This is used as a bottom-right "keep clear" rectangle.
-    w: dpadW + margin + extraW,
+    w: totalW + margin + extraW,
     h: totalH + margin + extraH,
   };
 }
 
 export function createTouchControls(scene, {
   onDir,
+  onDirDown,
+  onDirUp,
   onPause,
+  actions = [],
+  onAction,
+  onActionDown,
+  onActionUp,
   depth = 200,
   margin = 20,
   keyW = 78,
   keyH = 54,
   gap = 8,
   pauseLabel = 'Pause',
+  actionW,
+  actionH,
   theme = {
     face: '#e5e5e5',
     faceHover: '#f0f0f0',
@@ -74,33 +100,46 @@ export function createTouchControls(scene, {
   const pauseW = (keyW * 2) + gap;
   const pauseH = keyH;
 
+  const resolvedActionW = actionW ?? pauseW;
+  const resolvedActionH = actionH ?? keyH;
+
   const container = scene.add.container(0, 0);
   container.setDepth(depth);
 
   const toColorInt = (hex) => parseInt(String(hex).replace('#', '0x'), 16);
 
-  const makeKey = ({ label, w, h, fontSize, cb }) => {
+  const makeKey = ({ label, w, h, fontSize, cbDown, cbUp, themeOverride }) => {
     const key = scene.add.container(0, 0);
 
-    const bg = scene.add.rectangle(0, 0, w, h, toColorInt(theme.face), 1).setOrigin(0.5);
-    bg.setStrokeStyle(2, toColorInt(theme.stroke), 1);
+    const th = themeOverride || theme;
+
+    const bg = scene.add.rectangle(0, 0, w, h, toColorInt(th.face), 1).setOrigin(0.5);
+    bg.setStrokeStyle(2, toColorInt(th.stroke), 1);
     bg.setInteractive({ useHandCursor: true });
 
     const text = scene.add.text(0, 0, label, {
       fontSize: fontSize || '26px',
-      color: theme.text,
+      color: th.text,
       fontStyle: 'bold',
     }).setOrigin(0.5);
 
     const setFace = (face) => bg.setFillStyle(toColorInt(face), 1);
 
-    bg.on('pointerover', () => setFace(theme.faceHover));
-    bg.on('pointerout', () => setFace(theme.face));
+    bg.on('pointerover', () => setFace(th.faceHover));
     bg.on('pointerdown', () => {
-      setFace(theme.faceDown);
-      if (cb) cb();
+      setFace(th.faceDown);
+      if (cbDown) cbDown();
     });
-    bg.on('pointerup', () => setFace(theme.faceHover));
+    bg.on('pointerup', () => {
+      setFace(th.faceHover);
+      if (cbUp) cbUp();
+    });
+
+    // If the finger slides off, treat it as a release for hold-based controls.
+    bg.on('pointerout', () => {
+      setFace(th.face);
+      if (cbUp) cbUp();
+    });
 
     key.add([bg, text]);
     key._bg = bg;
@@ -113,22 +152,62 @@ export function createTouchControls(scene, {
     w: pauseW,
     h: pauseH,
     fontSize: '22px',
-    cb: () => onPause && onPause(),
+    cbDown: () => onPause && onPause(),
   });
 
-  const upBtn = makeKey({ label: '▲', w: keyW, h: keyH, cb: () => onDir && onDir('UP') });
-  const leftBtn = makeKey({ label: '◀', w: keyW, h: keyH, cb: () => onDir && onDir('LEFT') });
-  const downBtn = makeKey({ label: '▼', w: keyW, h: keyH, cb: () => onDir && onDir('DOWN') });
-  const rightBtn = makeKey({ label: '▶', w: keyW, h: keyH, cb: () => onDir && onDir('RIGHT') });
+  const dirDown = (dir) => {
+    if (onDirDown) onDirDown(dir);
+    else if (onDir) onDir(dir);
+  };
+  const dirUp = (dir) => {
+    if (onDirUp) onDirUp(dir);
+  };
 
-  container.add([pauseBtn, upBtn, leftBtn, downBtn, rightBtn]);
+  const upBtn = makeKey({ label: '▲', w: keyW, h: keyH, cbDown: () => dirDown('UP'), cbUp: () => dirUp('UP') });
+  const leftBtn = makeKey({ label: '◀', w: keyW, h: keyH, cbDown: () => dirDown('LEFT'), cbUp: () => dirUp('LEFT') });
+  const downBtn = makeKey({ label: '▼', w: keyW, h: keyH, cbDown: () => dirDown('DOWN'), cbUp: () => dirUp('DOWN') });
+  const rightBtn = makeKey({ label: '▶', w: keyW, h: keyH, cbDown: () => dirDown('RIGHT'), cbUp: () => dirUp('RIGHT') });
+
+  const actionButtons = [];
+  for (const a of actions) {
+    if (!a) continue;
+    const id = String(a.id ?? 'action');
+    const label = String(a.label ?? id);
+    const actionTheme = a.theme && typeof a.theme === 'object' ? a.theme : undefined;
+    const btn = makeKey({
+      label,
+      w: resolvedActionW,
+      h: resolvedActionH,
+      fontSize: '22px',
+      themeOverride: actionTheme,
+      cbDown: () => {
+        if (onActionDown) onActionDown(id);
+        else if (onAction) onAction(id);
+        else if (typeof a.onPress === 'function') a.onPress(id);
+      },
+      cbUp: () => {
+        if (onActionUp) onActionUp(id);
+      }
+    });
+    actionButtons.push({ id, btn });
+  }
+
+  container.add([pauseBtn, upBtn, leftBtn, downBtn, rightBtn, ...actionButtons.map((a) => a.btn)]);
 
   const position = () => {
     const W = scene.scale.width;
     const H = scene.scale.height;
 
+    const actionN = actionButtons.length;
+    const actionsBlockH = actionN > 0
+      ? (resolvedActionH * actionN) + (gap * (actionN - 1))
+      : 0;
+    // Extra vertical space needed below the d-pad to keep action buttons on-screen.
+    // The layout uses: [dpad] + gap + [actions...]
+    const actionsBelowDpadH = actionN > 0 ? (gap + actionsBlockH) : 0;
+
     const baseX = W - margin - (dpadW / 2);
-    const baseY = H - margin - (dpadH / 2);
+    const baseY = H - margin - (dpadH / 2) - actionsBelowDpadH;
 
     upBtn.setPosition(baseX, baseY - (keyH / 2) - (gap / 2));
     leftBtn.setPosition(baseX - (keyW + gap), baseY + (keyH / 2) + (gap / 2));
@@ -136,6 +215,15 @@ export function createTouchControls(scene, {
     rightBtn.setPosition(baseX + (keyW + gap), baseY + (keyH / 2) + (gap / 2));
 
     pauseBtn.setPosition(baseX, baseY - (dpadH / 2) - gap - (pauseH / 2));
+
+    // Action buttons go below the d-pad (centered).
+    if (actionButtons.length > 0) {
+      const actionY = baseY + (dpadH / 2) + gap + (resolvedActionH / 2);
+      // If multiple, stack them downward.
+      for (let i = 0; i < actionButtons.length; i++) {
+        actionButtons[i].btn.setPosition(baseX, actionY + i * (resolvedActionH + gap));
+      }
+    }
   };
 
   position();
@@ -151,7 +239,7 @@ export function createTouchControls(scene, {
 
   return {
     container,
-    buttons: { pauseBtn, upBtn, leftBtn, downBtn, rightBtn },
+    buttons: { pauseBtn, upBtn, leftBtn, downBtn, rightBtn, actionButtons },
     position,
     destroy: cleanup,
   };

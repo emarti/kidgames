@@ -65,6 +65,28 @@ RUN cd maze/client && npm run build
 
 
 ########################
+# Comet client build
+########################
+FROM node:20-slim AS comet-client-build
+
+WORKDIR /repo
+
+# Shared local package dependency used by clients
+COPY packages/touch-controls/ ./packages/touch-controls/
+
+# Install deps (cache-friendly)
+COPY comet/client/package*.json ./comet/client/
+RUN cd comet/client && npm install --no-audit --no-fund
+
+# App source
+COPY comet/client/ ./comet/client/
+
+# Host comet under /games/comet/
+ENV VITE_BASE=/games/comet/
+RUN cd comet/client && npm run build
+
+
+########################
 # Gateway (Caddy) image
 ########################
 FROM caddy:2-alpine AS gateway
@@ -81,6 +103,10 @@ COPY --from=snake-client-build /repo/snake/client/dist/ /srv/games/snake/
 # Maze client build output lives at /games/maze/
 RUN mkdir -p /srv/games/maze
 COPY --from=maze-client-build /repo/maze/client/dist/ /srv/games/maze/
+
+# Comet client build output lives at /games/comet/
+RUN mkdir -p /srv/games/comet
+COPY --from=comet-client-build /repo/comet/client/dist/ /srv/games/comet/
 
 # Caddy config
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile

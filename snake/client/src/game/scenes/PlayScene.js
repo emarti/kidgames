@@ -25,9 +25,10 @@ export default class PlayScene extends Phaser.Scene {
 
     spawnCrashFireworks(headCell, dimScreen) {
         if (!headCell) return;
+        const start = Number.isFinite(this.time?.now) ? this.time.now : performance.now();
         this.fireworks.push({
             head: { x: headCell.x, y: headCell.y },
-            t0: this.time.now,
+            t0: start,
             dim: Boolean(dimScreen),
             // Slow, readable crash streaks (>= 1s)
             duration: 1200,
@@ -45,28 +46,32 @@ export default class PlayScene extends Phaser.Scene {
         if (!this.fxGraphics) return;
         if (!this.fireworks || this.fireworks.length === 0) {
             this.fxGraphics.clear();
+            if (this.dimRect) this.dimRect.setVisible(false);
             return;
         }
+
+        // Fireworks are redrawn every frame. Keep the layer clean so spectators
+        // never see a persistent wash.
+        this.fxGraphics.clear();
 
         const layout = this.computeLayout();
         const cellSize = layout.cellSize;
 
         const active = [];
         for (const fw of this.fireworks) {
+            if (!fw || !Number.isFinite(fw.t0) || !Number.isFinite(fw.duration) || fw.duration <= 0) continue;
             const age = now - fw.t0;
-            if (age >= fw.duration) continue;
+            if (!Number.isFinite(age) || age < 0 || age >= fw.duration) continue;
             active.push(fw);
         }
 
         const shouldDim = active.some((fw) => fw && fw.dim);
-        if (shouldDim) {
-            // Fade previous streaks for persistence (local crash only).
-            // Match the game's background color (#AAAAAA).
-            this.fxGraphics.fillStyle(0xAAAAAA, 0.16);
-            this.fxGraphics.fillRect(0, 0, this.scale.width, this.scale.height);
-        } else {
-            // Spectators: no full-screen wash.
-            this.fxGraphics.clear();
+        if (this.dimRect) {
+            this.dimRect.setVisible(shouldDim);
+            if (shouldDim) {
+                this.dimRect.setPosition(0, 0);
+                this.dimRect.setSize(this.scale.width, this.scale.height);
+            }
         }
 
         for (const fw of active) {
@@ -97,9 +102,7 @@ export default class PlayScene extends Phaser.Scene {
         }
 
         this.fireworks = active;
-
-        // If there are no active fireworks left, clear the FX layer.
-        if (this.fireworks.length === 0) this.fxGraphics.clear();
+        if (this.fireworks.length === 0 && this.dimRect) this.dimRect.setVisible(false);
     }
 
     isLobbyReady(state) {
@@ -114,6 +117,18 @@ export default class PlayScene extends Phaser.Scene {
         this.graphics = this.add.graphics();
         this.fxGraphics = this.add.graphics();
         this.fxGraphics.setDepth(90);
+
+        // Local-only dim overlay (do not affect spectators)
+        this.dimRect = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0.35);
+        this.dimRect.setOrigin(0, 0);
+        this.dimRect.setDepth(80);
+        this.dimRect.setVisible(false);
+        this.scale.on('resize', () => {
+            if (!this.dimRect) return;
+            this.dimRect.setPosition(0, 0);
+            this.dimRect.setSize(this.scale.width, this.scale.height);
+        });
+
         this.uiText = this.add.text(10, 10, '', { fontSize: '16px', color: '#000' });
         this.centerText = this.add.text(400, 300, '', { fontSize: '32px', color: '#000', backgroundColor: '#FFFFFFAA' }).setOrigin(0.5);
         this.centerText.setDepth(100);
@@ -277,12 +292,24 @@ export default class PlayScene extends Phaser.Scene {
             );
         }
 
-        // 2. Draw Apple
+        // 2. Draw Food
+        // Blue (main): grows snake (+2 over two move cycles)
         if (state.apple) {
-            this.graphics.fillStyle(0xFF0000);
+            this.graphics.fillStyle(0x0066FF);
             this.graphics.fillRect(
                 layout.offsetX + state.apple.x * layout.cellSize + 2,
                 layout.offsetY + state.apple.y * layout.cellSize + 2,
+                layout.cellSize - 4,
+                layout.cellSize - 4
+            );
+        }
+
+        // Red (shrink): appears only when a snake is long; shrinks (-2 over two move cycles)
+        if (state.redApple) {
+            this.graphics.fillStyle(0xFF0000);
+            this.graphics.fillRect(
+                layout.offsetX + state.redApple.x * layout.cellSize + 2,
+                layout.offsetY + state.redApple.y * layout.cellSize + 2,
                 layout.cellSize - 4,
                 layout.cellSize - 4
             );

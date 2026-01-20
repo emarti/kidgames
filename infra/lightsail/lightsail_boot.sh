@@ -24,11 +24,11 @@ fi
 # - Customize REPO_URL below.
 #
 # Notes:
-# - If you deploy behind CloudFront (recommended for routing only /games on www),
-#   set SITE_ADDR=':80' and set PUBLIC_URL='https://www.edmarti.com/games/'.
+# - This setup assumes direct hosting on a single hostname (no CloudFront).
+#   Set SITE_ADDR to your hostname and ensure DNS points at the instance.
 
-SITE_ADDR="${SITE_ADDR:-games.edmarti.com}"        # e.g. ':80' behind CloudFront, or 'example.com' for direct TLS
-PUBLIC_URL="${PUBLIC_URL:-https://games.edmarti.com/games/}"         # e.g. 'https://www.edmarti.com/games/' (optional, just for log output)
+SITE_ADDR="${SITE_ADDR:-www.brillanmarti.com}"        # hostname Caddy should serve (direct TLS)
+PUBLIC_URL="${PUBLIC_URL:-https://www.brillanmarti.com/games/}"         # optional, just for log output
 REPO_URL="${REPO_URL:-https://github.com/emarti/kidgames.git}"            # e.g. "https://github.com/emarti/kidgames.git" or your git remote
 REPO_BRANCH="${REPO_BRANCH:-main}"  # branch to deploy
 APP_USER="${APP_USER:-ubuntu}"      # default Ubuntu user on Lightsail
@@ -147,11 +147,15 @@ su - "$APP_USER" -c "cd '$APP_DIR/snake/client' && NODE_OPTIONS=--max-old-space-
 npm_install "$APP_DIR/maze/client" client
 su - "$APP_USER" -c "cd '$APP_DIR/maze/client' && NODE_OPTIONS=--max-old-space-size=$BUILD_MAX_OLD_SPACE_MB VITE_BASE=/games/maze/ npm run build"
 
+npm_install "$APP_DIR/comet/client" client
+su - "$APP_USER" -c "cd '$APP_DIR/comet/client' && NODE_OPTIONS=--max-old-space-size=$BUILD_MAX_OLD_SPACE_MB VITE_BASE=/games/comet/ npm run build"
+
 log "Deploying static files to /srv"
-mkdir -p /srv/games /srv/games/snake /srv/games/maze
+mkdir -p /srv/games /srv/games/snake /srv/games/maze /srv/games/comet
 rsync -a --delete "$APP_DIR/infra/site/games/" /srv/games/
 rsync -a --delete "$APP_DIR/snake/client/dist/" /srv/games/snake/
 rsync -a --delete "$APP_DIR/maze/client/dist/" /srv/games/maze/
+rsync -a --delete "$APP_DIR/comet/client/dist/" /srv/games/comet/
 chmod -R a+rX /srv
 
 log "Installing Caddyfile"

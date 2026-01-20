@@ -1,17 +1,18 @@
-import * as Sim from './snake_sim.js';
+import * as Sim from './comet_sim.js';
 import { normalizeRoomCode } from '../shared.js';
-import { countConnectedPlayers, generateRoomIdUnique, nowMs, safeBroadcast, send } from './room_utils.js';
+import { countConnectedPlayers, generateRoomIdUnique, nowMs, pickOpenPlayerId, safeBroadcast, send } from './room_utils.js';
 
-export function createSnakeHost() {
+export function createCometHost() {
   const rooms = new Map(); // roomId -> { id, state, clients: [], updatedAt }
 
   const ROOM_EXPIRE_MS = 10 * 60 * 1000;
+  const TICK_MS = 50; // smoother than snake/maze; still lightweight
 
   function generateRoomIdUniqueForHost() {
     return generateRoomIdUnique(rooms);
   }
 
-  // Fixed tick loop for all snake rooms
+  // Fixed tick loop for all comet rooms
   setInterval(() => {
     const now = nowMs();
     const toDelete = [];
@@ -23,15 +24,15 @@ export function createSnakeHost() {
       }
 
       room.updatedAt = now;
-      Sim.step(room.state);
+      Sim.step(room.state, now);
       safeBroadcast(room, { type: 'state', state: room.state });
     }
 
     for (const id of toDelete) {
       rooms.delete(id);
-      console.log(`[ws][snake] Room ${id} expired`);
+      console.log(`[ws][comet] Room ${id} expired`);
     }
-  }, 150);
+  }, TICK_MS);
 
   function onConnect(ws) {
     ws.room = null;
@@ -64,7 +65,7 @@ export function createSnakeHost() {
 
       case 'create_room': {
         const roomId = generateRoomIdUniqueForHost();
-        const state = Sim.newGameState();
+        const state = Sim.newGameState({ now: nowMs() });
         const room = { id: roomId, state, clients: [ws], updatedAt: nowMs() };
         rooms.set(roomId, room);
 
@@ -89,7 +90,7 @@ export function createSnakeHost() {
           return;
         }
 
-        // Idempotent join: if this socket is already in the room, just re-ack.
+        // Idempotent join
         if (room.clients.includes(ws) && ws.playerId) {
           ws.room = roomId;
           send(ws, { type: 'room_joined', roomId, playerId: ws.playerId, state: room.state });
@@ -97,17 +98,10 @@ export function createSnakeHost() {
         }
 
         if (ws.room && ws.room !== roomId) {
-          // Leave previous room cleanly
           onClose(ws);
         }
 
-        // Determine player ID
-        let pid = null;
-        if (!room.state.players[1].connected) pid = 1;
-        else if (!room.state.players[2].connected) pid = 2;
-        else if (!room.state.players[3].connected) pid = 3;
-        else if (!room.state.players[4].connected) pid = 4;
-
+        const pid = pickOpenPlayerId(room.state);
         if (!pid) {
           send(ws, { type: 'error', message: 'Room full' });
           return;
@@ -122,70 +116,68 @@ export function createSnakeHost() {
         break;
       }
 
-      case 'input': {
-        if (!ws.room) return;
-        const r = rooms.get(ws.room);
-        if (r && ws.playerId) Sim.queueInput(r.state, ws.playerId, msg.dir);
-        break;
-      }
-
       case 'pause': {
         if (!ws.room) return;
-        const r = rooms.get(ws.room);
-        if (r && ws.playerId) Sim.togglePause(r.state, ws.playerId);
+        const room = rooms.get(ws.room);
+        if (room && ws.playerId) Sim.togglePause(room.state, ws.playerId);
         break;
       }
 
       case 'resume': {
         if (!ws.room) return;
-        const r = rooms.get(ws.room);
-        if (r && ws.playerId) Sim.resumeGame(r.state, ws.playerId);
+        const room = rooms.get(ws.room);
+        if (room && ws.playerId) Sim.resumeGame(room.state, ws.playerId);
         break;
       }
 
       case 'restart': {
         if (!ws.room) return;
-        const r = rooms.get(ws.room);
-        if (r) r.state = Sim.newGame(r.state);
+        const room = rooms.get(ws.room);
+        if (room) room.state = Sim.newGame(room.state, nowMs());
         break;
       }
 
-      case 'select_speed': {
+      case 'select_topology': {
         if (!ws.room) return;
-        const r = rooms.get(ws.room);
-        if (r) Sim.tryLockSpeed(r.state, msg.speed);
+        const room = rooms.get(ws.room);
+        if (room) Sim.setTopology(room.state, msg.mode);
         break;
       }
 
-      case 'select_walls_mode': {
-        if (!ws.room) return;
-        const r = rooms.get(ws.room);
-        if (r) Sim.setWallsMode(r.state, msg.mode);
+      case 'select_color': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (room) Sim.trySelectColor(room.state, ws.playerId, msg.color);
         break;
       }
 
-      case 'select_skin': {
-        if (!ws.room) return;
-        const r = rooms.get(ws.room);
-        if (r && ws.playerId) Sim.trySelectSkin(r.state, ws.playerId, msg.skin);
+      case 'select_shape': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (room) Sim.trySelectShape(room.state, ws.playerId, msg.shape);
         break;
       }
 
-      case 'request_respawn': {
-        if (!ws.room) return;
-        const r = rooms.get(ws.room);
-        if (r && ws.playerId) Sim.requestRespawn(r.state, ws.playerId);
+      case 'input': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        Sim.applyInput(room.state, ws.playerId, {
+          turn: msg.turn,
+          thrust: msg.thrust,
+          brake: msg.brake,
+          shoot: msg.shoot,
+        });
         break;
       }
 
       default:
-        // ignore unknown
         break;
     }
   }
 
   return {
-    gameId: 'snake',
+    gameId: 'comet',
     onConnect,
     onClose,
     handleMessage,

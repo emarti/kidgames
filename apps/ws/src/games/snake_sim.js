@@ -37,6 +37,7 @@ export function newGameState({ w = 30, h = 22 } = {}) {
     speedLocked: false,
     wallsMode: "walls",       // "walls" | "no_walls"
     apple: null,
+    redApple: null,
     players: {
       1: newPlayerState(1, w, h),
       2: newPlayerState(2, w, h),
@@ -44,7 +45,7 @@ export function newGameState({ w = 30, h = 22 } = {}) {
       4: newPlayerState(4, w, h)
     }
   };
-  spawnApple(state);
+  spawnFoods(state);
   return state;
 }
 
@@ -66,6 +67,7 @@ export function basePlayer(id, dir) {
     dir,
     pendingDir: dir,
     grow: 0,
+    shrink: 0,
     body: [],
     lengthAtLastDeath: 3
   };
@@ -110,6 +112,7 @@ function respawnPlayer(state, pid) {
   }
 
   p.grow = 0;
+  p.shrink = 0;
   p.state = "ALIVE";
   delete p.deathReason;
 }
@@ -283,7 +286,8 @@ export function step(state) {
     }
   }
 
-  const eatsApple = { 1: false, 2: false, 3: false, 4: false };
+  const eatsBlue = { 1: false, 2: false, 3: false, 4: false };
+  const eatsRed = { 1: false, 2: false, 3: false, 4: false };
   const dies = { 1: false, 2: false, 3: false, 4: false };
 
   // Head-to-head collisions (mutual destruction if moving to same cell)
@@ -323,9 +327,12 @@ export function step(state) {
       continue;
     }
 
-    // apple
+    // Foods
     if (state.apple && nh.x === state.apple.x && nh.y === state.apple.y) {
-      eatsApple[pid] = true;
+      eatsBlue[pid] = true;
+    }
+    if (state.redApple && nh.x === state.redApple.x && nh.y === state.redApple.y) {
+      eatsRed[pid] = true;
     }
   }
 
@@ -334,10 +341,17 @@ export function step(state) {
     if (!moves[pid] || dies[pid]) continue;
     const p = state.players[pid];
     const nh = moves[pid];
+    const lenAtEat = p.body.length;
     p.body.unshift({ x: nh.x, y: nh.y });
 
-    if (eatsApple[pid]) {
+    // Blue food: +2 length over two move cycles (existing behavior)
+    if (eatsBlue[pid]) {
       p.grow += 2;
+    }
+
+    // Red food: -2 length over two move cycles, but no effect at length 3
+    if (eatsRed[pid]) {
+      if (lenAtEat > 3) p.shrink += 2;
     }
 
     if (p.grow > 0) {
@@ -345,12 +359,31 @@ export function step(state) {
     } else {
       p.body.pop();
     }
+
+    // Apply pending shrink: pop one extra tail segment per move tick.
+    // Never shrink below length 3; discard any remaining shrink debt.
+    if (p.shrink > 0) {
+      if (p.body.length <= 3) {
+        p.shrink = 0;
+      } else {
+        p.body.pop();
+        p.shrink--;
+        if (p.body.length <= 3) p.shrink = 0;
+      }
+    }
   }
 
-  // Resolve apple
+  // Resolve foods
   let anyEat = false;
-  for (const pid of [1, 2, 3, 4]) if (eatsApple[pid]) anyEat = true;
-  if (anyEat) spawnApple(state);
+  for (const pid of [1, 2, 3, 4]) {
+    if (eatsBlue[pid] || eatsRed[pid]) anyEat = true;
+  }
+  if (anyEat) {
+    // If either food is eaten, both disappear and rematerialize.
+    state.apple = null;
+    state.redApple = null;
+    spawnFoods(state);
+  }
 
   // Resolve deaths
   for (const pid of [1, 2, 3, 4]) {
@@ -360,21 +393,45 @@ export function step(state) {
   }
 }
 
-function spawnApple(state) {
+function shouldSpawnRedApple(state) {
+  for (const pid of [1, 2, 3, 4]) {
+    const p = state.players[pid];
+    if (!p) continue;
+    if (p.state !== 'ALIVE') continue;
+    if (!p.body || p.body.length === 0) continue;
+    if (p.body.length > 30) return true;
+  }
+  return false;
+}
+
+function spawnOneFood(state, forbidden) {
+  for (let tries = 0; tries < 500; tries++) {
+    const x = randInt(state.w);
+    const y = randInt(state.h);
+    if (!forbidden.has(key(x, y))) {
+      return { x, y };
+    }
+  }
+  return null;
+}
+
+function spawnFoods(state) {
   const forbidden = new Set();
   for (const pid of [1, 2, 3, 4]) {
     const p = state.players[pid];
     for (const c of p.body) forbidden.add(key(c.x, c.y));
   }
-  for (let tries = 0; tries < 500; tries++) {
-    const x = randInt(state.w);
-    const y = randInt(state.h);
-    if (!forbidden.has(key(x, y))) {
-      state.apple = { x, y };
-      return;
-    }
+
+  const blue = spawnOneFood(state, forbidden);
+  state.apple = blue;
+  if (blue) forbidden.add(key(blue.x, blue.y));
+
+  // Red apple appears only on respawn, and only if some snake is longer than 30.
+  if (shouldSpawnRedApple(state)) {
+    state.redApple = spawnOneFood(state, forbidden);
+  } else {
+    state.redApple = null;
   }
-  state.apple = null;
 }
 
 function key(x, y) {

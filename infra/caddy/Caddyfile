@@ -3,7 +3,7 @@
 
   # Convenience redirect (nice for a single-purpose VM)
   @rootOnly path /
-  redir @rootOnly https://martilab.com 308
+  redir @rootOnly /games/ 308
 
   @gamesNoSlash path /games
   redir @gamesNoSlash /games/ 308
@@ -14,12 +14,19 @@
   @mazeNoSlash path /games/maze
   redir @mazeNoSlash /games/maze/ 308
 
+  @cometNoSlash path /games/comet
+  redir @cometNoSlash /games/comet/ 308
+
   # WebSocket endpoint (reverse-proxied to the game server)
   handle /games/snake/ws* {
     reverse_proxy {$GAMES_BACKEND:games-backend:8080}
   }
 
   handle /games/maze/ws* {
+    reverse_proxy {$GAMES_BACKEND:games-backend:8080}
+  }
+
+  handle /games/comet/ws* {
     reverse_proxy {$GAMES_BACKEND:games-backend:8080}
   }
 
