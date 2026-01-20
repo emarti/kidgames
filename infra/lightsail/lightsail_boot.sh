@@ -24,11 +24,12 @@ fi
 # - Customize REPO_URL below.
 #
 # Notes:
-# - This setup assumes direct hosting on a single hostname (no CloudFront).
-#   Set SITE_ADDR to your hostname and ensure DNS points at the instance.
+# - This setup assumes direct hosting (no CloudFront).
+# - SITE_ADDR can be a single hostname (e.g. "www.example.com") or a comma-separated
+#   list (e.g. "example.com, www.example.com") if you want both to work.
 
-SITE_ADDR="${SITE_ADDR:-www.brillanmarti.com}"        # hostname Caddy should serve (direct TLS)
-PUBLIC_URL="${PUBLIC_URL:-https://www.brillanmarti.com/games/}"         # optional, just for log output
+SITE_ADDR="${SITE_ADDR:-brillanmarti.com, www.brillanmarti.com}"        # host(s) Caddy should serve (direct TLS)
+PUBLIC_URL="${PUBLIC_URL:-https://brillanmarti.com/games/}"         # optional, just for log output
 REPO_URL="${REPO_URL:-https://github.com/emarti/kidgames.git}"            # e.g. "https://github.com/emarti/kidgames.git" or your git remote
 REPO_BRANCH="${REPO_BRANCH:-main}"  # branch to deploy
 APP_USER="${APP_USER:-ubuntu}"      # default Ubuntu user on Lightsail
@@ -165,7 +166,7 @@ log "Configuring Caddy environment (SITE_ADDR + backend targets + root)"
 mkdir -p /etc/systemd/system/caddy.service.d
 cat > /etc/systemd/system/caddy.service.d/override.conf <<EOF
 [Service]
-Environment=SITE_ADDR=$SITE_ADDR
+Environment="SITE_ADDR=$SITE_ADDR"
 Environment=GAMES_BACKEND=127.0.0.1:$GAMES_PORT
 Environment=GAMES_ROOT=/srv
 EOF

@@ -1,5 +1,25 @@
-{$SITE_ADDR::80} {
+{
+  # Enable HTTPS when possible, but don't force-redirect HTTP->HTTPS.
+  # This avoids Firefox PR_END_OF_FILE_ERROR when a browser tries https://localhost
+  # while the server is configured for HTTP-only.
+  auto_https disable_redirects
+
+  # Default to Let's Encrypt production. Override (e.g. staging) via ACME_CA.
+  # NOTE: staging certs are not trusted by browsers.
+  acme_ca {$ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
+}
+
+# SITE_ADDR may be a single hostname (e.g. "www.example.com") or a comma-separated
+# list (e.g. "example.com, www.example.com") so Caddy serves both.
+{$SITE_ADDR:localhost} {
   encode zstd gzip
+
+  # Canonicalize www -> apex (covers /games and all other paths).
+  # Customize via env vars if needed.
+  @www host {$WWW_HOST:www.brillanmarti.com}
+  handle @www {
+    redir https://{$CANONICAL_HOST:brillanmarti.com}{uri} 308
+  }
 
   # Convenience redirect (nice for a single-purpose VM)
   @rootOnly path /

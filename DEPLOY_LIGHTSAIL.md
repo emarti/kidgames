@@ -32,7 +32,8 @@ These steps apply whether you use the launch script or do a manual install.
     - **TCP 443 (HTTPS)**: open to the world.
   - You do *not* need to expose backend ports publicly; Caddy talks to the backend on localhost.
 6. DNS:
-  - Create an **A record** for `www.brillanmarti.com` pointing to the instance Static IP.
+  - Create an **A record** for `brillanmarti.com` pointing to the instance Static IP.
+  - (Recommended) Also create an **A record** for `www.brillanmarti.com` pointing to the same Static IP so Caddy can redirect `www` → apex.
 7. Connect to the VM:
   - Use the Lightsail web SSH button, or
   - `ssh ubuntu@YOUR_DOMAIN` (or `ssh ubuntu@STATIC_IP`) from your machine.
@@ -46,8 +47,10 @@ Use: `infra/lightsail/lightsail_boot.sh`
 Before launching, edit the variables at the top of the script:
 
 - `SITE_ADDR`
-  - For direct hosting with Caddy TLS: set `SITE_ADDR=www.brillanmarti.com`
-- Optional: `PUBLIC_URL` (helpful log output, e.g. `https://www.brillanmarti.com/games/`)
+  - For direct hosting with Caddy TLS: set `SITE_ADDR=brillanmarti.com`
+  - If you want both apex + www to work, use a comma-separated list:
+    - `SITE_ADDR="brillanmarti.com, www.brillanmarti.com"`
+- Optional: `PUBLIC_URL` (helpful log output, e.g. `https://brillanmarti.com/games/`)
 - `REPO_URL` (your git URL)
 - Optional: `REPO_BRANCH`, `APP_USER`, `GAMES_PORT`
 
@@ -134,7 +137,7 @@ Configure env vars for the Caddy service:
 sudo mkdir -p /etc/systemd/system/caddy.service.d
 sudo tee /etc/systemd/system/caddy.service.d/override.conf >/dev/null <<'EOF'
 [Service]
-Environment=SITE_ADDR=www.brillanmarti.com
+Environment="SITE_ADDR=brillanmarti.com, www.brillanmarti.com"
 Environment=GAMES_BACKEND=127.0.0.1:8080
 Environment=GAMES_ROOT=/srv
 EOF
@@ -212,7 +215,7 @@ If you see `Missing hello handshake` in WS logs, it usually means something is c
 curl -I http://YOUR_LIGHTSAIL_STATIC_IP/games/
 
 # User-facing check:
-curl -I https://www.brillanmarti.com/games/
+curl -I https://brillanmarti.com/games/
 ```
 
 ## Logs
@@ -252,11 +255,23 @@ sudo systemctl restart games-backend caddy
 Docker remains supported for local development/debugging:
 
 ```bash
-export SITE_ADDR=localhost:80
+export SITE_ADDR=localhost
 docker compose up --build
 ```
 
 ## Troubleshooting
+
+- SSL error in browser / Caddy can't get a trusted certificate
+  - If you visit by IP (e.g. `https://YOUR_LIGHTSAIL_STATIC_IP/games/`), you can get a certificate/name mismatch. Use the domain in `SITE_ADDR`.
+  - If Caddy logs mention `NXDOMAIN`, your public DNS records don’t exist yet. Check from the VM:
+    - `dig +short A brillanmarti.com @1.1.1.1`
+    - `dig +short A www.brillanmarti.com @1.1.1.1`
+    - `dig +short AAAA brillanmarti.com @1.1.1.1`
+    If those are empty, create/fix the corresponding `A` record(s) pointing at the instance Static IP (only add `AAAA` if you actually have IPv6).
+  - Confirm Lightsail firewall allows inbound `80/tcp` and `443/tcp`.
+  - If you see `acme-staging` in Caddy logs, you're using Let’s Encrypt staging (certs are not trusted by browsers).
+    - Remove any staging config, or set `ACME_CA` to production:
+      - `Environment=ACME_CA=https://acme-v02.api.letsencrypt.org/directory`
 
 - HTTPS not issuing: DNS not pointing at instance yet, or ports 80/443 not open.
 - `502` from Caddy: check `sudo systemctl status games-backend`.
@@ -267,9 +282,10 @@ docker compose up --build
 
 ## DNS notes
 
-This deployment assumes the Lightsail VM directly serves `www.brillanmarti.com`.
+This deployment assumes the Lightsail VM directly serves `brillanmarti.com`.
 
-- Point `www.brillanmarti.com` (A/AAAA) to the instance Static IP.
+- Point `brillanmarti.com` (A/AAAA) to the instance Static IP.
+- (Recommended) Also point `www.brillanmarti.com` (A/AAAA) to the same Static IP so Caddy can redirect `www` → apex.
 - Keep ports 80/443 open to the internet so Caddy can obtain/renew TLS.
 
 ## Appendix: if the repo is private

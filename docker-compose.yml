@@ -6,8 +6,9 @@ services:
       target: gateway
     environment:
       # Caddy site address (matches infra/caddy/Caddyfile)
-      # Default to localhost:80 for local dev to avoid auto-HTTPS/local CA noise.
-      - SITE_ADDR=${SITE_ADDR:-localhost:80}
+      # Default to localhost for local dev so https://localhost works (no PR_END_OF_FILE_ERROR).
+      # (Caddy will use its internal/local certs for localhost.)
+      - SITE_ADDR=${SITE_ADDR:-localhost}
     ports:
       - "80:80"
       - "443:443"
