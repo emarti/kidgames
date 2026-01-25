@@ -573,10 +573,15 @@ export function drawAvatarPixels(graphics, cx, cy, cellSize, avatarName, colorHe
   const py = mask.length;
 
   // Fit within the cell; leave a bit of padding.
-  const pad = Math.max(1, Math.floor(cellSize * 0.10));
+  // Slightly smaller padding helps on tablets where cells can land in the
+  // "in-between" size range where pixel scaling would otherwise stay at 1.
+  const pad = Math.max(1, Math.floor(cellSize * 0.06));
   const size = Math.max(8, cellSize - pad * 2);
 
-  const pixelSize = Math.max(1, Math.floor(size / Math.max(px, py)));
+  // Prefer rounding so the avatar grows sooner, but cap oversize so it doesn't
+  // dominate the maze tile too much.
+  let pixelSize = Math.max(1, Math.round(size / Math.max(px, py)));
+  while (pixelSize > 1 && (py * pixelSize) > (cellSize * 1.15)) pixelSize -= 1;
   const w = px * pixelSize;
   const h = py * pixelSize;
 
