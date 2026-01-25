@@ -490,10 +490,119 @@ export default class PlayScene extends Phaser.Scene {
     this._touchHeld = { up: false, down: false, left: false, right: false, shoot: false };
   }
 
+  spawnCrashFireworks(worldX, worldY, dimScreen) {
+    if (!Number.isFinite(worldX) || !Number.isFinite(worldY)) return;
+    const start = Number.isFinite(this.time?.now) ? this.time.now : performance.now();
+    this.fireworks.push({
+      x: worldX,
+      y: worldY,
+      t0: start,
+      dim: Boolean(dimScreen),
+      duration: 1200,
+      sparks: Array.from({ length: 28 }).map((_, i) => ({
+        a: (Math.PI * 2 * i) / 28,
+        s: 2.6 + (i % 5) * 0.85,
+        c: this.rainbowColors[i % this.rainbowColors.length],
+        x0: null,
+        y0: null,
+      })),
+    });
+  }
+
+  renderFireworks(now) {
+    if (!this.fxG) return;
+    const state = this.game?.net?.latestState;
+    if (!state) {
+      this.fxG.clear();
+      if (this.dimRect) this.dimRect.setVisible(false);
+      return;
+    }
+
+    if (!this.fireworks || this.fireworks.length === 0) {
+      this.fxG.clear();
+      if (this.dimRect) this.dimRect.setVisible(false);
+      return;
+    }
+
+    this.fxG.clear();
+
+    const layout = this.computeLayout(state);
+    const active = [];
+    for (const fw of this.fireworks) {
+      if (!fw || !Number.isFinite(fw.t0) || !Number.isFinite(fw.duration) || fw.duration <= 0) continue;
+      const age = now - fw.t0;
+      if (!Number.isFinite(age) || age < 0 || age >= fw.duration) continue;
+      active.push(fw);
+    }
+
+    const shouldDim = active.some((fw) => fw && fw.dim);
+    if (this.dimRect) {
+      this.dimRect.setVisible(shouldDim);
+      if (shouldDim) {
+        this.dimRect.setPosition(0, 0);
+        this.dimRect.setSize(this.scale.width, this.scale.height);
+      }
+    }
+
+    for (const fw of active) {
+      const age = now - fw.t0;
+      const t = age / fw.duration;
+      const alpha = Math.max(0, 1 - (t * 0.7));
+
+      const p = this.worldToScreen(layout, fw.x, fw.y);
+
+      for (const sp of fw.sparks) {
+        const ease = 1 - Math.pow(1 - t, 2);
+        const dist = (10 * layout.scale) + (92 * layout.scale) * sp.s * ease;
+        const sx = p.x + Math.cos(sp.a) * dist;
+        const sy = p.y + Math.sin(sp.a) * dist;
+
+        if (sp.x0 == null || sp.y0 == null) {
+          sp.x0 = p.x;
+          sp.y0 = p.y;
+        }
+
+        const lw = Math.max(2, Math.floor(4 * layout.scale));
+        this.fxG.lineStyle(lw, sp.c, 0.95 * alpha);
+        this.fxG.lineBetween(sp.x0, sp.y0, sx, sy);
+      }
+    }
+
+    this.fireworks = active;
+    if (this.fireworks.length === 0 && this.dimRect) this.dimRect.setVisible(false);
+  }
+
   create() {
     this.worldG = this.add.graphics();
     this.arrowG = this.add.graphics();
     this.uiG = this.add.graphics();
+
+    // Rainbow crash FX (Hard mode)
+    this.fxG = this.add.graphics();
+    this.fxG.setDepth(580);
+
+    this.dimRect = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0.35);
+    this.dimRect.setOrigin(0, 0);
+    this.dimRect.setDepth(570);
+    this.dimRect.setVisible(false);
+    this.scale.on('resize', () => {
+      if (!this.dimRect) return;
+      this.dimRect.setPosition(0, 0);
+      this.dimRect.setSize(this.scale.width, this.scale.height);
+    });
+
+    this.prevPlayerStates = {};
+    this.fireworks = [];
+    this.rainbowColors = [
+      0xFF0000,
+      0xFF7F00,
+      0xFFFF00,
+      0x00FF00,
+      0x00FFFF,
+      0x0000FF,
+      0x8A2BE2,
+      0xFF00FF,
+    ];
 
     this.hudText = this.add.text(12, 10, '', { fontSize: '14px', color: '#e2e8f0' });
     this.hudText.setDepth(500);
@@ -602,21 +711,26 @@ export default class PlayScene extends Phaser.Scene {
   }
 
   makeOverlayUI() {
-    this._overlayW = 560;
-    this._overlayH = 420;
+    this._overlayW = 700;
+    this._overlayH = 520;
     const panel = this.add.rectangle(0, 0, this._overlayW, this._overlayH, 0x0b1220, 0.88).setOrigin(0.5);
     panel.setStrokeStyle(2, 0x334155, 1);
 
-    const title = this.add.text(0, -178, 'COMET', { fontSize: '36px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
-    this.overlayInfo = this.add.text(0, -134, '', { fontSize: '14px', color: '#cbd5e1', align: 'center' }).setOrigin(0.5);
+    const title = this.add.text(0, -222, 'COMET', { fontSize: '36px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
+    this.overlayInfo = this.add.text(0, -184, '', { fontSize: '14px', color: '#cbd5e1', align: 'center' }).setOrigin(0.5);
 
-    this.topologyLabel = this.add.text(-240, -92, 'Topology:', { fontSize: '16px', color: '#e2e8f0' }).setOrigin(0, 0.5);
+    this.difficultyLabel = this.add.text(-320, -136, 'Difficulty:', { fontSize: '16px', color: '#e2e8f0' }).setOrigin(0, 0.5);
+    this.btnDiffEasy = this.makeButton(-180, -136, 'Easy', () => this.game.net.send('select_difficulty', { difficulty: 'easy' }), { w: 110, h: 38 });
+    this.btnDiffMed = this.makeButton(-40, -136, 'Medium', () => this.game.net.send('select_difficulty', { difficulty: 'medium' }), { w: 110, h: 38 });
+    this.btnDiffHard = this.makeButton(100, -136, 'Hard', () => this.game.net.send('select_difficulty', { difficulty: 'hard' }), { w: 110, h: 38 });
 
-    this.btnTopoRegular = this.makeButton(-140, -92, 'Regular', () => this.game.net.send('select_topology', { mode: 'regular' }));
-    this.btnTopoKlein = this.makeButton(0, -92, 'Klein', () => this.game.net.send('select_topology', { mode: 'klein' }));
-    this.btnTopoProj = this.makeButton(140, -92, 'Projective', () => this.game.net.send('select_topology', { mode: 'projective' }));
+    this.topologyLabel = this.add.text(-320, -92, 'Topology:', { fontSize: '16px', color: '#e2e8f0' }).setOrigin(0, 0.5);
 
-    this.colorLabel = this.add.text(-240, -34, 'Color:', { fontSize: '16px', color: '#e2e8f0' }).setOrigin(0, 0.5);
+    this.btnTopoRegular = this.makeButton(-180, -92, 'Regular', () => this.game.net.send('select_topology', { mode: 'regular' }), { w: 110, h: 38 });
+    this.btnTopoKlein = this.makeButton(-40, -92, 'Klein', () => this.game.net.send('select_topology', { mode: 'klein' }), { w: 110, h: 38 });
+    this.btnTopoProj = this.makeButton(100, -92, 'Projective', () => this.game.net.send('select_topology', { mode: 'projective' }), { w: 110, h: 38 });
+
+    this.colorLabel = this.add.text(-320, -48, 'Color:', { fontSize: '16px', color: '#e2e8f0' }).setOrigin(0, 0.5);
 
     const colors = [
       '#ff4d4d', // red
@@ -627,7 +741,7 @@ export default class PlayScene extends Phaser.Scene {
       '#ff7a18', // orange
     ];
     const colsPerRow = 6;
-    const startY = -34;
+    const startY = -48;
     const stepX = 56;
     const startX = -((Math.min(colors.length, colsPerRow) - 1) * stepX) / 2;
 
@@ -643,30 +757,28 @@ export default class PlayScene extends Phaser.Scene {
       return { c, btn };
     });
 
-    this.shapeLabel = this.add.text(-240, 38, 'Ship:', { fontSize: '16px', color: '#e2e8f0' }).setOrigin(0, 0.5);
+    this.shapeLabel = this.add.text(-320, 20, 'Ship:', { fontSize: '16px', color: '#e2e8f0' }).setOrigin(0, 0.5);
     this.shapeButtons = [
       { id: 'triangle' },
       { id: 'rocket' },
       { id: 'ufo' },
       { id: 'tie' },
-      { id: 'sts' },
       { id: 'enterprise' },
     ].map((s, i) => {
-      const col = i % 3;
-      const row = Math.floor(i / 3);
-      const x = -120 + col * 120;
-      const y = 38 + row * 70;
+      // Single row to avoid overlap and reduce vertical height.
+      const x = -192 + i * 96;
+      const y = 70;
       const btn = this.makeIconButton(x, y, () => this.game.net.send('select_shape', { shape: s.id }), {
-        w: 110,
-        h: 60,
+        w: 86,
+        h: 52,
         shape: s.id,
       });
       return { id: s.id, btn };
     });
 
-    this.startBtn = this.makeButton(0, 140, 'Start / Resume', () => this.game.net.send('resume'), { w: 220 });
+    this.startBtn = this.makeButton(0, 165, 'Start / Resume', () => this.game.net.send('resume'), { w: 240, h: 42 });
 
-    const help = this.add.text(0, 184, 'WASD/Arrows: turn + thrust + brake\nSpace: fire\nComets do not collide with ships', {
+    this.overlayHelp = this.add.text(0, 224, 'WASD/Arrows: turn + thrust + brake\nSpace: fire', {
       fontSize: '14px',
       color: '#cbd5e1',
       align: 'center',
@@ -676,6 +788,10 @@ export default class PlayScene extends Phaser.Scene {
       panel,
       title,
       this.overlayInfo,
+      this.difficultyLabel,
+      this.btnDiffEasy,
+      this.btnDiffMed,
+      this.btnDiffHard,
       this.topologyLabel,
       this.btnTopoRegular,
       this.btnTopoKlein,
@@ -685,7 +801,7 @@ export default class PlayScene extends Phaser.Scene {
       this.shapeLabel,
       ...this.shapeButtons.map((s) => s.btn),
       this.startBtn,
-      help,
+      this.overlayHelp,
     ]);
 
     this.layoutOverlay();
@@ -700,7 +816,8 @@ export default class PlayScene extends Phaser.Scene {
     const margin = 24;
     const sx = (this.scale.width - margin * 2) / w;
     const sy = (this.scale.height - margin * 2) / h;
-    const s = Math.max(0.5, Math.min(1, sx, sy));
+    // Allow overlay to be a bit bigger on large screens.
+    const s = Math.max(0.5, Math.min(1.15, sx, sy));
     this.overlay.setScale(s);
   }
 
@@ -711,7 +828,7 @@ export default class PlayScene extends Phaser.Scene {
     bg.setStrokeStyle(2, 0x334155, 1);
     bg.setInteractive({ useHandCursor: true });
 
-    const text = this.add.text(0, 0, label, { fontSize: '16px', color: '#0b0f1a', fontStyle: 'bold' }).setOrigin(0.5);
+    const text = this.add.text(0, 0, label, { fontSize: '15px', color: '#0b0f1a', fontStyle: 'bold' }).setOrigin(0.5);
 
     bg.on('pointerover', () => bg.setFillStyle(0xf1f5f9, 1));
     bg.on('pointerout', () => bg.setFillStyle(0xe2e8f0, 1));
@@ -776,6 +893,8 @@ export default class PlayScene extends Phaser.Scene {
     const state = net.latestState;
     if (!state) return;
 
+    this.renderFireworks(time);
+
     const me = state.players?.[net.playerId];
 
     // Gather keyboard input
@@ -805,12 +924,22 @@ export default class PlayScene extends Phaser.Scene {
 
     // Overlay label
     const topo = state.topology ?? 'regular';
-    this.overlayInfo.setText(`Room ${net.roomId ?? '----'}  •  You: P${net.playerId ?? '?'}  •  Topology: ${topo}`);
+    const diff = String(state.difficulty ?? 'easy').toLowerCase();
+    this.overlayInfo.setText(`Room ${net.roomId ?? '----'}  •  You: P${net.playerId ?? '?'}  •  ${diff.toUpperCase()}  •  Topology: ${topo}`);
 
     // Button highlighting
     this.setTopoSelected(this.btnTopoRegular, topo === 'regular');
     this.setTopoSelected(this.btnTopoKlein, topo === 'klein');
     this.setTopoSelected(this.btnTopoProj, topo === 'projective');
+
+    this.setTopoSelected(this.btnDiffEasy, diff === 'easy');
+    this.setTopoSelected(this.btnDiffMed, diff === 'medium');
+    this.setTopoSelected(this.btnDiffHard, diff === 'hard');
+
+    if (this.overlayHelp) {
+      const collide = diff === 'hard' ? 'Comets collide with ships (Hard)' : 'Comets do not collide with ships';
+      this.overlayHelp.setText(`WASD/Arrows: turn + thrust + brake\nSpace: fire\n${collide}`);
+    }
 
     const myColor = String(me?.color ?? '').toLowerCase();
     for (const b of this.colorBtns) {
@@ -824,7 +953,7 @@ export default class PlayScene extends Phaser.Scene {
     }
 
     // HUD
-    this.hudText.setText(`Room ${net.roomId ?? '----'}   P${net.playerId ?? '?'}   ${topo}`);
+    this.hudText.setText(`Room ${net.roomId ?? '----'}   P${net.playerId ?? '?'}   ${diff}   ${topo}`);
   }
 
   setTopoSelected(btn, selected) {
@@ -843,6 +972,27 @@ export default class PlayScene extends Phaser.Scene {
     const net = this.game.net;
     const layout = this.computeLayout(state);
 
+    // Detect hard-mode ship crash transitions (ALIVE -> WAITING)
+    const diff = String(state.difficulty ?? 'easy').toLowerCase();
+    if (diff === 'hard') {
+      for (const pid of [1, 2, 3, 4]) {
+        const pl = state.players?.[pid];
+        const prev = this.prevPlayerStates?.[pid];
+        const cur = pl?.state;
+        if (prev === 'ALIVE' && cur && cur !== 'ALIVE') {
+          const dim = Number(net.playerId) === pid;
+          this.spawnCrashFireworks(pl?.x, pl?.y, dim);
+        }
+        if (cur) this.prevPlayerStates[pid] = cur;
+      }
+    } else {
+      // Keep tracking so a later switch to hard doesn't miss state.
+      for (const pid of [1, 2, 3, 4]) {
+        const cur = state.players?.[pid]?.state;
+        if (cur) this.prevPlayerStates[pid] = cur;
+      }
+    }
+
     // Clear
     this.worldG.clear();
     this.arrowG.clear();
@@ -858,15 +1008,16 @@ export default class PlayScene extends Phaser.Scene {
     // Comets (jagged icy shell + jagged core)
     for (const c of state.comets ?? []) {
       const p = this.worldToScreen(layout, c.x, c.y);
-      const baseR = (c.size === 1 ? 28 : 16) * layout.scale;
+      const cometR = c.size >= 2 ? 38 : c.size === 1 ? 28 : 16;
+      const baseR = cometR * layout.scale;
 
       const shellPts = jaggedPoints({
         seed: (c.seed ?? 1) ^ (c.size << 8),
         cx: p.x,
         cy: p.y,
         r: baseR,
-        points: c.size === 1 ? 16 : 12,
-        jitter: c.size === 1 ? 0.28 : 0.22,
+        points: c.size >= 2 ? 18 : c.size === 1 ? 16 : 12,
+        jitter: c.size >= 2 ? 0.30 : c.size === 1 ? 0.28 : 0.22,
         rotation: ((c.seed ?? 1) % 360) * (Math.PI / 180),
       });
 
@@ -875,7 +1026,7 @@ export default class PlayScene extends Phaser.Scene {
         cx: p.x,
         cy: p.y,
         r: baseR * 0.58,
-        points: c.size === 1 ? 11 : 9,
+        points: c.size >= 2 ? 13 : c.size === 1 ? 11 : 9,
         jitter: 0.35,
         rotation: (((c.seed ?? 1) + 97) % 360) * (Math.PI / 180),
       });

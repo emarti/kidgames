@@ -142,6 +142,14 @@ export function createMazeHost() {
         break;
       }
 
+      case 'select_level': {
+        if (!ws.room) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        Sim.setLevel(room.state, msg.level);
+        break;
+      }
+
       case 'restart': {
         if (!ws.room) return;
         const room = rooms.get(ws.room);
@@ -154,7 +162,7 @@ export function createMazeHost() {
         if (!ws.room) return;
         const room = rooms.get(ws.room);
         if (!room) return;
-        Sim.pause(room.state);
+        if (ws.playerId) Sim.togglePause(room.state, ws.playerId);
         break;
       }
 
@@ -162,7 +170,7 @@ export function createMazeHost() {
         if (!ws.room) return;
         const room = rooms.get(ws.room);
         if (!room) return;
-        Sim.resume(room.state);
+        if (ws.playerId) Sim.resumeGame(room.state, ws.playerId);
         break;
       }
 

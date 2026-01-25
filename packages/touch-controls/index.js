@@ -80,6 +80,7 @@ export function createTouchControls(scene, {
   onActionDown,
   onActionUp,
   depth = 200,
+  alpha = 0.6,
   margin = 20,
   keyW = 78,
   keyH = 54,
@@ -105,6 +106,7 @@ export function createTouchControls(scene, {
 
   const container = scene.add.container(0, 0);
   container.setDepth(depth);
+  if (Number.isFinite(alpha)) container.setAlpha(alpha);
 
   const toColorInt = (hex) => parseInt(String(hex).replace('#', '0x'), 16);
 

@@ -1,7 +1,9 @@
 {
   "TICKS_PER_MOVE": {
-    "fast": 1,
-    "medium": 2,
-    "slow": 4
+    "very_fast": 1,
+    "fast": 2,
+    "medium": 4,
+    "slow": 8,
+    "very_slow": 16
   }
 }

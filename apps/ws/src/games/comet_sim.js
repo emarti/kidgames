@@ -17,6 +17,95 @@ function randRange(lo, hi) {
   return lo + Math.random() * (hi - lo);
 }
 
+function difficultyKey(state) {
+  const d = String(state?.difficulty ?? 'easy').toLowerCase();
+  if (d === 'easy' || d === 'medium' || d === 'hard') return d;
+  return 'easy';
+}
+
+function difficultyParams(state) {
+  const d = difficultyKey(state);
+  const BASE_COMET_MIN = 6500;
+  const BASE_COMET_MAX = 11000;
+  const mediumHardScale = 1 / 1.15; // 15% more comets => ~15% shorter average interval
+
+  if (d === 'easy') {
+    return {
+      bulletCooldownMs: 125,
+      bulletLifeMs: 3600,
+      cometSpawnMinMs: BASE_COMET_MIN,
+      cometSpawnMaxMs: BASE_COMET_MAX,
+      initialCometSize: 1,
+      shipTurnMult: 1.0,
+      shipThrustMult: 1.0,
+      shipReverseMult: 1.0,
+      shipCometCollision: false,
+    };
+  }
+
+  if (d === 'medium') {
+    return {
+      bulletCooldownMs: 250,
+      bulletLifeMs: 1800,
+      cometSpawnMinMs: Math.round(BASE_COMET_MIN * mediumHardScale),
+      cometSpawnMaxMs: Math.round(BASE_COMET_MAX * mediumHardScale),
+      initialCometSize: 2,
+      shipTurnMult: 1.56,
+      shipThrustMult: 1.20,
+      shipReverseMult: 1.20,
+      shipCometCollision: false,
+    };
+  }
+
+  // hard
+  return {
+    bulletCooldownMs: 250,
+    bulletLifeMs: 1800,
+    cometSpawnMinMs: Math.round(BASE_COMET_MIN * mediumHardScale),
+    cometSpawnMaxMs: Math.round(BASE_COMET_MAX * mediumHardScale),
+    initialCometSize: 2,
+    shipTurnMult: 1.755,
+    shipThrustMult: 1.35,
+    shipReverseMult: 1.35,
+    shipCometCollision: true,
+  };
+}
+
+function wrappedDelta(d, span) {
+  if (!(span > 0)) return d;
+  let x = d % span;
+  if (x > span / 2) x -= span;
+  if (x < -span / 2) x += span;
+  return x;
+}
+
+function tryFindSafeSpawn(state) {
+  // Client renders ships at size ~14px; use similar radius for collisions.
+  const SHIP_R = 14;
+  const margin = 6;
+  const tries = 14;
+
+  for (let t = 0; t < tries; t++) {
+    const x = randRange(0, state.w);
+    const y = randRange(0, state.h);
+
+    let ok = true;
+    for (const c of state.comets ?? []) {
+      const r = cometRadius(c.size) + SHIP_R + margin;
+      const dx = wrappedDelta(x - c.x, state.w);
+      const dy = wrappedDelta(y - c.y, state.h);
+      if ((dx * dx + dy * dy) <= (r * r)) {
+        ok = false;
+        break;
+      }
+    }
+
+    if (ok) return { x, y };
+  }
+
+  return null;
+}
+
 function clampVelocityToSpeedCap(vx, vy, speedCap) {
   const sp = Math.hypot(vx, vy);
   if (!(sp > speedCap)) return { vx, vy };
@@ -72,6 +161,7 @@ export function newGameState({ w = 800, h = 600, now = Date.now() } = {}) {
     paused: true,
     reasonPaused: 'start',
     topology: 'regular', // 'regular' | 'klein' | 'projective'
+    difficulty: 'easy', // 'easy' | 'medium' | 'hard'
     lastNow: now,
     // Spawn cadence is intentionally slow and capped by how many comets exist.
     nextCometAt: now + randRange(6500, 11000),
@@ -99,6 +189,7 @@ export function basePlayer(id) {
     shape: defaultShapes[id - 1] ?? 'triangle',
     state: 'WAITING',
     paused: true,
+    respawnAt: null,
     x: 0,
     y: 0,
     vx: 0,
@@ -175,13 +266,16 @@ export function resumeGame(state, playerId) {
 
 export function newGame(state, now = Date.now()) {
   const fresh = newGameState({ w: state.w, h: state.h, now });
+  fresh.difficulty = difficultyKey(state);
   // Preserve connections + names/colors
   for (const pid of [1, 2, 3, 4]) {
     fresh.players[pid].connected = state.players[pid].connected;
     fresh.players[pid].name = state.players[pid].name;
     fresh.players[pid].color = state.players[pid].color;
-    // Back-compat: normalize legacy 'xwing' -> 'sts'
-    fresh.players[pid].shape = (state.players[pid].shape === 'xwing') ? 'sts' : state.players[pid].shape;
+    // Back-compat: older clients used 'xwing' and 'sts' for the shuttle silhouette.
+    // STS is no longer selectable; map legacy values to 'rocket'.
+    const prevShape = String(state.players[pid].shape ?? '').toLowerCase();
+    fresh.players[pid].shape = (prevShape === 'xwing' || prevShape === 'sts') ? 'rocket' : state.players[pid].shape;
     if (fresh.players[pid].connected) {
       fresh.players[pid].state = 'ALIVE';
       fresh.players[pid].paused = true;
@@ -194,6 +288,13 @@ export function newGame(state, now = Date.now()) {
 export function setTopology(state, topology) {
   if (!['regular', 'klein', 'projective'].includes(topology)) return false;
   state.topology = topology;
+  return true;
+}
+
+export function setDifficulty(state, difficulty) {
+  const d = String(difficulty ?? '').toLowerCase();
+  if (!['easy', 'medium', 'hard'].includes(d)) return false;
+  state.difficulty = d;
   return true;
 }
 
@@ -224,10 +325,12 @@ export function trySelectShape(state, playerId, shape) {
   if (!p) return false;
   if (typeof shape !== 'string') return false;
   const s0 = shape.trim().toLowerCase();
-  // Back-compat: older clients used 'xwing' for the STS silhouette.
-  const s = (s0 === 'xwing') ? 'sts' : s0;
-  const allowed = new Set(['triangle', 'rocket', 'ufo', 'tie', 'sts', 'enterprise', 'xwing']);
-  if (!allowed.has(s0) && !allowed.has(s)) return false;
+
+  // Back-compat: older clients used 'xwing'/'sts' for a shuttle silhouette.
+  // STS is no longer selectable; map legacy values to 'rocket'.
+  const s = (s0 === 'xwing' || s0 === 'sts') ? 'rocket' : s0;
+  const allowed = new Set(['triangle', 'rocket', 'ufo', 'tie', 'enterprise']);
+  if (!allowed.has(s)) return false;
   p.shape = s;
   return true;
 }
@@ -245,7 +348,7 @@ export function applyInput(state, playerId, input) {
 
 function spawnBullet(state, p) {
   const BULLET_SPEED = 240; // px/s
-  const BULLET_LIFE_MS = 1800;
+  const BULLET_LIFE_MS = difficultyParams(state).bulletLifeMs;
 
   const dirX = Math.cos(p.angle);
   const dirY = Math.sin(p.angle);
@@ -266,15 +369,16 @@ function spawnBullet(state, p) {
 }
 
 function cometRadius(size) {
-  // Only 2 layers:
-  // - size=1: big comet (first hit splits)
-  // - size=0: fragments (second hit destroys)
+  // size=2: biggest (first hit splits)
+  // size=1: big (second hit splits)
+  // size=0: fragments (third hit destroys)
+  if (size >= 2) return 38;
   if (size === 1) return 28;
   return 16;
 }
 
 function spawnComet(state, now) {
-  const size = 1;
+  const size = difficultyParams(state).initialCometSize;
   const edge = randInt(4);
 
   const speed = randRange(55, 90);
@@ -362,17 +466,44 @@ export function step(state, now = Date.now()) {
   if (now >= (state.nextCometAt ?? 0)) {
     if ((state.comets?.length ?? 0) < MAX_COMETS) {
       spawnComet(state, now);
-      state.nextCometAt = now + randRange(6500, 11000);
+      const dp = difficultyParams(state);
+      state.nextCometAt = now + randRange(dp.cometSpawnMinMs, dp.cometSpawnMaxMs);
     } else {
       // Try again soon; do not exceed cap until some are destroyed.
       state.nextCometAt = now + 2000;
     }
   }
 
+  // Handle hard-mode auto-respawn timers.
+  for (const pid of [1, 2, 3, 4]) {
+    const p = state.players?.[pid];
+    if (!p || !p.connected) continue;
+    if (p.state !== 'WAITING' || !Number.isFinite(p.respawnAt)) continue;
+    if (now < p.respawnAt) continue;
+
+    const spot = tryFindSafeSpawn(state);
+    if (spot) {
+      p.x = spot.x;
+      p.y = spot.y;
+    } else {
+      // Fallback: deterministic corner placement.
+      placePlayer(state, pid);
+    }
+
+    p.vx = 0;
+    p.vy = 0;
+    p.angle = randRange(-Math.PI, Math.PI);
+    p.state = 'ALIVE';
+    p.paused = false;
+    p.respawnAt = null;
+    p.shootCooldownMs = 0;
+  }
+
   // Update players
-  const TURN_RATE = 1.35; // rad/s (small)
-  const THRUST = 45; // px/s^2 (small)
-  const REVERSE = 45; // px/s^2 (small)
+  const dp = difficultyParams(state);
+  const TURN_RATE = 1.35 * dp.shipTurnMult; // rad/s
+  const THRUST = 45 * dp.shipThrustMult; // px/s^2
+  const REVERSE = 45 * dp.shipReverseMult; // px/s^2
   // Signed speed bounds along the ship's facing direction.
   // Forward max is SPEED_MAX; reverse max is |SPEED_MIN|.
   const SPEED_MAX = 220; // px/s
@@ -447,7 +578,7 @@ export function step(state, now = Date.now()) {
     // Shoot
     if (p.input?.shoot && p.shootCooldownMs <= 0) {
       spawnBullet(state, p);
-      p.shootCooldownMs = 250;
+      p.shootCooldownMs = dp.bulletCooldownMs;
     }
   }
 
@@ -468,6 +599,37 @@ export function step(state, now = Date.now()) {
     c.x += c.vx * dt;
     c.y += c.vy * dt;
     applyWrap(c, state.w, state.h, state.topology);
+  }
+
+  // Hard: ship vs comet collisions (lethal).
+  if (dp.shipCometCollision) {
+    const SHIP_R = 14;
+    for (const pid of [1, 2, 3, 4]) {
+      const p = state.players?.[pid];
+      if (!p || !p.connected || p.state !== 'ALIVE') continue;
+      if (p.paused) continue;
+
+      let crashed = false;
+      for (const c of state.comets ?? []) {
+        const r = cometRadius(c.size) + SHIP_R;
+        const dx = wrappedDelta(p.x - c.x, state.w);
+        const dy = wrappedDelta(p.y - c.y, state.h);
+        if ((dx * dx + dy * dy) <= (r * r)) {
+          crashed = true;
+          break;
+        }
+      }
+
+      if (crashed) {
+        p.state = 'WAITING';
+        p.respawnAt = now + 3000;
+        p.vx = 0;
+        p.vy = 0;
+        p.shootCooldownMs = 0;
+        // Prevent stuck shooting when coming back.
+        if (p.input) p.input.shoot = false;
+      }
+    }
   }
 
   // Bullet vs comet hits

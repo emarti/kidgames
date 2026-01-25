@@ -466,17 +466,20 @@ export default class PlayScene extends Phaser.Scene {
         // Speed
         this.setupContainer.add(this.add.text(-300, -190, 'Speed:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
         this.speedButtons = {
-            slow: this.addSetupButton(-150, -190, 'Slow', () => this.game.net.send('select_speed', { speed: 'slow' })),
+            very_slow: this.addSetupButton(-220, -190, 'Very Slow', () => this.game.net.send('select_speed', { speed: 'very_slow' })),
+            slow: this.addSetupButton(-110, -190, 'Slow', () => this.game.net.send('select_speed', { speed: 'slow' })),
             medium: this.addSetupButton(0, -190, 'Medium', () => this.game.net.send('select_speed', { speed: 'medium' })),
-            fast: this.addSetupButton(150, -190, 'Fast', () => this.game.net.send('select_speed', { speed: 'fast' }))
+            fast: this.addSetupButton(110, -190, 'Fast', () => this.game.net.send('select_speed', { speed: 'fast' })),
+            very_fast: this.addSetupButton(220, -190, 'Very Fast', () => this.game.net.send('select_speed', { speed: 'very_fast' }))
         };
 
         // Walls mode
         this.setupContainer.add(this.add.text(-300, -140, 'Walls:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
         this.wallsButtons = {
-            walls: this.addSetupButton(-150, -140, 'Walls', () => this.game.net.send('select_walls_mode', { mode: 'walls' })),
-            no_walls: this.addSetupButton(0, -140, 'No Walls', () => this.game.net.send('select_walls_mode', { mode: 'no_walls' })),
-            klein: this.addSetupButton(180, -140, 'Klein Bottle', () => this.game.net.send('select_walls_mode', { mode: 'klein' }))
+            walls: this.addSetupButton(-225, -140, 'Walls', () => this.game.net.send('select_walls_mode', { mode: 'walls' })),
+            no_walls: this.addSetupButton(-75, -140, 'No Walls', () => this.game.net.send('select_walls_mode', { mode: 'no_walls' })),
+            klein: this.addSetupButton(95, -140, 'Klein Bottle', () => this.game.net.send('select_walls_mode', { mode: 'klein' })),
+            projective: this.addSetupButton(255, -140, 'Projective (RP²)', () => this.game.net.send('select_walls_mode', { mode: 'projective' }))
         };
 
         // Skins
@@ -594,7 +597,9 @@ export default class PlayScene extends Phaser.Scene {
         // nudge it away from the bottom-right touch control cluster if needed.
         const reserve = getTouchControlsReserve({ enabled: this.touchControlsEnabled });
         const availableW = Math.max(200, W);
-        const availableH = Math.max(200, H);
+        // Tiny in-game padding (helps iPad Safari avoid clipping the last row)
+        const bottomPad = this.touchControlsEnabled ? 12 : 0;
+        const availableH = Math.max(200, H - bottomPad);
 
         // Reserve a small margin so the (outside) wall stroke isn't clipped.
         // Keep it consistent regardless of whether walls are enabled.

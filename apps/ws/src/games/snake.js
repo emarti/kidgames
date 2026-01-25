@@ -11,7 +11,10 @@ export function createSnakeHost() {
     return generateRoomIdUnique(rooms);
   }
 
-  // Fixed tick loop for all snake rooms
+  // Fixed tick loop for all snake rooms.
+  // NOTE: The snake sim uses integer ticks-per-move; using a smaller host tick
+  // interval allows a wider range of speeds (e.g. very_fast) while preserving
+  // the existing slow/medium/fast timings.
   setInterval(() => {
     const now = nowMs();
     const toDelete = [];
@@ -23,15 +26,15 @@ export function createSnakeHost() {
       }
 
       room.updatedAt = now;
-      Sim.step(room.state);
-      safeBroadcast(room, { type: 'state', state: room.state });
+      const didUpdate = Sim.step(room.state);
+      if (didUpdate) safeBroadcast(room, { type: 'state', state: room.state });
     }
 
     for (const id of toDelete) {
       rooms.delete(id);
       console.log(`[ws][snake] Room ${id} expired`);
     }
-  }, 150);
+  }, 75);
 
   function onConnect(ws) {
     ws.room = null;

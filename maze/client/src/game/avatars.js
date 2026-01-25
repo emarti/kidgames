@@ -10,8 +10,10 @@ const AVATARS = {
   knight: makeKnightSword16x24(),
   // 16x24 mage with big pointy hat (generated programmatically)
   mage: makeMageBigHat16x24(),
-  // 16x24 archer with bow (generated programmatically)
-  archer: makeArcher16x24(),
+  // 16x24 little boy with backpack
+  kid: makeBoyBackpack16x24(),
+  // Backward-compat alias (older saved selections)
+  archer: makeBoyBackpack16x24(),
   // 16x24 octopus with four splayed arms (generated programmatically)
   octopus: makeOctopusSplayed16x24(),
   // 16x24 snake (generated programmatically)
@@ -188,7 +190,7 @@ function makeMageBigHat16x24() {
   return grid.map((row) => row.join(''));
 }
 
-function makeArcher16x24() {
+function makeBoyBackpack16x24() {
   const W = 16;
   const H = 24;
   const grid = Array.from({ length: H }, () => Array.from({ length: W }, () => '.'));
@@ -207,74 +209,62 @@ function makeArcher16x24() {
     for (let y = y0; y <= y1; y++) set(x, y, ch);
   };
 
-  // Hood / head
-  rect(5, 1, 10, 2, 'X');
-  rect(4, 3, 11, 5, 'X');
-  // Face opening
-  rect(6, 4, 9, 5, '2');
-  set(7, 4, '9');
-  set(8, 4, '9');
-  set(7, 5, '4');
-  set(8, 5, '4');
+  // Hair (bigger, rounder head silhouette)
+  rect(6, 0, 9, 0, '2');
+  rect(5, 1, 10, 1, '2');
+  rect(4, 2, 11, 2, '2');
+  rect(4, 3, 11, 3, '2');
+  // Bangs / fringe row
+  rect(5, 4, 10, 4, '2');
+  // Tiny hair shine highlight
+  set(8, 1, '6');
+  set(7, 2, '5');
 
-  // Torso / tunic
-  rect(5, 6, 10, 13, 'X');
-  // Strap (diagonal) + buckle
-  set(5, 7, '2');
-  set(6, 8, '2');
-  set(7, 9, '2');
-  set(8, 10, '2');
-  set(9, 11, '2');
-  set(8, 9, '6');
+  // Face (wider by 1px on each side)
+  rect(4, 5, 11, 8, '7');
+  // Round cheeks
+  set(3, 7, '7');
+  set(12, 7, '7');
 
-  // Quiver on back (right)
-  rect(10, 7, 11, 11, '3');
-  set(10, 6, '2');
-  set(11, 6, '2');
-  // Arrow fletching
-  set(10, 5, '6');
-  set(11, 5, '6');
+  // Anime-ish big eyes (2x2 each) + tiny mouth
+  rect(5, 6, 6, 7, '1');
+  rect(9, 6, 10, 7, '1');
+  set(6, 6, '8');
+  set(10, 6, '8');
+  set(8, 8, '3');
 
-  // Left arm (holding bow)
-  rect(4, 8, 5, 10, 'X');
-  rect(3, 10, 5, 11, '2');
+  // Shirt (tinted) (shifted down to preserve head size)
+  rect(5, 9, 10, 14, 'X');
+  // Sleeves
+  rect(3, 10, 4, 13, 'X');
+  rect(11, 10, 12, 13, 'X');
+  // Hands
+  rect(3, 14, 4, 14, '7');
+  rect(11, 14, 12, 14, '7');
 
-  // Right arm (near chest)
-  rect(10, 8, 11, 10, 'X');
-  rect(8, 10, 10, 11, 'X');
-  rect(7, 10, 8, 11, '2');
+  // Backpack (grayscale) on right side/back
+  rect(10, 10, 12, 17, '3');
+  rect(10, 14, 12, 16, '4'); // pocket
+  hline(13, 10, 12, '5'); // top highlight
+  // Straps on front
+  vline(6, 10, 14, '3');
+  vline(9, 10, 14, '3');
+  set(7, 12, '5');
+  set(8, 12, '5');
 
-  // Bow (grayscale) on left side: curved stave + string
-  // Stave curve
-  set(2, 7, '4');
-  set(2, 8, '5');
-  set(2, 9, '6');
-  set(2, 10, '6');
-  set(2, 11, '5');
-  set(2, 12, '4');
-  // Inner edge
-  set(3, 8, '3');
-  set(3, 9, '4');
-  set(3, 10, '4');
-  set(3, 11, '3');
-  // String (pulled back)
-  vline(5, 8, 12, '8');
-  // Arrow (nocked and drawn)
-  for (let x = 5; x <= 10; x++) set(x, 10, '6');
-  set(4, 10, '7'); // tip
-  set(11, 10, '3'); // fletching
-  set(11, 9, '3');
-  set(5, 10, '8'); // nock
+  // Shorts
+  rect(6, 15, 9, 17, '4');
+  hline(15, 6, 9, '3'); // waistband shade
 
-  // Legs
-  rect(6, 14, 7, 19, 'X');
-  rect(8, 14, 9, 19, 'X');
-  hline(17, 6, 9, '3');
+  // Legs (skin)
+  rect(6, 18, 7, 21, '7');
+  rect(8, 18, 9, 21, '7');
+  hline(20, 6, 9, '6');
 
-  // Boots
-  rect(5, 20, 7, 21, '2');
-  rect(8, 20, 10, 21, '2');
-  set(10, 21, '3');
+  // Shoes
+  rect(5, 22, 7, 23, '2');
+  rect(8, 22, 10, 23, '2');
+  set(10, 23, '3');
 
   return grid.map((row) => row.join(''));
 }
@@ -332,22 +322,16 @@ function makeOctopusSplayed16x24() {
     [1, 12],
     [1, 13],
     [2, 14],
-    [2, 15],
-    [1, 16],
-    [1, 17],
-    [2, 18],
-    [3, 19],
-    [4, 20],
-    [3, 21],
+    [3, 15],
+    [4, 16],
+    [3, 17],
   ];
   plotThick(a1, +1, 'X', '2');
   plot(
     [
       [2, 12],
       [2, 14],
-      [2, 16],
-      [2, 18],
-      [3, 20],
+      [3, 16],
     ],
     '8'
   );
@@ -359,23 +343,18 @@ function makeOctopusSplayed16x24() {
     [5, 11],
     [5, 12],
     [4, 13],
-    [4, 14],
-    [4, 15],
-    [5, 16],
-    [5, 17],
-    [6, 18],
-    [7, 19],
-    [8, 20],
-    [7, 21],
+    [5, 14],
+    [6, 15],
+    [7, 16],
+    [8, 17],
+    [7, 18],
   ];
   plotThick(a2, +1, 'X', '3');
   plot(
     [
       [6, 12],
       [6, 14],
-      [6, 16],
-      [6, 18],
-      [7, 20],
+      [7, 16],
     ],
     '8'
   );
@@ -387,23 +366,18 @@ function makeOctopusSplayed16x24() {
     [10, 11],
     [10, 12],
     [11, 13],
-    [11, 14],
-    [11, 15],
-    [10, 16],
-    [10, 17],
-    [9, 18],
-    [8, 19],
-    [7, 20],
-    [8, 21],
+    [10, 14],
+    [9, 15],
+    [8, 16],
+    [7, 17],
+    [8, 18],
   ];
   plotThick(a3, -1, 'X', '3');
   plot(
     [
       [9, 12],
       [9, 14],
-      [9, 16],
-      [9, 18],
-      [8, 20],
+      [8, 16],
     ],
     '8'
   );
@@ -416,22 +390,16 @@ function makeOctopusSplayed16x24() {
     [14, 12],
     [14, 13],
     [13, 14],
-    [13, 15],
-    [14, 16],
-    [14, 17],
-    [13, 18],
-    [12, 19],
-    [11, 20],
-    [12, 21],
+    [12, 15],
+    [11, 16],
+    [12, 17],
   ];
   plotThick(a4, -1, 'X', '2');
   plot(
     [
       [13, 12],
       [13, 14],
-      [13, 16],
-      [13, 18],
-      [12, 20],
+      [12, 16],
     ],
     '8'
   );
@@ -595,11 +563,12 @@ function makeSnake16x24() {
 }
 
 export function listAvatars() {
-  return ['knight', 'mage', 'archer', 'octopus', 'snake', 'robot'];
+  return ['knight', 'mage', 'kid', 'octopus', 'snake', 'robot'];
 }
 
 export function drawAvatarPixels(graphics, cx, cy, cellSize, avatarName, colorHex) {
-  const mask = AVATARS[avatarName] ?? AVATARS.knight;
+  const normalized = avatarName === 'archer' ? 'kid' : avatarName;
+  const mask = AVATARS[normalized] ?? AVATARS.knight;
   const px = mask[0].length;
   const py = mask.length;
 

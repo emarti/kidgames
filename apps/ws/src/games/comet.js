@@ -144,6 +144,13 @@ export function createCometHost() {
         break;
       }
 
+      case 'select_difficulty': {
+        if (!ws.room) return;
+        const room = rooms.get(ws.room);
+        if (room) Sim.setDifficulty(room.state, msg.difficulty);
+        break;
+      }
+
       case 'select_color': {
         if (!ws.room || !ws.playerId) return;
         const room = rooms.get(ws.room);

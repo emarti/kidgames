@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(__dirname, 'game_config.json');
-let config = { TICKS_PER_MOVE: { fast: 1, medium: 2, slow: 4 } };
+let config = { TICKS_PER_MOVE: { very_fast: 1, fast: 2, medium: 4, slow: 8, very_slow: 16 } };
 try {
   config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 } catch (e) {
@@ -33,11 +33,12 @@ export function newGameState({ w = 30, h = 22 } = {}) {
     tick: 0,
     paused: true,
     reasonPaused: "start",
-    speed: "slow",            // "slow"|"medium"|"fast"
+    speed: "slow",            // "very_slow"|"slow"|"medium"|"fast"|"very_fast"
     speedLocked: false,
-    wallsMode: "walls",       // "walls" | "no_walls"
+    wallsMode: "walls",       // "walls" | "no_walls" | "klein" | "projective"
     apple: null,
     redApple: null,
+    redAppleEnabled: false,
     players: {
       1: newPlayerState(1, w, h),
       2: newPlayerState(2, w, h),
@@ -122,7 +123,7 @@ export function setPlayerMeta(state, playerId, { name }) {
 }
 
 export function tryLockSpeed(state, speed) {
-  if (!["slow", "medium", "fast"].includes(speed)) return false;
+  if (!["very_slow", "slow", "medium", "fast", "very_fast"].includes(speed)) return false;
   state.speed = speed;
   // Speed is intentionally changeable from the pause/setup UI.
   state.speedLocked = false;
@@ -130,7 +131,7 @@ export function tryLockSpeed(state, speed) {
 }
 
 export function setWallsMode(state, mode) {
-  if (!["walls", "no_walls", "klein"].includes(mode)) return false;
+  if (!["walls", "no_walls", "klein", "projective"].includes(mode)) return false;
   state.wallsMode = mode;
   return true;
 }
@@ -216,18 +217,24 @@ export function queueInput(state, playerId, dir) {
 }
 
 export function step(state) {
-  if (state.paused) return; // System pause (Lobby) blocks everything
+  if (state.paused) return false; // System pause (Lobby) blocks everything
 
   state.tick++;
+  let didUpdate = false;
 
   // Handle Countdowns
   for (const pid of [1, 2, 3, 4]) {
     const p = state.players[pid];
     if (p.state === "COUNTDOWN") {
-      if (state.tick % 6 === 0) {
+      // Countdown pacing is tied to the host tick interval.
+      // The snake host runs at 75ms ticks; use 12 ticks to roughly match the
+      // prior 150ms*6 cadence.
+      if (state.tick % 12 === 0) {
         p.countdown--;
+        didUpdate = true;
         if (p.countdown <= 0) {
           respawnPlayer(state, pid);
+          didUpdate = true;
         }
       }
     }
@@ -237,10 +244,11 @@ export function step(state) {
   const ticksPerMove = config.TICKS_PER_MOVE[state.speed || "medium"] || 2;
   const isMoveTick = (state.tick % ticksPerMove === 0);
 
-  if (!isMoveTick) return;
+  if (!isMoveTick) return didUpdate;
+  didUpdate = true;
 
   const mode = state.wallsMode || 'walls';
-  const wrap = (mode === 'no_walls' || mode === 'klein');
+  const wrap = (mode === 'no_walls' || mode === 'klein' || mode === 'projective');
 
   // Apply inputs, then move snakes simultaneously
   const moves = {};
@@ -260,6 +268,26 @@ export function step(state) {
       if (mode === 'klein') {
         // Klein bottle: left/right wrap normally; top/bottom wrap with a twist.
         // When crossing the top/bottom edge, mirror the x coordinate.
+        if (ny < 0) {
+          ny = state.h - 1;
+          nx = (state.w - 1) - nx;
+        } else if (ny >= state.h) {
+          ny = 0;
+          nx = (state.w - 1) - nx;
+        }
+      } else if (mode === 'projective') {
+        // Real projective plane (RP^2):
+        // - crossing left/right flips the orthogonal coordinate: y -> (h-1)-y
+        // - crossing top/bottom flips the orthogonal coordinate: x -> (w-1)-x
+        // Then wrap into bounds.
+        if (nx < 0) {
+          nx = state.w - 1;
+          ny = (state.h - 1) - ny;
+        } else if (nx >= state.w) {
+          nx = 0;
+          ny = (state.h - 1) - ny;
+        }
+
         if (ny < 0) {
           ny = state.h - 1;
           nx = (state.w - 1) - nx;
@@ -391,6 +419,8 @@ export function step(state) {
       killPlayer(state, pid, "collision");
     }
   }
+
+  return didUpdate;
 }
 
 function shouldSpawnRedApple(state) {
@@ -399,7 +429,7 @@ function shouldSpawnRedApple(state) {
     if (!p) continue;
     if (p.state !== 'ALIVE') continue;
     if (!p.body || p.body.length === 0) continue;
-    if (p.body.length > 30) return true;
+    if (p.body.length > 29) return true;
   }
   return false;
 }
@@ -426,12 +456,12 @@ function spawnFoods(state) {
   state.apple = blue;
   if (blue) forbidden.add(key(blue.x, blue.y));
 
-  // Red apple appears only on respawn, and only if some snake is longer than 30.
-  if (shouldSpawnRedApple(state)) {
-    state.redApple = spawnOneFood(state, forbidden);
-  } else {
-    state.redApple = null;
+  // Red apple appears only on respawn.
+  // Once it becomes eligible and appears, keep it enabled forever for this game.
+  if (!state.redAppleEnabled && shouldSpawnRedApple(state)) {
+    state.redAppleEnabled = true;
   }
+  state.redApple = state.redAppleEnabled ? spawnOneFood(state, forbidden) : null;
 }
 
 function key(x, y) {

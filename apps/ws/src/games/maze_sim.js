@@ -20,7 +20,7 @@ const PLAYER_COLORS = {
   4: '#9b59b6',
 };
 
-const ALLOWED_AVATARS = new Set(['knight', 'mage', 'archer', 'octopus', 'snake', 'robot']);
+const ALLOWED_AVATARS = new Set(['knight', 'mage', 'kid', 'archer', 'octopus', 'snake', 'robot']);
 const ALLOWED_COLORS = new Set([
   '#2ecc71',
   '#3498db',
@@ -33,16 +33,30 @@ const ALLOWED_COLORS = new Set([
 function levelSize(level) {
   const baseW = 10;
   const baseH = 10;
-  const w = baseW + (level - 1) * 2;
-  const h = baseH + (level - 1) * 2;
+  // Option A: grow more slowly to keep prize density higher.
+  const w = baseW + (level - 1) * 1;
+  const h = baseH + (level - 1) * 1;
   return { w: Math.min(w, 30), h: Math.min(h, 30) };
 }
 
-function appleTargetForSize(w, h) {
-  const m = Math.max(w, h);
-  if (m >= 22) return 5;
-  if (m >= 16) return 4;
-  return 3;
+function objectivesForLevel(level) {
+  const L = clamp(Number(level || 1), 1, 999);
+
+  // Levels requested:
+  // 1: 1 apple
+  // 2: 2 apples
+  // 3: 3 apples
+  // 4: 4 apples
+  // 5: 4 apples, 1 chest
+  // 6: 4 apples, 2 chests
+  // 7: 4 apples, 3 chests
+  // 8: 4 apples, 3 chests, 1 funny
+  // 9: 4 apples, 3 chests, 2 funny
+  // 10: 4 apples, 3 chests, 3 funny
+  const apples = Math.min(4, L);
+  const chests = L >= 5 ? Math.min(3, L - 4) : 0;
+  const funny = L >= 8 ? Math.min(3, L - 7) : 0;
+  return { apples, chests, funny };
 }
 
 function cellIndex(w, x, y) {
@@ -88,6 +102,12 @@ export function newGameState() {
     apples: [],
     appleTarget: 0,
     applesCollected: 0,
+    treasures: [],
+    treasureTarget: 0,
+    treasuresCollected: 0,
+    funnies: [],
+    funnyTarget: 0,
+    funniesCollected: 0,
     revealed: [],
     // Claimed path segments; each segment has a fixed color from the first traversal.
     paths: [],
@@ -169,36 +189,48 @@ function generateMazePrim(w, h) {
   return walls;
 }
 
-function placeApples(state) {
-  const target = appleTargetForSize(state.w, state.h);
-  state.appleTarget = target;
+function placeCollectibles(state) {
+  const { apples, chests, funny } = objectivesForLevel(state.level);
+
+  state.appleTarget = apples;
   state.applesCollected = 0;
+  state.treasureTarget = chests;
+  state.treasuresCollected = 0;
+  state.funnyTarget = funny;
+  state.funniesCollected = 0;
 
   const start = startCell(state.w);
   const forbidden = new Set([cellIndex(state.w, start.x, start.y), cellIndex(state.w, state.goal.x, state.goal.y)]);
 
-  const apples = new Set();
+  const placeN = (count) => {
+    const chosen = new Set();
+    let attempts = 0;
 
-  let attempts = 0;
-  while (apples.size < target && attempts < 20000) {
-    attempts++;
-    const x = randInt(state.w);
-    const y = randInt(state.h);
-    const idx = cellIndex(state.w, x, y);
-    if (forbidden.has(idx) || apples.has(idx)) continue;
-    if (Math.abs(x - start.x) + Math.abs(y - start.y) < 3) continue;
-    apples.add(idx);
-  }
+    while (chosen.size < count && attempts < 20000) {
+      attempts++;
+      const x = randInt(state.w);
+      const y = randInt(state.h);
+      const idx = cellIndex(state.w, x, y);
+      if (forbidden.has(idx) || chosen.has(idx)) continue;
+      if (Math.abs(x - start.x) + Math.abs(y - start.y) < 3) continue;
+      chosen.add(idx);
+    }
 
-  while (apples.size < target) {
-    const x = randInt(state.w);
-    const y = randInt(state.h);
-    const idx = cellIndex(state.w, x, y);
-    if (forbidden.has(idx) || apples.has(idx)) continue;
-    apples.add(idx);
-  }
+    while (chosen.size < count) {
+      const x = randInt(state.w);
+      const y = randInt(state.h);
+      const idx = cellIndex(state.w, x, y);
+      if (forbidden.has(idx) || chosen.has(idx)) continue;
+      chosen.add(idx);
+    }
 
-  state.apples = [...apples].map((idx) => ({ x: idx % state.w, y: Math.floor(idx / state.w) }));
+    for (const idx of chosen) forbidden.add(idx);
+    return [...chosen].map((idx) => ({ x: idx % state.w, y: Math.floor(idx / state.w) }));
+  };
+
+  state.apples = placeN(apples);
+  state.treasures = placeN(chests);
+  state.funnies = placeN(funny);
 }
 
 function computeVisibleCellsLos(state, x, y) {
@@ -268,7 +300,7 @@ function buildLevel(state, level) {
   state._pathOwners = {};
 
   // Apples
-  placeApples(state);
+  placeCollectibles(state);
 
   // Reveal reset + initial reveal
   state.revealed = [];
@@ -284,12 +316,41 @@ function collectAppleIfPresent(state, x, y) {
   }
 }
 
+function collectTreasureIfPresent(state, x, y) {
+  const found = state.treasures?.findIndex((t) => t.x === x && t.y === y) ?? -1;
+  if (found >= 0) {
+    state.treasures.splice(found, 1);
+    state.treasuresCollected = clamp((state.treasuresCollected ?? 0) + 1, 0, 999);
+  }
+}
+
+function collectFunnyIfPresent(state, x, y) {
+  const found = state.funnies?.findIndex((f) => f.x === x && f.y === y) ?? -1;
+  if (found >= 0) {
+    state.funnies.splice(found, 1);
+    state.funniesCollected = clamp((state.funniesCollected ?? 0) + 1, 0, 999);
+  }
+}
+
+function remainingObjectives(state) {
+  const a = Math.max(0, (state.appleTarget ?? 0) - (state.applesCollected ?? 0));
+  const t = Math.max(0, (state.treasureTarget ?? 0) - (state.treasuresCollected ?? 0));
+  const f = Math.max(0, (state.funnyTarget ?? 0) - (state.funniesCollected ?? 0));
+  return { apples: a, treasures: t, funnies: f };
+}
+
+function allObjectivesComplete(state) {
+  const rem = remainingObjectives(state);
+  return rem.apples <= 0 && rem.treasures <= 0 && rem.funnies <= 0;
+}
+
 function maybeScheduleNextLevel(state, now) {
   // Prevent multiple triggers if two players hit goal in the same frame.
   if (state._advanceAt != null) return;
 
-  state.message = `Level up → ${state.level + 1}`;
-  state._advanceAt = now + 700;
+  state.message = `You reached the end! Level up → ${state.level + 1}`;
+  // Leave time for the client goal-fireworks celebration.
+  state._advanceAt = now + 3000;
   state._advanceToLevel = state.level + 1;
 }
 
@@ -331,19 +392,28 @@ export function setVisionMode(state, mode) {
   return true;
 }
 
-export function pause(state) {
-  state.paused = true;
-  state.reasonPaused = 'pause';
-  for (const pid of [1, 2, 3, 4]) {
-    if (state.players[pid]) state.players[pid].paused = true;
+export function togglePause(state, playerId) {
+  if (!playerId) return;
+  const p = state.players[playerId];
+  if (!p) return;
+  p.paused = !p.paused;
+
+  // Any interaction clears the system-level lobby pause.
+  if (state.paused && state.reasonPaused === 'start') {
+    state.paused = false;
+    state.reasonPaused = null;
   }
 }
 
-export function resume(state) {
-  state.paused = false;
-  state.reasonPaused = null;
-  for (const pid of [1, 2, 3, 4]) {
-    if (state.players[pid]) state.players[pid].paused = false;
+export function resumeGame(state, playerId) {
+  if (!playerId) return;
+  const p = state.players[playerId];
+  if (!p) return;
+  p.paused = false;
+
+  if (state.paused && state.reasonPaused === 'start') {
+    state.paused = false;
+    state.reasonPaused = null;
   }
 }
 
@@ -368,7 +438,7 @@ export function trySelectAvatar(state, playerId, avatar) {
   if (!p) return false;
   const a = String(avatar || '').toLowerCase();
   if (!ALLOWED_AVATARS.has(a)) return false;
-  p.avatar = a;
+  p.avatar = a === 'archer' ? 'kid' : a;
   return true;
 }
 
@@ -390,6 +460,12 @@ export function applyInput(state, playerId, dir, now) {
 
   const p = state.players[playerId];
   if (!p || !p.connected) return;
+
+  // Local pause blocks only this player.
+  if (p.paused) return;
+
+  // Clear transient messages on movement.
+  if (state.message && state._advanceAt == null) state.message = '';
 
   const d = DIRS[dir];
   const mask = state.walls[p.y][p.x];
@@ -415,8 +491,19 @@ export function applyInput(state, playerId, dir, now) {
 
   updateVisibility(state);
   collectAppleIfPresent(state, nx, ny);
+  collectTreasureIfPresent(state, nx, ny);
+  collectFunnyIfPresent(state, nx, ny);
 
   if (nx === state.goal.x && ny === state.goal.y) {
+    // Objectives are optional; reaching the goal always finishes the level.
     maybeScheduleNextLevel(state, now);
   }
+}
+
+export function setLevel(state, level) {
+  const next = clamp(Number(level || 1), 1, 999);
+  state.message = '';
+  state._advanceAt = null;
+  state._advanceToLevel = null;
+  buildLevel(state, next);
 }
