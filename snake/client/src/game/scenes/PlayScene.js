@@ -13,9 +13,89 @@ const UI_BTN_BG_HOVER = '#888888';
 const UI_BTN_BG_SELECTED = '#000000';
 const UI_BTN_TEXT = '#FFFFFF';
 
+// Touch-controls default key height (used as a "one button" baseline).
+const TOUCH_KEY_H = 54;
+const TOUCH_GAP_MULT = 2;
+
 export default class PlayScene extends Phaser.Scene {
     constructor() {
         super({ key: 'PlayScene' });
+    }
+
+    playCrashSound_() {
+        try {
+            const ctx = this.sound?.context
+                ?? (this._sfxCtx ??= new (window.AudioContext || window.webkitAudioContext)());
+            if (!ctx) return;
+
+            // If audio is locked, this may fail until a user gesture.
+            if (ctx.state === 'suspended' && ctx.resume) {
+                ctx.resume().catch(() => { /* ignore */ });
+            }
+
+            const t0 = ctx.currentTime + 0.01;
+            const master = ctx.createGain();
+            master.gain.setValueAtTime(0.0001, t0);
+            master.gain.exponentialRampToValueAtTime(0.12, t0 + 0.02);
+            master.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.32);
+            master.connect(ctx.destination);
+
+            // Cheerful major arpeggio (C5-E5-G5-C6).
+            const freqs = [523.25, 659.25, 783.99, 1046.5];
+            freqs.forEach((f, i) => {
+                const osc = ctx.createOscillator();
+                const g = ctx.createGain();
+
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(f, t0);
+                g.gain.setValueAtTime(0.0001, t0);
+
+                const start = t0 + (i * 0.045);
+                g.gain.setValueAtTime(0.0001, start);
+                g.gain.exponentialRampToValueAtTime(0.9, start + 0.01);
+                g.gain.exponentialRampToValueAtTime(0.0001, start + 0.12);
+
+                osc.connect(g);
+                g.connect(master);
+
+                osc.start(start);
+                osc.stop(start + 0.14);
+            });
+
+            // Cleanup after envelope.
+            setTimeout(() => {
+                try { master.disconnect(); } catch { /* ignore */ }
+            }, 600);
+        } catch {
+            // ignore
+        }
+    }
+
+    createTouchControls_() {
+        if (!this.touchControlsEnabled) return;
+        if (this.touchControls?.destroy) this.touchControls.destroy();
+        this.touchControls = createTouchControls(this, {
+            onDir: (dir) => this.game.net.send('input', { dir }),
+            onPause: () => {
+                const net = this.game.net;
+                if (!net.latestState) return;
+                if (net.latestState.paused && net.latestState.reasonPaused === 'start') return;
+                net.send('pause');
+            },
+            margin: this.touchControlsMargin,
+        });
+    }
+
+    ensureTouchControlsGap_(cellSize) {
+        if (!this.touchControlsEnabled) return false;
+        const cs = Math.max(0, Math.floor(Number(cellSize) || 0));
+        const targetGap = Math.max(cs, TOUCH_KEY_H * TOUCH_GAP_MULT);
+        const nextMargin = Math.max(20, targetGap);
+        const cur = Math.max(0, Math.floor(Number(this.touchControlsMargin) || 0));
+        if (Math.abs(nextMargin - cur) < 2) return false;
+        this.touchControlsMargin = nextMargin;
+        this.createTouchControls_();
+        return true;
     }
 
     isCellInBounds(cell) {
@@ -158,15 +238,9 @@ export default class PlayScene extends Phaser.Scene {
         // Touch controls (D-pad + pause) for tablets/phones
         this.touchControlsEnabled = isTouchDevice();
         if (this.touchControlsEnabled) {
-            this.touchControls = createTouchControls(this, {
-                onDir: (dir) => this.game.net.send('input', { dir }),
-                onPause: () => {
-                    const net = this.game.net;
-                    if (!net.latestState) return;
-                    if (net.latestState.paused && net.latestState.reasonPaused === 'start') return;
-                    net.send('pause');
-                },
-            });
+            // Start with a one-button-tall gap; may be increased once we know cellSize.
+            this.touchControlsMargin = TOUCH_KEY_H * TOUCH_GAP_MULT;
+            this.createTouchControls_();
         }
 
         // Net listener
@@ -269,7 +343,10 @@ export default class PlayScene extends Phaser.Scene {
 
         const myId = this.game.net.playerId;
 
-        const layout = this.computeLayout();
+        let layout = this.computeLayout();
+        if (this.ensureTouchControlsGap_(layout.cellSize)) {
+            layout = this.computeLayout();
+        }
         const gridPxW = GRID_W * layout.cellSize;
         const gridPxH = GRID_H * layout.cellSize;
 
@@ -329,6 +406,7 @@ export default class PlayScene extends Phaser.Scene {
                 const head = this.lastHeads[pid];
                 // Only render fireworks when the crash happens on-grid.
                 if (this.isCellInBounds(head)) this.spawnCrashFireworks(head, pid === myId);
+                if (pid === myId) this.playCrashSound_();
             }
             this.prevPlayerStates[pid] = p.state;
         }
@@ -478,8 +556,8 @@ export default class PlayScene extends Phaser.Scene {
         this.wallsButtons = {
             walls: this.addSetupButton(-225, -140, 'Walls', () => this.game.net.send('select_walls_mode', { mode: 'walls' })),
             no_walls: this.addSetupButton(-75, -140, 'No Walls', () => this.game.net.send('select_walls_mode', { mode: 'no_walls' })),
-            klein: this.addSetupButton(95, -140, 'Klein Bottle', () => this.game.net.send('select_walls_mode', { mode: 'klein' })),
-            projective: this.addSetupButton(255, -140, 'Projective (RP²)', () => this.game.net.send('select_walls_mode', { mode: 'projective' }))
+            klein: this.addSetupButton(95, -140, 'Klein', () => this.game.net.send('select_walls_mode', { mode: 'klein' })),
+            projective: this.addSetupButton(255, -140, 'Projective', () => this.game.net.send('select_walls_mode', { mode: 'projective' }))
         };
 
         // Skins
@@ -595,23 +673,39 @@ export default class PlayScene extends Phaser.Scene {
 
         // Compute the biggest possible playfield for the full screen, then only
         // nudge it away from the bottom-right touch control cluster if needed.
-        const reserve = getTouchControlsReserve({ enabled: this.touchControlsEnabled });
+        const reserve = getTouchControlsReserve({ enabled: this.touchControlsEnabled, margin: this.touchControlsMargin ?? 20 });
         const availableW = Math.max(200, W);
-        // Tiny in-game padding (helps iPad Safari avoid clipping the last row)
-        const bottomPad = this.touchControlsEnabled ? 12 : 0;
-        const availableH = Math.max(200, H - bottomPad);
+
+        const minBottomGapPx = this.touchControlsEnabled ? (TOUCH_KEY_H * TOUCH_GAP_MULT) : 0;
+
+        const computeBottomGapPx = (cellSize) => (this.touchControlsEnabled
+            ? Math.max(minBottomGapPx, cellSize)
+            : cellSize);
 
         // Reserve a small margin so the (outside) wall stroke isn't clipped.
         // Keep it consistent regardless of whether walls are enabled.
         const wallInsetForCell = (cellSize) => Math.max(4, Math.floor(cellSize / 2)) / 2;
 
-        let cellSize = Math.max(12, Math.floor(Math.min(availableW / GRID_W, availableH / GRID_H)));
+        // Two-pass solve because the bottom gap depends on cellSize when we want
+        // "one row" (cellSize) on desktop.
+        let cellSize = 16;
+        let availableH = Math.max(200, H - computeBottomGapPx(cellSize));
         for (let i = 0; i < 2; i++) {
+            const bottomGapPx = computeBottomGapPx(cellSize);
+            availableH = Math.max(200, H - bottomGapPx);
+            cellSize = Math.max(12, Math.floor(Math.min(availableW / GRID_W, availableH / GRID_H)));
+        }
+        for (let i = 0; i < 2; i++) {
+            const bottomGapPx = computeBottomGapPx(cellSize);
+            availableH = Math.max(200, H - bottomGapPx);
             const inset = wallInsetForCell(cellSize);
             const innerW = Math.max(1, availableW - (inset * 2));
             const innerH = Math.max(1, availableH - (inset * 2));
             cellSize = Math.max(12, Math.floor(Math.min(innerW / GRID_W, innerH / GRID_H)));
         }
+
+        // Recompute once more so offsets use the final solved cellSize.
+        availableH = Math.max(200, H - computeBottomGapPx(cellSize));
 
         const gridPxW = GRID_W * cellSize;
         const gridPxH = GRID_H * cellSize;
@@ -649,6 +743,20 @@ export default class PlayScene extends Phaser.Scene {
                 offsetY = Math.max(inset, Math.min(H - inset - gridPxH, offsetY));
             }
         }
+
+        // Always keep a bottom "unused" gap equal to:
+        // - one grid row (cellSize), or
+        // - (on touch) 2x button height baseline, whichever is larger.
+        const bottomGapPx = computeBottomGapPx(cellSize);
+        const gridBottom = offsetY + gridPxH;
+        const desiredMaxBottom = H - bottomGapPx;
+        if (gridBottom > desiredMaxBottom) {
+            offsetY -= (gridBottom - desiredMaxBottom);
+        }
+
+        // Clamp again after enforcing bottom gap.
+        offsetX = Math.max(inset, Math.min(W - inset - gridPxW, offsetX));
+        offsetY = Math.max(inset, Math.min(H - inset - gridPxH, offsetY));
 
         return { cellSize, offsetX, offsetY };
     }

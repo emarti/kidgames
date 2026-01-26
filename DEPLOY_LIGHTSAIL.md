@@ -220,10 +220,52 @@ curl -I https://brillanmarti.com/games/
 
 ## Logs
 
+The backend writes join/location events (country/region/city, **no IP addresses**) to daily files:
+
+- Default (with the unit file below): `/home/ubuntu/games/logs/events-YYYY-MM-DD.log`
+  - This comes from `apps/ws/src/logging/events_log.js` defaulting to `../../logs` relative to the backend `WorkingDirectory`.
+
+You can override the directory (recommended) by setting `GAMES_LOG_DIR` in the backend systemd unit, e.g.:
+
+```bash
+sudo mkdir -p /var/log/games
+sudo chown ubuntu:ubuntu /var/log/games
+sudo chmod 755 /var/log/games
+
+sudo systemctl edit games-backend
+```
+
+Then add:
+
+```ini
+[Service]
+Environment=GAMES_LOG_DIR=/var/log/games
+```
+
+Apply + restart:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart games-backend
+```
+
+Tail the current day’s event log:
+
+```bash
+tail -f /home/ubuntu/games/logs/events-$(date -u +%F).log
+# or if using GAMES_LOG_DIR=/var/log/games:
+tail -f /var/log/games/events-$(date -u +%F).log
+```
+
 ```bash
 sudo journalctl -u caddy -n 200 --no-pager
 sudo journalctl -u games-backend -n 200 --no-pager
 ```
+
+## Local debugging note
+
+For most issues, browser devtools (console + Network → WS) tends to be the
+quickest way to see what’s actually failing.
 
 ## Updating
 

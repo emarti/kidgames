@@ -1,6 +1,8 @@
 import http from 'http';
 import { WebSocketServer } from 'ws';
 import { parseJsonMessage, safeSend } from './shared.js';
+import { logEvent } from './logging/events_log.js';
+import { coarseGeoFromRequest } from './logging/geo.js';
 import { createSnakeHost } from './games/snake.js';
 import { createMazeHost } from './games/maze.js';
 import { createCometHost } from './games/comet.js';
@@ -29,9 +31,12 @@ function attachHost(ws, gameId) {
   return host;
 }
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   ws.isAlive = true;
   ws.on('pong', () => (ws.isAlive = true));
+
+  // Coarse geo (country/region) used for join analytics. Does not store IP.
+  ws.__geo = coarseGeoFromRequest(req);
 
   ws.__host = null;
   ws.__gameId = null;
@@ -60,6 +65,22 @@ wss.on('connection', (ws) => {
     }
 
     ws.__host.handleMessage(ws, msg);
+
+    // Log joins after the host has had a chance to assign ws.room/ws.playerId.
+    if ((msg.type === 'create_room' || msg.type === 'join_room') && ws.room && ws.playerId) {
+      const key = `${ws.__gameId || ''}:${ws.room}:${ws.playerId}`;
+      if (ws.__lastJoinLogKey !== key) {
+        ws.__lastJoinLogKey = key;
+        logEvent({
+          event: 'player_joined',
+          gameId: ws.__gameId,
+          roomId: ws.room,
+          playerId: ws.playerId,
+          geo: ws.__geo,
+          reason: msg.type,
+        });
+      }
+    }
   });
 
   ws.on('close', () => {

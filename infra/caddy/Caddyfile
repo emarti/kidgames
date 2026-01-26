@@ -1,7 +1,5 @@
 {
-  # Enable HTTPS when possible, but don't force-redirect HTTP->HTTPS.
-  # This avoids Firefox PR_END_OF_FILE_ERROR when a browser tries https://localhost
-  # while the server is configured for HTTP-only.
+  # Enable HTTPS when possible. We use explicit redirects in the site routes below.
   auto_https disable_redirects
 
   # Default to Let's Encrypt production. Override (e.g. staging) via ACME_CA.
@@ -11,46 +9,65 @@
 
 # SITE_ADDR may be a single hostname (e.g. "www.example.com") or a comma-separated
 # list (e.g. "example.com, www.example.com") so Caddy serves both.
-{$SITE_ADDR:localhost} {
-  encode zstd gzip
-
-  # Canonicalize www -> apex (covers /games and all other paths).
-  # Customize via env vars if needed.
+\
+# Explicit HTTP listener.
+#
+# With `auto_https disable_redirects`, Caddy may end up listening only on :443.
+# This `:80` server ensures plain HTTP is accepted and redirected to HTTPS,
+# preserving full path + query for all subpages.
+:80 {
   @www host {$WWW_HOST:www.brillanmarti.com}
-  handle @www {
-    redir https://{$CANONICAL_HOST:brillanmarti.com}{uri} 308
+  redir @www https://{$CANONICAL_HOST:brillanmarti.com}{uri} 308
+  redir https://{host}{uri} 308
+}
+
+{$SITE_ADDR:localhost} {
+  # Use a route block so directive order is preserved.
+  # Without this, Caddy's default directive ordering can cause reverse_proxy/file_server
+  # to run before redir in some cases.
+  route {
+    # Canonicalize www -> apex (covers /games and all other paths).
+    # Customize via env vars if needed.
+    @www host {$WWW_HOST:www.brillanmarti.com}
+    redir @www https://{$CANONICAL_HOST:brillanmarti.com}{uri} 308
+
+    # Force HTTP -> HTTPS for everything else (preserves full path + query).
+    @http protocol http
+    redir @http https://{host}{uri} 308
+
+    encode zstd gzip
+
+    # Convenience redirect (nice for a single-purpose VM)
+    @rootOnly path /
+    redir @rootOnly /games/ 308
+
+    @gamesNoSlash path /games
+    redir @gamesNoSlash /games/ 308
+
+    @snakeNoSlash path /games/snake
+    redir @snakeNoSlash /games/snake/ 308
+
+    @mazeNoSlash path /games/maze
+    redir @mazeNoSlash /games/maze/ 308
+
+    @cometNoSlash path /games/comet
+    redir @cometNoSlash /games/comet/ 308
+
+    # WebSocket endpoint (reverse-proxied to the game server)
+    handle /games/snake/ws* {
+      reverse_proxy {$GAMES_BACKEND:games-backend:8080}
+    }
+
+    handle /games/maze/ws* {
+      reverse_proxy {$GAMES_BACKEND:games-backend:8080}
+    }
+
+    handle /games/comet/ws* {
+      reverse_proxy {$GAMES_BACKEND:games-backend:8080}
+    }
+
+    # Static content for /games/*
+    root * {$GAMES_ROOT:/srv}
+    file_server
   }
-
-  # Convenience redirect (nice for a single-purpose VM)
-  @rootOnly path /
-  redir @rootOnly /games/ 308
-
-  @gamesNoSlash path /games
-  redir @gamesNoSlash /games/ 308
-
-  @snakeNoSlash path /games/snake
-  redir @snakeNoSlash /games/snake/ 308
-
-  @mazeNoSlash path /games/maze
-  redir @mazeNoSlash /games/maze/ 308
-
-  @cometNoSlash path /games/comet
-  redir @cometNoSlash /games/comet/ 308
-
-  # WebSocket endpoint (reverse-proxied to the game server)
-  handle /games/snake/ws* {
-    reverse_proxy {$GAMES_BACKEND:games-backend:8080}
-  }
-
-  handle /games/maze/ws* {
-    reverse_proxy {$GAMES_BACKEND:games-backend:8080}
-  }
-
-  handle /games/comet/ws* {
-    reverse_proxy {$GAMES_BACKEND:games-backend:8080}
-  }
-
-  # Static content for /games/*
-  root * {$GAMES_ROOT:/srv}
-  file_server
 }

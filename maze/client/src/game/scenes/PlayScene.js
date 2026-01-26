@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { drawAvatarPixels, listAvatars } from '../avatars.js';
 import { createTouchControls, getTouchControlsReserve, isTouchDevice } from '@games/touch-controls';
+import * as sfx from '../audio/sfx.js';
 
 const UI_BTN_BG = '#777777';
 const UI_BTN_BG_HOVER = '#888888';
@@ -9,6 +10,8 @@ const UI_BTN_TEXT = '#FFFFFF';
 
 const EMOJI_APPLE = '🍎';
 const EMOJI_TREASURE = '🧰';
+const EMOJI_BATTERY = '🔋';
+const EMOJI_MINOTAUR = '�';
 // Note: 🦆 is typically a mallard emoji; we draw a rubber duck icon instead.
 
 const WALL_N = 1;
@@ -16,9 +19,36 @@ const WALL_E = 2;
 const WALL_S = 4;
 const WALL_W = 8;
 
+// Touch-controls default key height (used as a "one button" baseline).
+const TOUCH_KEY_H = 54;
+const TOUCH_GAP_MULT = 2;
+
 export default class PlayScene extends Phaser.Scene {
   constructor() {
     super({ key: 'PlayScene' });
+  }
+
+  createTouchControls_() {
+    if (!this.touchControlsEnabled) return;
+    if (this.touchControls?.destroy) this.touchControls.destroy();
+    this.touchControls = createTouchControls(this, {
+      onDir: (dir) => this.game.net.send('input', { dir }),
+      onPause: () => this.togglePause(),
+      alpha: 0.6,
+      margin: this.touchControlsMargin,
+    });
+  }
+
+  ensureTouchControlsGap_(cellSize) {
+    if (!this.touchControlsEnabled) return false;
+    const cs = Math.max(0, Math.floor(Number(cellSize) || 0));
+    const targetGap = Math.max(cs, TOUCH_KEY_H * TOUCH_GAP_MULT);
+    const nextMargin = Math.max(20, targetGap);
+    const cur = Math.max(0, Math.floor(Number(this.touchControlsMargin) || 0));
+    if (Math.abs(nextMargin - cur) < 2) return false;
+    this.touchControlsMargin = nextMargin;
+    this.createTouchControls_();
+    return true;
   }
 
   drawTreasureChest(graphics, cx, cy, size) {
@@ -189,6 +219,23 @@ export default class PlayScene extends Phaser.Scene {
     this.setupContainer.setVisible(false);
     this.setupContainer.setDepth(500);
 
+    // Audio unlock (iOS Safari): only attempt to unlock when sounds are enabled.
+    const maybeUnlockAudio = () => {
+      if (!sfx.getEnabled()) return;
+      sfx.ensureUnlocked().then((unlocked) => {
+        if (unlocked) {
+          this.input.off('pointerdown', maybeUnlockAudio);
+          this.input.keyboard?.off('keydown', maybeUnlockAudio);
+        }
+      });
+    };
+    this.input.on('pointerdown', maybeUnlockAudio);
+    this.input.keyboard?.on('keydown', maybeUnlockAudio);
+    this.events.once('shutdown', () => {
+      this.input.off('pointerdown', maybeUnlockAudio);
+      this.input.keyboard?.off('keydown', maybeUnlockAudio);
+    });
+
     // Keep fixed UI centered on resize (important on phones/tablets)
     const positionFixedUI = () => {
       const W = this.scale?.width || 800;
@@ -245,11 +292,9 @@ export default class PlayScene extends Phaser.Scene {
     // Touch controls (D-pad + pause) for tablets/phones (shared with Snake)
     this.touchControlsEnabled = isTouchDevice();
     if (this.touchControlsEnabled) {
-      this.touchControls = createTouchControls(this, {
-        onDir: (dir) => this.game.net.send('input', { dir }),
-        onPause: () => this.togglePause(),
-        alpha: 0.6,
-      });
+      // Start with a one-button-tall gap; may be increased once we know cellSize.
+      this.touchControlsMargin = TOUCH_KEY_H * TOUCH_GAP_MULT;
+      this.createTouchControls_();
     }
 
     this.onState = (e) => this.renderState(e.detail);
@@ -304,22 +349,35 @@ export default class PlayScene extends Phaser.Scene {
   }
 
   createSetupUI() {
-    const bg = this.add.rectangle(0, 0, 740, 460, 0xFFFFFF, 0.95);
+    const bg = this.add.rectangle(0, 0, 740, 480, 0xFFFFFF, 0.95);
     this.setupContainer.add(bg);
 
-    this.setupTitle = this.add.text(0, -200, 'GAME SETUP', { fontSize: '32px', color: '#000', fontStyle: 'bold' }).setOrigin(0.5);
+    this.setupTitle = this.add.text(0, -210, 'GAME SETUP', { fontSize: '32px', color: '#000', fontStyle: 'bold' }).setOrigin(0.5);
     this.setupContainer.add(this.setupTitle);
 
-    this.setupContainer.add(this.add.text(-300, -140, 'Vision:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
+    const visionY = -170;
+    this.setupContainer.add(this.add.text(-300, visionY, 'Vision:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
     this.visionButtons = {
-      fog: this.addSetupButton(-120, -140, 'Fog', () => this.game.net.send('select_vision_mode', { mode: 'fog' })),
-      glass: this.addSetupButton(40, -140, 'Glass Walls', () => this.game.net.send('select_vision_mode', { mode: 'glass' })),
+      fog: this.addSetupButton(-120, visionY, 'Fog', () => this.game.net.send('select_vision_mode', { mode: 'fog' })),
+      glass: this.addSetupButton(40, visionY, 'Glass Walls', () => this.game.net.send('select_vision_mode', { mode: 'glass' })),
     };
 
-    this.restartButton = this.addSetupButton(180, -140, 'Restart', () => this.game.net.send('restart'));
+    this.restartButton = this.addSetupButton(180, visionY, 'Restart', () => this.game.net.send('restart'));
+
+    // Sounds toggle (client-only preference)
+    const soundsY = -125;
+    this.setupContainer.add(this.add.text(-300, soundsY, 'Sounds:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
+    this.soundButtons = {
+      off: this.addSetupButton(-120, soundsY, 'Off', () => sfx.setEnabled(false)),
+      on: this.addSetupButton(40, soundsY, 'On', () => {
+        sfx.setEnabled(true);
+        // Unlock immediately on the same user gesture.
+        void sfx.ensureUnlocked();
+      }),
+    };
 
     // Debug: 2-digit level selector (placed under Color)
-    const levelY = 20;
+    const levelY = 35;
     this.setupContainer.add(this.add.text(-300, levelY, 'Level:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
     this.addSetupButton(-210, levelY, '-', () => {
       const level = Number(this.game.net?.latestState?.level ?? 1);
@@ -349,21 +407,22 @@ export default class PlayScene extends Phaser.Scene {
     });
 
     // Character + color selection (like Snake, but simplified)
-    this.setupContainer.add(this.add.text(-300, -80, 'Character:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
+    const characterY = -65;
+    this.setupContainer.add(this.add.text(-300, characterY, 'Character:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
     this.avatarButtons = {};
     const avatars = listAvatars();
     const avatarX0 = -120;
-    const avatarY = -80;
+    const avatarY = characterY;
     const avatarDX = 66;
     avatars.forEach((a, i) => {
       this.avatarButtons[a] = this.addAvatarButton(avatarX0 + i * avatarDX, avatarY, a, () => this.game.net.send('select_avatar', { avatar: a }));
     });
 
-    this.setupContainer.add(this.add.text(-300, -30, 'Color:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
+    const colorY = -10;
+    this.setupContainer.add(this.add.text(-300, colorY, 'Color:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
     this.colorButtons = {};
     this.availableColors = ['#2ecc71', '#3498db', '#e67e22', '#9b59b6', '#e74c3c', '#111111'];
     const colorX0 = -120;
-    const colorY = -30;
     const colorDX = 70;
     this.availableColors.forEach((c, i) => {
       const btn = this.addSetupButton(colorX0 + i * colorDX, colorY, ' ', () => this.game.net.send('select_color', { color: c }));
@@ -373,11 +432,11 @@ export default class PlayScene extends Phaser.Scene {
       this.colorButtons[c] = btn;
     });
 
-    this.setupHelp = this.add.text(0, 120, '', { fontSize: '20px', color: '#000' }).setOrigin(0.5);
+    this.setupHelp = this.add.text(0, 130, '', { fontSize: '20px', color: '#000' }).setOrigin(0.5);
     this.setupContainer.add(this.setupHelp);
 
-    this.startButton = this.addSetupButton(-90, 170, 'Start', () => this.game.net.send('resume'));
-    this.continueButton = this.addSetupButton(90, 170, 'Continue', () => this.game.net.send('resume'));
+    this.startButton = this.addSetupButton(-90, 180, 'Start', () => this.game.net.send('resume'));
+    this.continueButton = this.addSetupButton(90, 180, 'Continue', () => this.game.net.send('resume'));
   }
 
   addSetupButton(x, y, label, cb) {
@@ -434,22 +493,47 @@ export default class PlayScene extends Phaser.Scene {
   computeLayout(state) {
     const W = this.scale?.width || 800;
     const H = this.scale?.height || 600;
-    const margin = 20;
+    // Slightly tighter margins so the playfield can be bigger.
+    const margin = 8;
 
-    const reserve = getTouchControlsReserve({ enabled: this.touchControlsEnabled });
-    const hudTop = Math.max(36, Math.min(60, Math.floor(H * 0.12)));
+    const reserve = getTouchControlsReserve({ enabled: this.touchControlsEnabled, margin: this.touchControlsMargin ?? 20 });
+    // Reserve less top space so the maze can be larger.
+    // (Still keeps the top-left info text and objective HUD from overlapping the first row.)
+    const hudTop = Math.max(22, Math.min(34, Math.floor(H * 0.06)));
 
-    // Compute the biggest possible maze area for the screen, then only nudge it
-    // away from the bottom-right touch control cluster if needed.
+    // Compute the biggest possible maze area for the screen, leaving a bottom
+    // "unused" band (for safety + for the D-pad to sit above).
     const availableW = Math.max(160, W - (margin * 2));
-    const availableH = Math.max(160, H - (margin * 2) - hudTop);
 
-    const cellSize = Math.max(12, Math.floor(Math.min(availableW / state.w, availableH / state.h)));
+    const minBottomGapPx = this.touchControlsEnabled ? (TOUCH_KEY_H * TOUCH_GAP_MULT) : 0;
+
+    // Two-pass solve because the bottom gap depends on cellSize when we want
+    // "one row" (cellSize) on desktop.
+    let cellSize = 16;
+    for (let i = 0; i < 2; i++) {
+      const targetGapPx = this.touchControlsEnabled
+        ? Math.max(minBottomGapPx, cellSize)
+        : cellSize;
+
+      const availableH = Math.max(160, H - (margin * 2) - hudTop - targetGapPx);
+      cellSize = Math.max(12, Math.floor(Math.min(availableW / state.w, availableH / state.h)));
+    }
     const gridPxW = state.w * cellSize;
     const gridPxH = state.h * cellSize;
 
+    // "One row" means: the maze row height OR (on touch) about the button height.
+    // With touch controls, we intentionally align the maze bottom to the D-pad bottom
+    // baseline: (H - touchControlsMargin).
+    const targetGapPx = this.touchControlsEnabled
+      ? Math.max(minBottomGapPx, cellSize)
+      : cellSize;
+
+    // We subtract the margin because offsetY also includes `- margin`.
+    const bottomInset = Math.max(0, targetGapPx - margin);
+
     let offsetX = Math.floor(margin + (availableW - gridPxW) / 2);
-    let offsetY = Math.floor(margin + hudTop + (availableH - gridPxH) / 2);
+    let offsetY = Math.floor(H - margin - bottomInset - gridPxH);
+    offsetY = Math.max(margin + hudTop, offsetY);
 
     // If the centered maze would overlap the reserved bottom-right corner,
     // shift either left or up by the minimal amount.
@@ -470,7 +554,7 @@ export default class PlayScene extends Phaser.Scene {
         else offsetY -= shiftUp;
 
         offsetX = Math.max(margin, Math.min(W - margin - gridPxW, offsetX));
-        offsetY = Math.max(margin + hudTop, Math.min(H - margin - gridPxH, offsetY));
+        offsetY = Math.max(margin + hudTop, Math.min(H - margin - bottomInset - gridPxH, offsetY));
       }
     }
 
@@ -507,6 +591,18 @@ export default class PlayScene extends Phaser.Scene {
       btn._selected = selected;
       btn.setBackgroundColor(selected ? UI_BTN_BG_SELECTED : UI_BTN_BG);
       btn.setColor(UI_BTN_TEXT);
+    }
+
+    if (this.soundButtons) {
+      const enabled = sfx.getEnabled();
+      const onSelected = Boolean(enabled);
+      const offSelected = !onSelected;
+      this.soundButtons.on._selected = onSelected;
+      this.soundButtons.off._selected = offSelected;
+      this.soundButtons.on.setBackgroundColor(onSelected ? UI_BTN_BG_SELECTED : UI_BTN_BG);
+      this.soundButtons.off.setBackgroundColor(offSelected ? UI_BTN_BG_SELECTED : UI_BTN_BG);
+      this.soundButtons.on.setColor(UI_BTN_TEXT);
+      this.soundButtons.off.setColor(UI_BTN_TEXT);
     }
 
     // Keep the 2-digit level display synced to server state unless actively editing.
@@ -566,13 +662,43 @@ export default class PlayScene extends Phaser.Scene {
     const overlayVisible = Boolean((state.paused && state.reasonPaused === 'start') || me?.paused);
     this._overlayVisible = overlayVisible;
 
-    const layout = this.computeLayout(state);
+    let layout = this.computeLayout(state);
+    if (this.ensureTouchControlsGap_(layout.cellSize)) {
+      layout = this.computeLayout(state);
+    }
+
+    // Pickup SFX (client-only): detect counter deltas.
+    const applesCollected = Number(state.applesCollected ?? 0);
+    const treasuresCollected = Number(state.treasuresCollected ?? 0);
+    const batteriesCollected = Number(state.batteriesCollected ?? 0);
+    const funniesCollected = Number(state.funniesCollected ?? 0);
+    if (!this._prevCollectCounts) {
+      this._prevCollectCounts = { applesCollected, treasuresCollected, batteriesCollected, funniesCollected };
+    } else {
+      if (applesCollected > this._prevCollectCounts.applesCollected) sfx.playChomp();
+      if (treasuresCollected > this._prevCollectCounts.treasuresCollected) sfx.playChink();
+      if (batteriesCollected > this._prevCollectCounts.batteriesCollected) sfx.playZap();
+      if (funniesCollected > this._prevCollectCounts.funniesCollected) sfx.playQuack();
+      this._prevCollectCounts = { applesCollected, treasuresCollected, batteriesCollected, funniesCollected };
+    }
 
     // Trigger a small fireworks burst once when the server announces a level-up.
     // We anchor to the goal tile(s) so it appears around the winner.
     const msg = String(state.message || '');
     if (this.isLevelUpMessage_(msg) && msg !== this._lastMessageForFx) {
       this.spawnGoalFireworks_(layout, state);
+      sfx.playTrumpet();
+    }
+    // Minotaur hit sound effect.
+    if (msg.includes('Minotaur') && msg !== this._lastMessageForFx) {
+      sfx.playUhOh();
+    }
+
+    // Minotaur hit animation (once per server-scheduled reset).
+    const minoResetAt = state._minoResetAt ?? null;
+    if (minoResetAt != null && minoResetAt !== this._lastMinoResetAtForFx) {
+      this.spawnMinotaurHitFx_(layout, state);
+      this._lastMinoResetAtForFx = minoResetAt;
     }
     this._lastMessageForFx = msg;
 
@@ -594,7 +720,9 @@ export default class PlayScene extends Phaser.Scene {
       this.drawGoal(layout, state, true);
       this.drawApples(layout, state, true);
       this.drawTreasures(layout, state, true);
+      this.drawBatteries(layout, state, true);
       this.drawFunnies(layout, state, true);
+      this.drawMinotaurs(layout, state, true);
     } else {
       // Fog
       this.graphics.fillStyle(0x000000, 1);
@@ -603,7 +731,9 @@ export default class PlayScene extends Phaser.Scene {
       this.drawGoal(layout, state, isRevealed(state.goal.x, state.goal.y));
       this.drawApples(layout, state, false, isRevealed);
       this.drawTreasures(layout, state, false, isRevealed);
+      this.drawBatteries(layout, state, false, isRevealed);
       this.drawFunnies(layout, state, false, isRevealed);
+      this.drawMinotaurs(layout, state, false, isRevealed);
     }
 
     this.drawTrails(layout, state);
@@ -619,7 +749,11 @@ export default class PlayScene extends Phaser.Scene {
       this.centerText.setText('');
     }
 
-    if (state.message) {
+    if (state._minoResetAt != null) {
+      const msLeft = Math.max(0, Number(state._minoResetAt) - Date.now());
+      const secLeft = Math.max(1, Math.ceil(msLeft / 1000));
+      this.centerText.setText(`⚠️ Uh-oh... resetting in ${secLeft}s`);
+    } else if (state.message) {
       this.centerText.setText(state.message);
     }
   }
@@ -697,6 +831,58 @@ export default class PlayScene extends Phaser.Scene {
     }
   }
 
+  spawnMinotaurHitFx_(layout, state) {
+    const hit = state?._minoHit;
+    const mino = (state?.minotaurs && state.minotaurs[0]) ? state.minotaurs[0] : null;
+    const x = hit?.x ?? mino?.x;
+    const y = hit?.y ?? mino?.y;
+    if (x == null || y == null) return;
+
+    const { cx, cy } = this.cellCenter(layout, x, y);
+    const size = Math.max(18, Math.floor(layout.cellSize * 1.3));
+
+    // A few red/orange bursts (less celebratory than goal fireworks).
+    const scheduleMs = [0, 180, 380, 650, 900, 1250];
+    for (const t of scheduleMs) {
+      this.time.delayedCall(t, () => {
+        this.spawnMinotaurBurst_(cx, cy, size, 0.95);
+      });
+    }
+
+    // Tiny camera shake, but only if the camera exists.
+    try {
+      this.cameras?.main?.shake?.(220, 0.006);
+    } catch {
+      // ignore
+    }
+  }
+
+  spawnMinotaurBurst_(cx, cy, size, intensity) {
+    const now = this.time?.now ?? performance.now();
+    const count = Math.max(10, Math.floor(14 * intensity));
+    const baseSpeed = Math.max(26, size) * 0.0030; // px/ms
+    const colors = [0xff3b30, 0xff9500, 0x5a3a1d, 0x8b5a2b];
+
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = baseSpeed * (0.55 + Math.random() * 0.9);
+      const life = 520 + Math.random() * 420;
+      const r = Math.max(1.4, size * (0.05 + Math.random() * 0.03));
+
+      this._fxParticles.push({
+        x: cx,
+        y: cy,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        g: 0.00022 * (0.8 + Math.random() * 0.6),
+        born: now,
+        life,
+        r,
+        color: colors[i % colors.length],
+      });
+    }
+  }
+
   stepAndRenderFx_(now, delta) {
     const dt = Math.max(0, Math.min(50, Number(delta) || 0));
     this.fxGraphics.clear();
@@ -726,7 +912,7 @@ export default class PlayScene extends Phaser.Scene {
   }
 
   drawFullMaze(layout, state) {
-    const wallW = 2;
+    const wallW = 2.5;
     this.graphics.lineStyle(wallW, 0x000000, 1);
 
     for (let y = 0; y < state.h; y++) {
@@ -747,7 +933,7 @@ export default class PlayScene extends Phaser.Scene {
     const spillDepth = Math.floor(layout.cellSize * 0.35);
     const doorHalf = Math.floor(layout.cellSize * 0.48);
     const inward = Math.floor(spillDepth / 2);
-    const wallW = 2;
+    const wallW = 2.5;
 
     // 1) Paint revealed floor
     this.graphics.fillStyle(0xffffff, 1);
@@ -876,6 +1062,79 @@ export default class PlayScene extends Phaser.Scene {
     }
   }
 
+  drawBatteries(layout, state, glassMode, isRevealed) {
+    if (this._overlayVisible) return;
+    if (!this.batteryEmojiSprites) this.batteryEmojiSprites = [];
+
+    const batteries = state.batteries || [];
+    const fontSize = Math.round(layout.cellSize * 0.68);
+
+    for (let i = 0; i < batteries.length; i++) {
+      const b = batteries[i];
+      const visible = glassMode || !isRevealed || isRevealed(b.x, b.y);
+      let t = this.batteryEmojiSprites[i];
+      if (!t) {
+        t = this.add.text(0, 0, EMOJI_BATTERY, { fontSize: `${fontSize}px` }).setOrigin(0.5);
+        t.setDepth(40);
+        this.batteryEmojiSprites[i] = t;
+      }
+      t.setFontSize(fontSize);
+      const { cx, cy } = this.cellCenter(layout, b.x, b.y);
+      t.setPosition(cx, cy);
+      t.setVisible(visible && !this._overlayVisible);
+      t.setAlpha(1);
+    }
+
+    for (let i = batteries.length; i < this.batteryEmojiSprites.length; i++) {
+      this.batteryEmojiSprites[i].setVisible(false);
+    }
+  }
+
+  drawMinotaurIcon(g, cx, cy, size, alpha = 1) {
+    // Simple cow/minotaur head icon (vector) so we don't rely on emoji glyph support.
+    const r = Math.max(6, size * 0.33);
+    const hornW = r * 0.55;
+    const hornH = r * 0.35;
+    const eyeR = Math.max(1.2, r * 0.12);
+    const snoutW = r * 1.05;
+    const snoutH = r * 0.65;
+
+    // Horns
+    g.fillStyle(0xd9d9d9, alpha);
+    g.fillTriangle(cx - r * 0.95, cy - r * 0.55, cx - r * 0.95 - hornW, cy - r * 0.55 - hornH, cx - r * 0.65, cy - r * 0.55 - hornH);
+    g.fillTriangle(cx + r * 0.95, cy - r * 0.55, cx + r * 0.95 + hornW, cy - r * 0.55 - hornH, cx + r * 0.65, cy - r * 0.55 - hornH);
+
+    // Face
+    g.fillStyle(0x8b5a2b, alpha);
+    g.fillCircle(cx, cy, r);
+
+    // Snout
+    g.fillStyle(0xf2c7a5, alpha);
+    g.fillRoundedRect(cx - snoutW / 2, cy + r * 0.05, snoutW, snoutH, Math.max(2, r * 0.18));
+
+    // Nostrils
+    g.fillStyle(0x5a3a1d, alpha);
+    g.fillEllipse(cx - r * 0.22, cy + r * 0.35, Math.max(1.6, r * 0.18), Math.max(1.2, r * 0.14));
+    g.fillEllipse(cx + r * 0.22, cy + r * 0.35, Math.max(1.6, r * 0.18), Math.max(1.2, r * 0.14));
+
+    // Eyes
+    g.fillStyle(0x000000, alpha);
+    g.fillCircle(cx - r * 0.28, cy - r * 0.12, eyeR);
+    g.fillCircle(cx + r * 0.28, cy - r * 0.12, eyeR);
+  }
+
+  drawMinotaurs(layout, state, glassMode, isRevealed) {
+    if (this._overlayVisible) return;
+    const minotaurs = state.minotaurs || [];
+    for (const m of minotaurs) {
+      // In fog mode, keep the minotaur hidden until its cell is revealed.
+      if (!glassMode && isRevealed && !isRevealed(m.x, m.y)) continue;
+      const alpha = 1;
+      const { cx, cy } = this.cellCenter(layout, m.x, m.y);
+      this.drawMinotaurIcon(this.graphics, cx, cy, layout.cellSize * 1.25, alpha);
+    }
+  }
+
   drawTrails(layout, state) {
     // Prefer server-claimed path segments so the first traversal "owns" the color.
     if (state.paths && state.paths.length > 0) {
@@ -949,6 +1208,8 @@ export default class PlayScene extends Phaser.Scene {
     const appleTarget = Number(state.appleTarget ?? 0);
     const treasuresCollected = Number(state.treasuresCollected ?? 0);
     const treasureTarget = Number(state.treasureTarget ?? 0);
+    const batteriesCollected = Number(state.batteriesCollected ?? 0);
+    const batteryTarget = Number(state.batteryTarget ?? 0);
     const funniesCollected = Number(state.funniesCollected ?? 0);
     const funnyTarget = Number(state.funnyTarget ?? 0);
 
@@ -956,8 +1217,8 @@ export default class PlayScene extends Phaser.Scene {
       this.objectiveHud = this.add.container(0, 0);
       this.objectiveHud.setDepth(60);
 
-      // Larger to accommodate larger icons.
-      this.objectiveBg = this.add.rectangle(0, 0, 190, 112, 0xffffff, 0.8).setOrigin(1, 0);
+      // Larger to accommodate larger icons and batteries.
+      this.objectiveBg = this.add.rectangle(0, 0, 190, 148, 0xffffff, 0.8).setOrigin(1, 0);
       this.objectiveBg.setStrokeStyle(1, 0x000000, 0.25);
       this.objectiveHud.add(this.objectiveBg);
 
@@ -971,9 +1232,9 @@ export default class PlayScene extends Phaser.Scene {
         this.objectiveHud.add(t);
       }
 
-      // Treasure slots (up to 3)
+      // Treasure slots (up to 4)
       this.treasureSlots = [];
-      const treasureSlotsMax = 3;
+      const treasureSlotsMax = 4;
       const treasureSize = 35;
       const treasureHalf = Math.floor(treasureSize / 2);
       for (let i = 0; i < treasureSlotsMax; i++) {
@@ -986,6 +1247,16 @@ export default class PlayScene extends Phaser.Scene {
         this.objectiveHud.add(g);
       }
 
+      // Battery slots (up to 3)
+      this.batterySlots = [];
+      const batterySlotsMax = 3;
+      for (let i = 0; i < batterySlotsMax; i++) {
+        const t = this.add.text(0, 0, EMOJI_BATTERY, { fontSize: '28px', color: '#000' }).setOrigin(1, 0);
+        t.setPosition(-8 - (batterySlotsMax - 1 - i) * dx, 80);
+        this.batterySlots.push(t);
+        this.objectiveHud.add(t);
+      }
+
       // Funny (rubber duck) slots (up to 3)
       this.funnySlots = [];
       const funnySlotsMax = 3;
@@ -993,7 +1264,7 @@ export default class PlayScene extends Phaser.Scene {
       const duckHalf = Math.floor(duckSize / 2);
       for (let i = 0; i < funnySlotsMax; i++) {
         const g = this.add.graphics();
-        g.setPosition(-22 - (funnySlotsMax - 1 - i) * dx - duckHalf, 78);
+        g.setPosition(-22 - (funnySlotsMax - 1 - i) * dx - duckHalf, 112);
         g.clear();
         this.drawRubberDuck(g, duckHalf, duckHalf, duckSize);
         this.funnySlots.push(g);
@@ -1003,7 +1274,8 @@ export default class PlayScene extends Phaser.Scene {
 
     // Right-aligned fill (fills from right to left).
     this.updateHudSlotsRightToLeft(this.appleSlots, 4, appleTarget, applesCollected);
-    this.updateHudSlotsRightToLeft(this.treasureSlots, 3, treasureTarget, treasuresCollected);
+    this.updateHudSlotsRightToLeft(this.treasureSlots, 4, treasureTarget, treasuresCollected);
+    this.updateHudSlotsRightToLeft(this.batterySlots, 3, batteryTarget, batteriesCollected);
     this.updateHudSlotsRightToLeft(this.funnySlots, 3, funnyTarget, funniesCollected);
 
     this.objectiveHud.setPosition(x, y);

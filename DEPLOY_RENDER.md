@@ -76,3 +76,10 @@ If the browser console shows `Missing hello handshake`, it means something is co
   - `docker compose up --build`
   - optional cleanup if you previously had separate backends:
     - `docker compose up --build --remove-orphans`
+
+---
+
+## Debugging note
+
+In practice, the fastest way to debug gameplay issues is usually browser devtools
+(console + Network → WS frames).

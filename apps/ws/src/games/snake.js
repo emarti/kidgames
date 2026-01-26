@@ -135,49 +135,72 @@ export function createSnakeHost() {
       case 'pause': {
         if (!ws.room) return;
         const r = rooms.get(ws.room);
-        if (r && ws.playerId) Sim.togglePause(r.state, ws.playerId);
+        if (r && ws.playerId) {
+          Sim.togglePause(r.state, ws.playerId);
+          // Ensure clients update overlays immediately.
+          safeBroadcast(r, { type: 'state', state: r.state });
+        }
         break;
       }
 
       case 'resume': {
         if (!ws.room) return;
         const r = rooms.get(ws.room);
-        if (r && ws.playerId) Sim.resumeGame(r.state, ws.playerId);
+        if (r && ws.playerId) {
+          Sim.resumeGame(r.state, ws.playerId);
+          // Ensure clients update overlays immediately.
+          safeBroadcast(r, { type: 'state', state: r.state });
+        }
         break;
       }
 
       case 'restart': {
         if (!ws.room) return;
         const r = rooms.get(ws.room);
-        if (r) r.state = Sim.newGame(r.state);
+        if (r) {
+          r.state = Sim.newGame(r.state);
+          safeBroadcast(r, { type: 'state', state: r.state });
+        }
         break;
       }
 
       case 'select_speed': {
         if (!ws.room) return;
         const r = rooms.get(ws.room);
-        if (r) Sim.tryLockSpeed(r.state, msg.speed);
+        if (r) {
+          const changed = Sim.tryLockSpeed(r.state, msg.speed);
+          if (changed) safeBroadcast(r, { type: 'state', state: r.state });
+        }
         break;
       }
 
       case 'select_walls_mode': {
         if (!ws.room) return;
         const r = rooms.get(ws.room);
-        if (r) Sim.setWallsMode(r.state, msg.mode);
+        if (r) {
+          const changed = Sim.setWallsMode(r.state, msg.mode);
+          if (changed) safeBroadcast(r, { type: 'state', state: r.state });
+        }
         break;
       }
 
       case 'select_skin': {
         if (!ws.room) return;
         const r = rooms.get(ws.room);
-        if (r && ws.playerId) Sim.trySelectSkin(r.state, ws.playerId, msg.skin);
+        if (r && ws.playerId) {
+          const res = Sim.trySelectSkin(r.state, ws.playerId, msg.skin);
+          if (res && res.ok) safeBroadcast(r, { type: 'state', state: r.state });
+        }
         break;
       }
 
       case 'request_respawn': {
         if (!ws.room) return;
         const r = rooms.get(ws.room);
-        if (r && ws.playerId) Sim.requestRespawn(r.state, ws.playerId);
+        if (r && ws.playerId) {
+          Sim.requestRespawn(r.state, ws.playerId);
+          safeBroadcast(r, { type: 'state', state: r.state });
+        }
         break;
       }
 

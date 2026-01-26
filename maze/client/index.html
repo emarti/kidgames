@@ -14,16 +14,21 @@
         background-color: #AAAAAA;
       }
 
+      :root {
+        --safe-top: env(safe-area-inset-top, 0px);
+        --safe-bottom: env(safe-area-inset-bottom, 0px);
+      }
+
       /* iOS Safari: prefer dynamic viewport height to avoid top clipping */
       #app {
         position: fixed;
         inset: 0;
         width: 100vw;
+        box-sizing: border-box;
         /* Fallbacks: old iOS Safari doesn't support dvh reliably.
            We set --vh from JS using window.innerHeight. */
         height: 100dvh;
-        height: calc(var(--vh, 1vh) * 100 - env(safe-area-inset-bottom, 0px));
-        min-height: 100vh;
+        height: calc(var(--vh, 1vh) * 100 - var(--safe-bottom));
       }
 
       canvas {

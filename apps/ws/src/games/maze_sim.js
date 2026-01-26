@@ -46,17 +46,21 @@ function objectivesForLevel(level) {
   // 1: 1 apple
   // 2: 2 apples
   // 3: 3 apples
-  // 4: 4 apples
-  // 5: 4 apples, 1 chest
-  // 6: 4 apples, 2 chests
-  // 7: 4 apples, 3 chests
-  // 8: 4 apples, 3 chests, 1 funny
-  // 9: 4 apples, 3 chests, 2 funny
-  // 10: 4 apples, 3 chests, 3 funny
-  const apples = Math.min(4, L);
-  const chests = L >= 5 ? Math.min(3, L - 4) : 0;
-  const funny = L >= 8 ? Math.min(3, L - 7) : 0;
-  return { apples, chests, funny };
+  // 4: 3 apples, 1 chest
+  // 5: 4 apples, 1 chest, 1 minotaur
+  // 6: 4 apples, 2 chests, 1 minotaur
+  // 7: 4 apples, 3 chests, 1 minotaur
+  // 8: 4 apples, 3 chests, 1 battery, 1 minotaur
+  // 9: 4 apples, 3 chests, 2 batteries, 1 minotaur
+  // 10: 4 apples, 3 chests, 3 batteries, 1 duck, 1 minotaur
+  // 11: 4 apples, 4 chests, 3 batteries, 2 ducks, 1 minotaur
+  // 12+: 4 apples, 4 chests, 3 batteries, 3 ducks, 1 minotaur
+  const apples = L <= 3 ? L : (L === 4 ? 3 : 4);
+  const chests = L >= 4 ? (L <= 10 ? Math.min(3, L - 3) : Math.min(4, L - 7)) : 0;
+  const batteries = L >= 8 ? Math.min(3, L - 7) : 0;
+  const ducks = L >= 10 ? Math.min(3, L - 9) : 0;
+  const minotaurs = L >= 5 ? 1 : 0;
+  return { apples, chests, batteries, ducks, minotaurs };
 }
 
 function cellIndex(w, x, y) {
@@ -105,9 +109,13 @@ export function newGameState() {
     treasures: [],
     treasureTarget: 0,
     treasuresCollected: 0,
+    batteries: [],
+    batteryTarget: 0,
+    batteriesCollected: 0,
     funnies: [],
     funnyTarget: 0,
     funniesCollected: 0,
+    minotaurs: [],
     revealed: [],
     // Claimed path segments; each segment has a fixed color from the first traversal.
     paths: [],
@@ -121,6 +129,8 @@ export function newGameState() {
     message: '',
     _advanceAt: null,
     _advanceToLevel: null,
+    _minoResetAt: null,
+    _minoHit: null,
   };
 
   buildLevel(state, level);
@@ -189,14 +199,72 @@ function generateMazePrim(w, h) {
   return walls;
 }
 
+function findDeadendNearCenter(state, forbidden) {
+  // Find all deadends (cells with exactly 3 walls)
+  const deadends = [];
+  for (let y = 0; y < state.h; y++) {
+    for (let x = 0; x < state.w; x++) {
+      const idx = cellIndex(state.w, x, y);
+      if (forbidden.has(idx)) continue;
+      
+      const mask = state.walls[y][x];
+      const wallCount = [WALL_N, WALL_E, WALL_S, WALL_W].filter(w => (mask & w) !== 0).length;
+      if (wallCount === 3) {
+        deadends.push({ x, y });
+      }
+    }
+  }
+
+  if (deadends.length === 0) {
+    // Fallback: place anywhere not forbidden
+    let x, y;
+    do {
+      x = randInt(state.w);
+      y = randInt(state.h);
+    } while (forbidden.has(cellIndex(state.w, x, y)));
+    return { x, y };
+  }
+
+  // Define middle 25% region (center 50% in each dimension)
+  const centerX = Math.floor(state.w / 2);
+  const centerY = Math.floor(state.h / 2);
+  const rangeX = Math.max(1, Math.floor(state.w * 0.25));
+  const rangeY = Math.max(1, Math.floor(state.h * 0.25));
+  
+  const minX = centerX - rangeX;
+  const maxX = centerX + rangeX;
+  const minY = centerY - rangeY;
+  const maxY = centerY + rangeY;
+  
+  // Filter deadends to middle 25% region
+  const centerDeadends = deadends.filter(d => 
+    d.x >= minX && d.x <= maxX && d.y >= minY && d.y <= maxY
+  );
+  
+  if (centerDeadends.length === 0) {
+    // If no deadends in center region, use closest deadend to center
+    deadends.sort((a, b) => {
+      const distA = Math.abs(a.x - centerX) + Math.abs(a.y - centerY);
+      const distB = Math.abs(b.x - centerX) + Math.abs(b.y - centerY);
+      return distA - distB;
+    });
+    return deadends[0];
+  }
+  
+  // Pick random deadend from center region
+  return centerDeadends[randInt(centerDeadends.length)];
+}
+
 function placeCollectibles(state) {
-  const { apples, chests, funny } = objectivesForLevel(state.level);
+  const { apples, chests, batteries, ducks, minotaurs } = objectivesForLevel(state.level);
 
   state.appleTarget = apples;
   state.applesCollected = 0;
   state.treasureTarget = chests;
   state.treasuresCollected = 0;
-  state.funnyTarget = funny;
+  state.batteryTarget = batteries;
+  state.batteriesCollected = 0;
+  state.funnyTarget = ducks;
   state.funniesCollected = 0;
 
   const start = startCell(state.w);
@@ -230,7 +298,15 @@ function placeCollectibles(state) {
 
   state.apples = placeN(apples);
   state.treasures = placeN(chests);
-  state.funnies = placeN(funny);
+  state.batteries = placeN(batteries);
+  state.funnies = placeN(ducks);
+  
+  // Place minotaur in a deadend near the center
+  if (minotaurs > 0) {
+    state.minotaurs = [findDeadendNearCenter(state, forbidden)];
+  } else {
+    state.minotaurs = [];
+  }
 }
 
 function computeVisibleCellsLos(state, x, y) {
@@ -332,16 +408,51 @@ function collectFunnyIfPresent(state, x, y) {
   }
 }
 
+function collectBatteryIfPresent(state, x, y) {
+  const found = state.batteries?.findIndex((b) => b.x === x && b.y === y) ?? -1;
+  if (found >= 0) {
+    state.batteries.splice(found, 1);
+    state.batteriesCollected = clamp((state.batteriesCollected ?? 0) + 1, 0, 999);
+  }
+}
+
+function checkMinotaurCollision(state, x, y) {
+  const found = state.minotaurs?.findIndex((m) => m.x === x && m.y === y) ?? -1;
+  return found >= 0;
+}
+
+function resetMaze(state) {
+  // Reset player positions and trails but keep the same maze
+  resetPlayerPositionsAndTrails(state);
+  
+  // Keep collected items count - players keep what they have
+  // Collectibles stay in the same place (not re-placed)
+  
+  // Keep previously claimed path segments and revealed fog so players can
+  // still see where they've been after a minotaur hit.
+  updateVisibility(state);
+  
+  // Clear any level-up message
+  state.message = '';
+  state._advanceAt = null;
+  state._advanceToLevel = null;
+
+  // Clear minotaur reset state
+  state._minoResetAt = null;
+  state._minoHit = null;
+}
+
 function remainingObjectives(state) {
   const a = Math.max(0, (state.appleTarget ?? 0) - (state.applesCollected ?? 0));
   const t = Math.max(0, (state.treasureTarget ?? 0) - (state.treasuresCollected ?? 0));
+  const b = Math.max(0, (state.batteryTarget ?? 0) - (state.batteriesCollected ?? 0));
   const f = Math.max(0, (state.funnyTarget ?? 0) - (state.funniesCollected ?? 0));
-  return { apples: a, treasures: t, funnies: f };
+  return { apples: a, treasures: t, batteries: b, funnies: f };
 }
 
 function allObjectivesComplete(state) {
   const rem = remainingObjectives(state);
-  return rem.apples <= 0 && rem.treasures <= 0 && rem.funnies <= 0;
+  return rem.apples <= 0 && rem.treasures <= 0 && rem.batteries <= 0 && rem.funnies <= 0;
 }
 
 function maybeScheduleNextLevel(state, now) {
@@ -356,6 +467,14 @@ function maybeScheduleNextLevel(state, now) {
 
 export function step(state, now) {
   state.tick++;
+
+  // Minotaur reset takes precedence over level-up.
+  if (state._minoResetAt != null) {
+    if (now >= state._minoResetAt) {
+      resetMaze(state);
+    }
+    return;
+  }
 
   if (state._advanceAt != null && now >= state._advanceAt) {
     const next = state._advanceToLevel ?? (state.level + 1);
@@ -455,6 +574,9 @@ export function applyInput(state, playerId, dir, now) {
   if (!playerId) return;
   if (!DIRS[dir]) return;
 
+  // During a minotaur-hit countdown, freeze inputs.
+  if (state._minoResetAt != null) return;
+
   // Global pause blocks movement.
   if (state.paused) return;
 
@@ -465,7 +587,7 @@ export function applyInput(state, playerId, dir, now) {
   if (p.paused) return;
 
   // Clear transient messages on movement.
-  if (state.message && state._advanceAt == null) state.message = '';
+  if (state.message && state._advanceAt == null && state._minoResetAt == null) state.message = '';
 
   const d = DIRS[dir];
   const mask = state.walls[p.y][p.x];
@@ -490,8 +612,23 @@ export function applyInput(state, playerId, dir, now) {
   claimPathEdge(state, ox, oy, nx, ny, p.color);
 
   updateVisibility(state);
+  
+  // Check minotaur collision BEFORE collecting items
+  if (checkMinotaurCollision(state, nx, ny)) {
+    // Start a short countdown before resetting (same maze, items stay put).
+    state.message = '⚠️ Hit the Minotaur! Resetting...';
+    state._minoResetAt = now + 3000;
+    state._minoHit = { x: nx, y: ny, at: now };
+
+    // Cancel any scheduled level-up.
+    state._advanceAt = null;
+    state._advanceToLevel = null;
+    return;
+  }
+  
   collectAppleIfPresent(state, nx, ny);
   collectTreasureIfPresent(state, nx, ny);
+  collectBatteryIfPresent(state, nx, ny);
   collectFunnyIfPresent(state, nx, ny);
 
   if (nx === state.goal.x && ny === state.goal.y) {
