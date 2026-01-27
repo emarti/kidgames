@@ -752,7 +752,7 @@ export default class PlayScene extends Phaser.Scene {
     if (state._minoResetAt != null) {
       const msLeft = Math.max(0, Number(state._minoResetAt) - Date.now());
       const secLeft = Math.max(1, Math.ceil(msLeft / 1000));
-      this.centerText.setText(`⚠️ Uh-oh... resetting in ${secLeft}s`);
+      this.centerText.setText(`⚠️ The Minotaur got you! Resetting in ${secLeft}s`);
     } else if (state.message) {
       this.centerText.setText(state.message);
     }
@@ -851,7 +851,7 @@ export default class PlayScene extends Phaser.Scene {
 
     // Tiny camera shake, but only if the camera exists.
     try {
-      this.cameras?.main?.shake?.(220, 0.006);
+      this.cameras?.main?.shake?.(2000, 0.006);
     } catch {
       // ignore
     }
@@ -1139,7 +1139,11 @@ export default class PlayScene extends Phaser.Scene {
     // Prefer server-claimed path segments so the first traversal "owns" the color.
     if (state.paths && state.paths.length > 0) {
       for (const seg of state.paths) {
-        const color = parseInt(String(seg.color || '#000000').replace('#', '0x'), 16);
+        const rawHex = String(seg.color || '#000000').toLowerCase();
+        // If the player chooses "black", make the trail a dark gray so it doesn't
+        // visually merge with the maze walls.
+        const trailHex = (rawHex === '#111111' || rawHex === '#000000') ? '#444444' : rawHex;
+        const color = parseInt(trailHex.replace('#', '0x'), 16);
         this.graphics.lineStyle(2, color, 1);
         const ac = this.cellCenter(layout, seg.a.x, seg.a.y);
         const bc = this.cellCenter(layout, seg.b.x, seg.b.y);
@@ -1153,7 +1157,9 @@ export default class PlayScene extends Phaser.Scene {
       const p = state.players?.[pid];
       if (!p || !p.connected || !p.trail || p.trail.length < 2) continue;
 
-      const color = parseInt(p.color.replace('#', '0x'), 16);
+      const rawHex = String(p.color || '#000000').toLowerCase();
+      const trailHex = (rawHex === '#111111' || rawHex === '#000000') ? '#444444' : rawHex;
+      const color = parseInt(trailHex.replace('#', '0x'), 16);
       this.graphics.lineStyle(2, color, 1);
 
       for (let i = 1; i < p.trail.length; i++) {

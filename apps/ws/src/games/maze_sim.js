@@ -52,15 +52,19 @@ function objectivesForLevel(level) {
   // 7: 4 apples, 3 chests, 1 minotaur
   // 8: 4 apples, 3 chests, 1 battery, 1 minotaur
   // 9: 4 apples, 3 chests, 2 batteries, 1 minotaur
-  // 10: 4 apples, 3 chests, 3 batteries, 1 duck, 1 minotaur
-  // 11: 4 apples, 4 chests, 3 batteries, 2 ducks, 1 minotaur
-  // 12+: 4 apples, 4 chests, 3 batteries, 3 ducks, 1 minotaur
+  // 10: 4 apples, 3 chests, 3 batteries, 1 fish, 1 minotaur
+  // 11: 4 apples, 4 chests, 3 batteries, 2 fish, 1 minotaur
+  // 12: 4 apples, 4 chests, 3 batteries, 3 fish, 1 minotaur
+  // 13: 4 apples, 4 chests, 3 batteries, 3 fish, 1 duck, 1 minotaur
+  // 14: 4 apples, 4 chests, 3 batteries, 3 fish, 2 ducks, 1 minotaur
+  // 15+: 4 apples, 4 chests, 3 batteries, 3 fish, 3 ducks, 1 minotaur
   const apples = L <= 3 ? L : (L === 4 ? 3 : 4);
   const chests = L >= 4 ? (L <= 10 ? Math.min(3, L - 3) : Math.min(4, L - 7)) : 0;
   const batteries = L >= 8 ? Math.min(3, L - 7) : 0;
-  const ducks = L >= 10 ? Math.min(3, L - 9) : 0;
+  const fish = L >= 10 ? Math.min(3, L - 9) : 0;
+  const ducks = L >= 13 ? Math.min(3, L - 12) : 0;
   const minotaurs = L >= 5 ? 1 : 0;
-  return { apples, chests, batteries, ducks, minotaurs };
+  return { apples, chests, batteries, fish, ducks, minotaurs };
 }
 
 function cellIndex(w, x, y) {
@@ -112,9 +116,12 @@ export function newGameState() {
     batteries: [],
     batteryTarget: 0,
     batteriesCollected: 0,
-    funnies: [],
-    funnyTarget: 0,
-    funniesCollected: 0,
+    fishes: [],
+    fishTarget: 0,
+    fishesCollected: 0,
+    ducks: [],
+    duckTarget: 0,
+    ducksCollected: 0,
     minotaurs: [],
     revealed: [],
     // Claimed path segments; each segment has a fixed color from the first traversal.
@@ -256,7 +263,7 @@ function findDeadendNearCenter(state, forbidden) {
 }
 
 function placeCollectibles(state) {
-  const { apples, chests, batteries, ducks, minotaurs } = objectivesForLevel(state.level);
+  const { apples, chests, batteries, fish, ducks, minotaurs } = objectivesForLevel(state.level);
 
   state.appleTarget = apples;
   state.applesCollected = 0;
@@ -264,8 +271,10 @@ function placeCollectibles(state) {
   state.treasuresCollected = 0;
   state.batteryTarget = batteries;
   state.batteriesCollected = 0;
-  state.funnyTarget = ducks;
-  state.funniesCollected = 0;
+  state.fishTarget = fish;
+  state.fishesCollected = 0;
+  state.duckTarget = ducks;
+  state.ducksCollected = 0;
 
   const start = startCell(state.w);
   const forbidden = new Set([cellIndex(state.w, start.x, start.y), cellIndex(state.w, state.goal.x, state.goal.y)]);
@@ -299,7 +308,8 @@ function placeCollectibles(state) {
   state.apples = placeN(apples);
   state.treasures = placeN(chests);
   state.batteries = placeN(batteries);
-  state.funnies = placeN(ducks);
+  state.fishes = placeN(fish);
+  state.ducks = placeN(ducks);
   
   // Place minotaur in a deadend near the center
   if (minotaurs > 0) {
@@ -400,11 +410,19 @@ function collectTreasureIfPresent(state, x, y) {
   }
 }
 
-function collectFunnyIfPresent(state, x, y) {
-  const found = state.funnies?.findIndex((f) => f.x === x && f.y === y) ?? -1;
+function collectFishIfPresent(state, x, y) {
+  const found = state.fishes?.findIndex((f) => f.x === x && f.y === y) ?? -1;
   if (found >= 0) {
-    state.funnies.splice(found, 1);
-    state.funniesCollected = clamp((state.funniesCollected ?? 0) + 1, 0, 999);
+    state.fishes.splice(found, 1);
+    state.fishesCollected = clamp((state.fishesCollected ?? 0) + 1, 0, 999);
+  }
+}
+
+function collectDuckIfPresent(state, x, y) {
+  const found = state.ducks?.findIndex((d) => d.x === x && d.y === y) ?? -1;
+  if (found >= 0) {
+    state.ducks.splice(found, 1);
+    state.ducksCollected = clamp((state.ducksCollected ?? 0) + 1, 0, 999);
   }
 }
 
@@ -446,13 +464,14 @@ function remainingObjectives(state) {
   const a = Math.max(0, (state.appleTarget ?? 0) - (state.applesCollected ?? 0));
   const t = Math.max(0, (state.treasureTarget ?? 0) - (state.treasuresCollected ?? 0));
   const b = Math.max(0, (state.batteryTarget ?? 0) - (state.batteriesCollected ?? 0));
-  const f = Math.max(0, (state.funnyTarget ?? 0) - (state.funniesCollected ?? 0));
-  return { apples: a, treasures: t, batteries: b, funnies: f };
+  const f = Math.max(0, (state.fishTarget ?? 0) - (state.fishesCollected ?? 0));
+  const d = Math.max(0, (state.duckTarget ?? 0) - (state.ducksCollected ?? 0));
+  return { apples: a, treasures: t, batteries: b, fish: f, ducks: d };
 }
 
 function allObjectivesComplete(state) {
   const rem = remainingObjectives(state);
-  return rem.apples <= 0 && rem.treasures <= 0 && rem.batteries <= 0 && rem.funnies <= 0;
+  return rem.apples <= 0 && rem.treasures <= 0 && rem.batteries <= 0 && rem.fish <= 0 && rem.ducks <= 0;
 }
 
 function maybeScheduleNextLevel(state, now) {
@@ -616,7 +635,7 @@ export function applyInput(state, playerId, dir, now) {
   // Check minotaur collision BEFORE collecting items
   if (checkMinotaurCollision(state, nx, ny)) {
     // Start a short countdown before resetting (same maze, items stay put).
-    state.message = '⚠️ Hit the Minotaur! Resetting...';
+    state.message = '⚠️ The Minotaur got you! Resetting...';
     state._minoResetAt = now + 3000;
     state._minoHit = { x: nx, y: ny, at: now };
 
@@ -629,7 +648,8 @@ export function applyInput(state, playerId, dir, now) {
   collectAppleIfPresent(state, nx, ny);
   collectTreasureIfPresent(state, nx, ny);
   collectBatteryIfPresent(state, nx, ny);
-  collectFunnyIfPresent(state, nx, ny);
+  collectFishIfPresent(state, nx, ny);
+  collectDuckIfPresent(state, nx, ny);
 
   if (nx === state.goal.x && ny === state.goal.y) {
     // Objectives are optional; reaching the goal always finishes the level.
