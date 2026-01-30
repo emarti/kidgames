@@ -7,12 +7,15 @@
     <style>
       :root { color-scheme: light dark; }
       body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 32px; }
-      .wrap { max-width: 1100px; margin: 0 auto; }
+      .wrap { max-width: 1240px; margin: 0 auto; }
       h1 { margin: 0 0 8px; font-size: 28px; }
-      ul { list-style: none; padding: 0; margin: 18px 0 0; display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+      ul { list-style: none; padding: 0; margin: 18px 0 0; display: grid; gap: 16px; grid-template-columns: 1fr; }
+      @media (min-width: 900px) {
+        ul { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+      }
       a.card { display: block; border: 1px solid rgba(127,127,127,0.35); border-radius: 14px; text-decoration: none; overflow: hidden; background: rgba(255,255,255,0.02); }
       a.card:hover { border-color: rgba(127,127,127,0.6); }
-      .shot { position: relative; width: 100%; aspect-ratio: 16 / 9; border-bottom: 1px solid rgba(0,0,0,0.12); background-size: cover; background-position: center; background-repeat: no-repeat; }
+      .shot { position: relative; width: 100%; aspect-ratio: 4 / 3; border-bottom: 1px solid rgba(0,0,0,0.12); background-size: cover; background-position: center; background-repeat: no-repeat; }
       .label { position: absolute; left: 10px; top: 10px; padding: 6px 10px; border-radius: 10px; font-weight: 700; letter-spacing: 0.3px; color: #fff; background: rgba(0,0,0,0.55); backdrop-filter: blur(6px); }
     </style>
   </head>
@@ -20,7 +23,6 @@
     <div class="wrap">
       <h1>Games</h1>
       <ul>
-        <!-- Comet hidden from portal while under development. Still hosted at /games/comet/ -->
         <li>
           <a class="card" href="/games/snake/">
             <div class="shot" style="background-image: url('/games/screenshots/snake.png'), linear-gradient(135deg, rgba(0,0,0,0.10), rgba(0,0,0,0.02));">
@@ -28,11 +30,17 @@
             </div>
           </a>
         </li>
-        <!-- Maze hidden from portal while under development. Still hosted at /games/maze/ -->
         <li>
           <a class="card" href="/games/maze/">
             <div class="shot" style="background-image: url('/games/screenshots/maze.png'), linear-gradient(135deg, rgba(0,0,0,0.10), rgba(0,0,0,0.02));">
               <div class="label">Maze</div>
+            </div>
+          </a>
+        </li>
+        <li>
+          <a class="card" href="/games/comet/">
+            <div class="shot" style="background-image: url('/games/screenshots/comet.png'), linear-gradient(135deg, rgba(0,0,0,0.10), rgba(0,0,0,0.02));">
+              <div class="label">Comet</div>
             </div>
           </a>
         </li>

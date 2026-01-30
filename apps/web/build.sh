@@ -34,4 +34,15 @@ rm -rf "$OUT_DIR/games/maze"
 mkdir -p "$OUT_DIR/games/maze"
 cp -a "$ROOT_DIR/maze/client/dist/." "$OUT_DIR/games/maze/"
 
+# Build Archimedes client to /games/archimedes/
+(
+  cd "$ROOT_DIR/archimedes/client"
+  npm install --no-audit --no-fund
+  VITE_BASE=/games/archimedes/ npm run build
+)
+mkdir -p "$OUT_DIR/games/archimedes"
+rm -rf "$OUT_DIR/games/archimedes"
+mkdir -p "$OUT_DIR/games/archimedes"
+cp -a "$ROOT_DIR/archimedes/client/dist/." "$OUT_DIR/games/archimedes/"
+
 echo "Built static site into: $OUT_DIR"

@@ -53,6 +53,9 @@
     @cometNoSlash path /games/comet
     redir @cometNoSlash /games/comet/ 308
 
+    @archimedesNoSlash path /games/archimedes
+    redir @archimedesNoSlash /games/archimedes/ 308
+
     # WebSocket endpoint (reverse-proxied to the game server)
     handle /games/snake/ws* {
       reverse_proxy {$GAMES_BACKEND:games-backend:8080}
@@ -63,6 +66,10 @@
     }
 
     handle /games/comet/ws* {
+      reverse_proxy {$GAMES_BACKEND:games-backend:8080}
+    }
+
+    handle /games/archimedes/ws* {
       reverse_proxy {$GAMES_BACKEND:games-backend:8080}
     }
 

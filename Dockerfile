@@ -87,6 +87,28 @@ RUN cd comet/client && npm run build
 
 
 ########################
+# Archimedes client build
+########################
+FROM node:20-slim AS archimedes-client-build
+
+WORKDIR /repo
+
+# Shared local package dependency used by clients
+COPY packages/touch-controls/ ./packages/touch-controls/
+
+# Install deps (cache-friendly)
+COPY archimedes/client/package*.json ./archimedes/client/
+RUN cd archimedes/client && npm install --no-audit --no-fund
+
+# App source
+COPY archimedes/client/ ./archimedes/client/
+
+# Host archimedes under /games/archimedes/
+ENV VITE_BASE=/games/archimedes/
+RUN cd archimedes/client && npm run build
+
+
+########################
 # Gateway (Caddy) image
 ########################
 FROM caddy:2-alpine AS gateway
@@ -107,6 +129,10 @@ COPY --from=maze-client-build /repo/maze/client/dist/ /srv/games/maze/
 # Comet client build output lives at /games/comet/
 RUN mkdir -p /srv/games/comet
 COPY --from=comet-client-build /repo/comet/client/dist/ /srv/games/comet/
+
+# Archimedes client build output lives at /games/archimedes/
+RUN mkdir -p /srv/games/archimedes
+COPY --from=archimedes-client-build /repo/archimedes/client/dist/ /srv/games/archimedes/
 
 # Caddy config
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile
