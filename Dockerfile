@@ -109,6 +109,28 @@ RUN cd archimedes/client && npm run build
 
 
 ########################
+# Wallmover client build
+########################
+FROM node:20-slim AS wallmover-client-build
+
+WORKDIR /repo
+
+# Shared local package dependency used by clients
+COPY packages/touch-controls/ ./packages/touch-controls/
+
+# Install deps (cache-friendly)
+COPY wallmover/client/package*.json ./wallmover/client/
+RUN cd wallmover/client && npm install --no-audit --no-fund
+
+# App source
+COPY wallmover/client/ ./wallmover/client/
+
+# Host wallmover under /games/wallmover/
+ENV VITE_BASE=/games/wallmover/
+RUN cd wallmover/client && npm run build
+
+
+########################
 # Gateway (Caddy) image
 ########################
 FROM caddy:2-alpine AS gateway
@@ -133,6 +155,10 @@ COPY --from=comet-client-build /repo/comet/client/dist/ /srv/games/comet/
 # Archimedes client build output lives at /games/archimedes/
 RUN mkdir -p /srv/games/archimedes
 COPY --from=archimedes-client-build /repo/archimedes/client/dist/ /srv/games/archimedes/
+
+# Wallmover client build output lives at /games/wallmover/
+RUN mkdir -p /srv/games/wallmover
+COPY --from=wallmover-client-build /repo/wallmover/client/dist/ /srv/games/wallmover/
 
 # Caddy config
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile

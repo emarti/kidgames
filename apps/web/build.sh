@@ -45,4 +45,15 @@ rm -rf "$OUT_DIR/games/archimedes"
 mkdir -p "$OUT_DIR/games/archimedes"
 cp -a "$ROOT_DIR/archimedes/client/dist/." "$OUT_DIR/games/archimedes/"
 
+# Build Wallmover client to /games/wallmover/
+(
+  cd "$ROOT_DIR/wallmover/client"
+  npm install --no-audit --no-fund
+  VITE_BASE=/games/wallmover/ npm run build
+)
+mkdir -p "$OUT_DIR/games/wallmover"
+rm -rf "$OUT_DIR/games/wallmover"
+mkdir -p "$OUT_DIR/games/wallmover"
+cp -a "$ROOT_DIR/wallmover/client/dist/." "$OUT_DIR/games/wallmover/"
+
 echo "Built static site into: $OUT_DIR"

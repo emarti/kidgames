@@ -7,6 +7,7 @@ import { createSnakeHost } from './games/snake.js';
 import { createMazeHost } from './games/maze.js';
 import { createCometHost } from './games/comet.js';
 import { createArchimedesHost } from './games/archimedes.js';
+import { createWallmoverHost } from './games/wallmover.js';
 
 const port = Number.parseInt(process.env.PORT ?? '8080', 10);
 if (!Number.isFinite(port) || port <= 0) throw new Error(`Invalid PORT: ${process.env.PORT}`);
@@ -19,7 +20,13 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 
 const hosts = new Map();
-for (const host of [createSnakeHost(), createMazeHost(), createCometHost(), createArchimedesHost()]) {
+for (const host of [
+  createSnakeHost(),
+  createMazeHost(),
+  createCometHost(),
+  createArchimedesHost(),
+  createWallmoverHost(),
+]) {
   hosts.set(host.gameId, host);
 }
 

@@ -23,19 +23,72 @@ const WALL_W = 8;
 const TOUCH_KEY_H = 54;
 const TOUCH_GAP_MULT = 2;
 
+// Wallmover editor toolbar
+const TOOLBAR_W_MIN = 150;
+const TOOLBAR_W_MAX = 220;
+const TOOLBAR_BTN_H = 54;
+const TOOLBAR_PAD = 10;
+
+const ICON_DRAW = '✏️';
+const ICON_ERASE = '🧽';
+const ICON_TREASURE = '🧰';
+const ICON_START = '🚦';
+const ICON_TEST = '🚶';
+const ICON_STOP = '🛑';
+const ICON_NEXT = '🚪';
+
 export default class PlayScene extends Phaser.Scene {
   constructor() {
     super({ key: 'PlayScene' });
+  }
+
+  drawEditGrid_(layout, state) {
+    if (!layout || !state) return;
+    const cs = layout.cellSize;
+    if (!Number.isFinite(cs) || cs <= 3) return;
+
+    // Very faint grid to show cell boundaries while editing.
+    const alpha = 0.10;
+    const color = 0x000000;
+    const lw = 1;
+    this.graphics.lineStyle(lw, color, alpha);
+
+    const x0 = layout.offsetX;
+    const y0 = layout.offsetY;
+    const x1 = x0 + state.w * cs;
+    const y1 = y0 + state.h * cs;
+
+    // Pixel-align for crisper 1px lines.
+    const snap = (v) => Math.round(v) + 0.5;
+
+    for (let x = 0; x <= state.w; x++) {
+      const px = snap(x0 + x * cs);
+      this.graphics.beginPath();
+      this.graphics.moveTo(px, snap(y0));
+      this.graphics.lineTo(px, snap(y1));
+      this.graphics.strokePath();
+    }
+    for (let y = 0; y <= state.h; y++) {
+      const py = snap(y0 + y * cs);
+      this.graphics.beginPath();
+      this.graphics.moveTo(snap(x0), py);
+      this.graphics.lineTo(snap(x1), py);
+      this.graphics.strokePath();
+    }
   }
 
   createTouchControls_() {
     if (!this.touchControlsEnabled) return;
     if (this.touchControls?.destroy) this.touchControls.destroy();
     this.touchControls = createTouchControls(this, {
-      onDir: (dir) => this.game.net.send('input', { dir }),
+      onDir: (dir) => {
+        if (this._allowMoveInput) this.game.net.send('input', { dir });
+      },
       onPause: () => this.togglePause(),
       alpha: 0.6,
       margin: this.touchControlsMargin,
+      // Must layer above the editor toolbar on iPad.
+      depth: 700,
     });
   }
 
@@ -206,6 +259,22 @@ export default class PlayScene extends Phaser.Scene {
     this._lastMessageForFx = '';
 
     this.uiText = this.add.text(10, 10, '', { fontSize: '16px', color: '#000' });
+
+    this._dismissedCenterMessage = null;
+    this._lastCenterMessageSeen = null;
+    this.centerDismissHit = this.add.rectangle(0, 0, 10, 10, 0x000000, 0).setOrigin(0, 0);
+    this.centerDismissHit.setDepth(995);
+    this.centerDismissHit.setInteractive({ useHandCursor: true });
+    this.centerDismissHit.setVisible(false);
+    this.centerDismissHit.on('pointerdown', () => {
+      const state = this.game.net?.latestState;
+      const msg = String(state?.message || '');
+      if (!msg) return;
+      this._dismissedCenterMessage = msg;
+      if (this.centerText) this.centerText.setText('');
+      this.centerDismissHit.setVisible(false);
+    });
+
     this.centerText = this.add
       .text(400, 300, '', { fontSize: '30px', color: '#000', backgroundColor: '#FFFFFFAA' })
       .setOrigin(0.5);
@@ -218,6 +287,15 @@ export default class PlayScene extends Phaser.Scene {
     this.createSetupUI();
     this.setupContainer.setVisible(false);
     this.setupContainer.setDepth(500);
+
+    // Wallmover editor UI (toolbar + playfield hitbox)
+    this._allowMoveInput = false;
+    this._allowEditInput = false;
+    this._editorTool = 'draw';
+    this._editorItemKind = 'apple';
+    this._editorPickerOpen = false;
+    this._winFxShown = false;
+    this.createEditorUI_();
 
     // Audio unlock (iOS Safari): only attempt to unlock when sounds are enabled.
     const maybeUnlockAudio = () => {
@@ -242,6 +320,7 @@ export default class PlayScene extends Phaser.Scene {
       const H = this.scale?.height || 600;
       this.centerText.setPosition(W / 2, H / 2);
       this.setupContainer.setPosition(W / 2, H / 2);
+      if (this.centerDismissHit) this.centerDismissHit.setSize(W, H);
     };
     positionFixedUI();
     this.scale.on('resize', positionFixedUI);
@@ -327,7 +406,7 @@ export default class PlayScene extends Phaser.Scene {
       else if (event.code === 'ArrowLeft' || event.code === 'KeyA') dir = 'LEFT';
       else if (event.code === 'ArrowRight' || event.code === 'KeyD') dir = 'RIGHT';
 
-      if (dir) net.send('input', { dir });
+      if (dir && this._allowMoveInput) net.send('input', { dir });
     });
   }
 
@@ -355,7 +434,16 @@ export default class PlayScene extends Phaser.Scene {
     this.setupTitle = this.add.text(0, -210, 'GAME SETUP', { fontSize: '32px', color: '#000', fontStyle: 'bold' }).setOrigin(0.5);
     this.setupContainer.add(this.setupTitle);
 
-    const visionY = -170;
+    // Place Mode on the first row, then space the rest out a bit more.
+    // Wallmover mode selector (Free now; Puzzle later)
+    const modeY = -170;
+    this.setupContainer.add(this.add.text(-300, modeY, 'Mode:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
+    this.modeButtons = {
+      freeform: this.addSetupButton(-120, modeY, 'Free', () => this.game.net.send('set_mode', { mode: 'freeform' })),
+      puzzle: this.addSetupButton(40, modeY, 'Puzzle', () => this.game.net.send('set_mode', { mode: 'puzzle' })),
+    };
+
+    const visionY = -125;
     this.setupContainer.add(this.add.text(-300, visionY, 'Vision:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
     this.visionButtons = {
       fog: this.addSetupButton(-120, visionY, 'Fog', () => this.game.net.send('select_vision_mode', { mode: 'fog' })),
@@ -365,7 +453,7 @@ export default class PlayScene extends Phaser.Scene {
     this.restartButton = this.addSetupButton(180, visionY, 'Restart', () => this.game.net.send('restart'));
 
     // Sounds toggle (client-only preference)
-    const soundsY = -125;
+    const soundsY = -80;
     this.setupContainer.add(this.add.text(-300, soundsY, 'Sounds:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
     this.soundButtons = {
       off: this.addSetupButton(-120, soundsY, 'Off', () => sfx.setEnabled(false)),
@@ -377,7 +465,7 @@ export default class PlayScene extends Phaser.Scene {
     };
 
     // Debug: 2-digit level selector (placed under Color)
-    const levelY = 35;
+    const levelY = 80;
     this.setupContainer.add(this.add.text(-300, levelY, 'Level:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
     this.addSetupButton(-210, levelY, '-', () => {
       const level = Number(this.game.net?.latestState?.level ?? 1);
@@ -407,7 +495,7 @@ export default class PlayScene extends Phaser.Scene {
     });
 
     // Character + color selection (like Snake, but simplified)
-    const characterY = -65;
+    const characterY = -35;
     this.setupContainer.add(this.add.text(-300, characterY, 'Character:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
     this.avatarButtons = {};
     const avatars = listAvatars();
@@ -418,7 +506,7 @@ export default class PlayScene extends Phaser.Scene {
       this.avatarButtons[a] = this.addAvatarButton(avatarX0 + i * avatarDX, avatarY, a, () => this.game.net.send('select_avatar', { avatar: a }));
     });
 
-    const colorY = -10;
+    const colorY = 20;
     this.setupContainer.add(this.add.text(-300, colorY, 'Color:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
     this.colorButtons = {};
     this.availableColors = ['#2ecc71', '#3498db', '#e67e22', '#9b59b6', '#e74c3c', '#111111'];
@@ -432,11 +520,11 @@ export default class PlayScene extends Phaser.Scene {
       this.colorButtons[c] = btn;
     });
 
-    this.setupHelp = this.add.text(0, 130, '', { fontSize: '20px', color: '#000' }).setOrigin(0.5);
+    this.setupHelp = this.add.text(0, 150, '', { fontSize: '20px', color: '#000' }).setOrigin(0.5);
     this.setupContainer.add(this.setupHelp);
 
-    this.startButton = this.addSetupButton(-90, 180, 'Start', () => this.game.net.send('resume'));
-    this.continueButton = this.addSetupButton(90, 180, 'Continue', () => this.game.net.send('resume'));
+    this.startButton = this.addSetupButton(-90, 205, 'Start', () => this.game.net.send('resume'));
+    this.continueButton = this.addSetupButton(90, 205, 'Continue', () => this.game.net.send('resume'));
   }
 
   addSetupButton(x, y, label, cb) {
@@ -486,6 +574,521 @@ export default class PlayScene extends Phaser.Scene {
     return bg;
   }
 
+  getEditorReserve_() {
+    const W = this.scale?.width || 800;
+    // Keep the toolbar usable on both desktop and mobile.
+    return Math.floor(Math.min(TOOLBAR_W_MAX, Math.max(TOOLBAR_W_MIN, W * 0.22)));
+  }
+
+  addToolbarButton_(label, cb) {
+    const btn = this.add
+      .text(0, 0, label, {
+        fontSize: '22px',
+        backgroundColor: UI_BTN_BG,
+        color: UI_BTN_TEXT,
+        padding: { x: 12, y: 10 },
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+
+    btn._selected = false;
+
+    btn.on('pointerover', () => {
+      if (!btn._selected) btn.setBackgroundColor(UI_BTN_BG_HOVER);
+    });
+    btn.on('pointerout', () => {
+      if (!btn._selected) btn.setBackgroundColor(UI_BTN_BG);
+    });
+    btn.on('pointerdown', cb);
+    this.editorContainer.add(btn);
+    return btn;
+  }
+
+  setToolbarSelected_(btn, selected) {
+    if (!btn) return;
+    btn._selected = Boolean(selected);
+    btn.setBackgroundColor(btn._selected ? UI_BTN_BG_SELECTED : UI_BTN_BG);
+    btn.setColor(UI_BTN_TEXT);
+  }
+
+  createEditorUI_() {
+    this.editorContainer = this.add.container(0, 0);
+    this.editorContainer.setDepth(450);
+
+    this.toolbarBg = this.add.rectangle(0, 0, 200, 200, 0xffffff, 0.88).setOrigin(0, 0);
+    this.toolbarBg.setStrokeStyle(2, 0x000000, 0.2);
+    this.editorContainer.add(this.toolbarBg);
+
+    // Mode label above tools.
+    this.toolbarModeText = this.add
+      .text(0, 0, 'Mode: Free', { fontSize: '18px', color: '#000', fontStyle: 'bold' })
+      .setOrigin(0.5);
+    this.editorContainer.add(this.toolbarModeText);
+
+    this.toolbarRouteText = this.add
+      .text(0, 0, 'Not yet...', { fontSize: '20px', color: '#c00000', fontStyle: 'bold' })
+      .setOrigin(0.5);
+    this.editorContainer.add(this.toolbarRouteText);
+
+    this.toolbarButtons = {
+      draw: this.addToolbarButton_(`${ICON_DRAW}  Draw`, () => {
+        this._editorTool = 'draw';
+        this._editorPickerOpen = false;
+      }),
+      erase: this.addToolbarButton_(`${ICON_ERASE}  Erase`, () => {
+        this._editorTool = 'erase';
+        this._editorPickerOpen = false;
+      }),
+      treasure: this.addToolbarButton_(`${ICON_TREASURE}  Treasure`, () => {
+        this._editorTool = 'item';
+        this._editorPickerOpen = !this._editorPickerOpen;
+      }),
+      start: this.addToolbarButton_(`${ICON_START}  Start`, () => this.game.net.send('autoplay_start')),
+      test: this.addToolbarButton_(`${ICON_TEST}  Play`, () => this.game.net.send('start_play')),
+      stop: this.addToolbarButton_(`${ICON_STOP}  Reset`, () => {
+        this._editorPickerOpen = false;
+        this.game.net.send('autoplay_stop');
+        this.game.net.send('stop_test');
+      }),
+      next: this.addToolbarButton_(`${ICON_NEXT}  Next`, () => {
+        // Next level should keep us in the editor (no lobby overlay).
+        this._suppressLobbyAfterNext = true;
+        this._resumeSentForSuppress = false;
+        this.game.net.send('next_level');
+      }),
+    };
+
+    // Treasure picker (icons like Maze)
+    this.treasurePicker = this.add.container(0, 0);
+    this.treasurePicker.setDepth(460);
+    this.treasurePickerBg = this.add.rectangle(0, 0, 220, 70, 0xffffff, 0.96).setOrigin(0, 0);
+    this.treasurePickerBg.setStrokeStyle(2, 0x000000, 0.25);
+    this.treasurePicker.add(this.treasurePickerBg);
+
+    const kinds = [
+      { key: 'apple', label: EMOJI_APPLE },
+      { key: 'treasure', label: EMOJI_TREASURE },
+      { key: 'battery', label: EMOJI_BATTERY },
+      { key: 'fish', label: '🐟' },
+      { key: 'duck', label: '🦆' },
+    ];
+
+    this.treasurePickerButtons = {};
+    const bx0 = 14;
+    const by0 = 14;
+    const bw = 36;
+    const gap = 8;
+
+    kinds.forEach((k, i) => {
+      const x = bx0 + i * (bw + gap);
+      const y = by0;
+      const hit = this.add.rectangle(x, y, bw, bw, 0x777777, 0.08).setOrigin(0, 0);
+      hit.setStrokeStyle(2, 0x000000, 0.15);
+      hit.setInteractive({ useHandCursor: true });
+
+      let iconObj = null;
+      if (k.key === 'treasure' || k.key === 'duck') {
+        const g = this.add.graphics();
+        g.setPosition(x + bw / 2, y + bw / 2);
+        const size = 28;
+        g.clear();
+        if (k.key === 'treasure') this.drawTreasureChest(g, 0, 0, size);
+        else if (k.key === 'duck') this.drawRubberDuck(g, 0, 0, size);
+        iconObj = g;
+      } else {
+        const fontSize = k.key === 'fish' ? '18px' : '22px';
+        iconObj = this.add.text(x + bw / 2, y + bw / 2, k.label, { fontSize, color: '#000' }).setOrigin(0.5);
+      }
+
+      hit.on('pointerdown', () => {
+        this._editorTool = 'item';
+        this._editorItemKind = k.key;
+        this._editorPickerOpen = false;
+      });
+      this.treasurePicker.add(hit);
+      if (iconObj) this.treasurePicker.add(iconObj);
+      this.treasurePickerButtons[k.key] = hit;
+    });
+    this.treasurePicker.setVisible(false);
+
+    // Playfield hitbox for editor interactions
+    this.playfieldHit = this.add.rectangle(0, 0, 10, 10, 0x000000, 0).setOrigin(0, 0);
+    this.playfieldHit.setDepth(5);
+    this.playfieldHit.setInteractive({ useHandCursor: false });
+
+    this._wallStroke = null;
+    this.playfieldHit.on('pointerdown', (pointer) => this.onPlayfieldPointerDown_(pointer));
+    this.playfieldHit.on('pointermove', (pointer) => this.onPlayfieldPointerMove_(pointer));
+    this._onPointerUpForEditor = (pointer) => this.onPlayfieldPointerUp_(pointer);
+    this.input.on('pointerup', this._onPointerUpForEditor);
+    this.events.once('shutdown', () => {
+      this.input.off('pointerup', this._onPointerUpForEditor);
+      this._onPointerUpForEditor = null;
+    });
+  }
+
+  pointerToCell_(pointer, state, layout) {
+    const cs = layout.cellSize;
+    const lx = pointer.worldX - layout.offsetX;
+    const ly = pointer.worldY - layout.offsetY;
+    const x = Math.floor(lx / cs);
+    const y = Math.floor(ly / cs);
+    if (x < 0 || y < 0 || x >= state.w || y >= state.h) return null;
+    const fx = (lx - x * cs) / cs;
+    const fy = (ly - y * cs) / cs;
+    return { x, y, fx, fy };
+  }
+
+  nearestEdgeDir_(fx, fy) {
+    const distL = fx;
+    const distR = 1 - fx;
+    const distT = fy;
+    const distB = 1 - fy;
+    const min = Math.min(distL, distR, distT, distB);
+    if (min === distT) return 'UP';
+    if (min === distR) return 'RIGHT';
+    if (min === distB) return 'DOWN';
+    return 'LEFT';
+  }
+
+  axisDirFromCell_(axis, fx, fy) {
+    if (axis === 'h') {
+      const distT = fy;
+      const distB = 1 - fy;
+      return distT <= distB ? 'UP' : 'DOWN';
+    }
+    const distL = fx;
+    const distR = 1 - fx;
+    return distL <= distR ? 'LEFT' : 'RIGHT';
+  }
+
+  isNearCenter_(fx, fy) {
+    const distL = fx;
+    const distR = 1 - fx;
+    const distT = fy;
+    const distB = 1 - fy;
+    const min = Math.min(distL, distR, distT, distB);
+    return min > 0.34;
+  }
+
+  strokeKey_(x, y, dir) {
+    return `${x},${y},${dir}`;
+  }
+
+  strokeSendWall_(x, y, dir, on) {
+    if (!this._wallStroke) return;
+
+    const state = this.game.net?.latestState;
+    if (state && String(state.mode || 'freeform').toLowerCase() === 'puzzle') {
+      const d = String(dir || '').toUpperCase();
+      const bit = (d === 'UP') ? WALL_N : (d === 'RIGHT') ? WALL_E : (d === 'DOWN') ? WALL_S : (d === 'LEFT') ? WALL_W : 0;
+      const allowed = (state.softMask?.[y]?.[x] ?? 0) & bit;
+      if (!allowed) return;
+    }
+
+    const key = this.strokeKey_(x, y, dir);
+    if (this._wallStroke.sent.has(key)) return;
+    this._wallStroke.sent.add(key);
+    this.game.net.send('edit_set_wall', { x, y, dir, on });
+  }
+
+  onPlayfieldPointerDown_(pointer) {
+    if (!this._allowEditInput) return;
+    const state = this.game.net?.latestState;
+    const layout = this._lastLayout;
+    if (!state || !layout) return;
+
+    const mode = String(state.mode || 'freeform').toLowerCase();
+    const isPuzzle = mode === 'puzzle';
+
+    const cell = this.pointerToCell_(pointer, state, layout);
+    if (!cell) return;
+
+    // Item placement is single-tap (Free mode only).
+    if (this._editorTool === 'item') {
+      if (isPuzzle) {
+        this._editorTool = 'draw';
+        this._editorPickerOpen = false;
+      } else {
+        this.game.net.send('edit_place', { kind: this._editorItemKind, x: cell.x, y: cell.y });
+        return;
+      }
+    }
+
+    // Erase near center removes items in Free mode; Puzzle mode uses erase
+    // strictly for wall undo.
+    const nearCenter = this.isNearCenter_(cell.fx, cell.fy);
+    if (this._editorTool === 'erase' && nearCenter && !isPuzzle) {
+      this.game.net.send('edit_place', { kind: 'erase', x: cell.x, y: cell.y });
+      return;
+    }
+
+    const dir = this.nearestEdgeDir_(cell.fx, cell.fy);
+    const axis = (dir === 'UP' || dir === 'DOWN') ? 'h' : 'v';
+    const fixed = axis === 'h' ? cell.y : cell.x;
+    const lastVar = axis === 'h' ? cell.x : cell.y;
+    const on = this._editorTool === 'draw';
+
+    this._wallStroke = {
+      pointerId: pointer.id,
+      axis,
+      fixed,
+      dir,
+      on,
+      lastVar,
+      lastCell: { x: cell.x, y: cell.y },
+      perpAccum: 0,
+      perpAxis: null,
+      perpSince: 0,
+      sent: new Set(),
+    };
+
+    // First segment immediately.
+    if (axis === 'h') this.strokeSendWall_(lastVar, fixed, dir, on);
+    else this.strokeSendWall_(fixed, lastVar, dir, on);
+  }
+
+  onPlayfieldPointerMove_(pointer) {
+    const s = this._wallStroke;
+    if (!s) return;
+    if (!pointer.isDown) return;
+    if (pointer.id !== s.pointerId) return;
+
+    const state = this.game.net?.latestState;
+    const layout = this._lastLayout;
+    if (!state || !layout) return;
+
+    const cell = this.pointerToCell_(pointer, state, layout);
+    if (!cell) return;
+
+    // Momentum-based cornering:
+    // - Prefer continuing the current axis (reduces accidental branching).
+    // - When the user sustains motion in the perpendicular axis, commit the turn.
+    const dx = cell.x - (s.lastCell?.x ?? cell.x);
+    const dy = cell.y - (s.lastCell?.y ?? cell.y);
+    if (!s.lastCell) s.lastCell = { x: cell.x, y: cell.y };
+
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+    let moveAxis = null;
+    if (absDx > absDy) moveAxis = 'h';
+    else if (absDy > absDx) moveAxis = 'v';
+
+    // If we didn't cross a cell boundary, fall back to the nearest edge.
+    const edgeDir = this.nearestEdgeDir_(cell.fx, cell.fy);
+    const edgeAxis = (edgeDir === 'UP' || edgeDir === 'DOWN') ? 'h' : 'v';
+
+    const candidateAxis = moveAxis ?? edgeAxis;
+    const now = Date.now();
+
+    if (candidateAxis === s.axis) {
+      // Reinforce forward direction.
+      s.perpAccum = Math.max(0, (s.perpAccum ?? 0) - 0.75);
+      s.perpAxis = null;
+      s.perpSince = 0;
+    } else {
+      // "Catch up" to a turn only after sustained perpendicular intent.
+      // Add slower than 1:1 to make turns less eager.
+      const base = absDx + absDy > 0 ? (absDx + absDy) : 0.25;
+      const add = base * 0.55;
+      s.perpAccum = (s.perpAccum ?? 0) + add;
+      if (s.perpAxis !== candidateAxis) {
+        s.perpAxis = candidateAxis;
+        s.perpSince = now;
+        s.perpAccum = add;
+      }
+
+      const age = s.perpSince ? (now - s.perpSince) : 0;
+      // Require more "intent" before turning (distance or time).
+      const shouldTurn = (s.perpAccum >= 1.6) || (age >= 240 && s.perpAccum >= 1.0);
+      if (shouldTurn) {
+        s.axis = candidateAxis;
+        s.dir = this.axisDirFromCell_(s.axis, cell.fx, cell.fy);
+        s.fixed = s.axis === 'h' ? cell.y : cell.x;
+        s.lastVar = s.axis === 'h' ? cell.x : cell.y;
+        s.perpAccum = 0;
+        s.perpAxis = null;
+        s.perpSince = 0;
+
+        // Start the new segment immediately.
+        if (s.axis === 'h') this.strokeSendWall_(s.lastVar, s.fixed, s.dir, s.on);
+        else this.strokeSendWall_(s.fixed, s.lastVar, s.dir, s.on);
+      }
+    }
+
+    // Track last visited cell for momentum.
+    s.lastCell.x = cell.x;
+    s.lastCell.y = cell.y;
+
+    const nextVar = s.axis === 'h' ? cell.x : cell.y;
+    if (nextVar === s.lastVar) return;
+
+    const step = nextVar > s.lastVar ? 1 : -1;
+    for (let v = s.lastVar + step; step > 0 ? v <= nextVar : v >= nextVar; v += step) {
+      if (s.axis === 'h') this.strokeSendWall_(v, s.fixed, s.dir, s.on);
+      else this.strokeSendWall_(s.fixed, v, s.dir, s.on);
+    }
+    s.lastVar = nextVar;
+  }
+
+  onPlayfieldPointerUp_(pointer) {
+    const s = this._wallStroke;
+    if (!s) return;
+    if (pointer.id !== s.pointerId) return;
+    this._wallStroke = null;
+  }
+
+  updateEditorUI_(state, layout, overlayVisible) {
+    if (!this.editorContainer || !layout || !state) return;
+    const W = this.scale?.width || 800;
+    const H = this.scale?.height || 600;
+    const toolbarW = this.getEditorReserve_();
+    const x0 = W - toolbarW;
+
+    this.editorContainer.setPosition(x0, 0);
+    this.toolbarBg.setSize(toolbarW, H);
+    this.toolbarBg.setPosition(0, 0);
+
+    const mode = String(state.mode || 'freeform').toLowerCase();
+    const isPuzzle = mode === 'puzzle';
+    const inTest = Boolean(state.testing);
+    const autoplayRunning = Boolean(state.autoplay?.running);
+    const canEdit = !inTest && !overlayVisible;
+    const showRoute = !overlayVisible && (inTest || autoplayRunning);
+
+    // Input gates
+    this._allowEditInput = canEdit;
+    this._allowMoveInput = Boolean(inTest && !overlayVisible);
+
+    // Button visibility
+    this.toolbarButtons.draw.setVisible(!inTest);
+    this.toolbarButtons.erase.setVisible(!inTest);
+    this.toolbarButtons.treasure.setVisible(!inTest && !isPuzzle);
+    this.toolbarButtons.start.setVisible(!inTest);
+    this.toolbarButtons.test.setVisible(!inTest);
+    this.toolbarButtons.stop.setVisible(inTest || autoplayRunning || Boolean(state.win));
+    this.toolbarButtons.next.setVisible(Boolean(state.win));
+
+    // Puzzle mode: never allow item tool/picker.
+    if (isPuzzle) {
+      if (this._editorTool === 'item') this._editorTool = 'draw';
+      this._editorPickerOpen = false;
+    }
+
+    // Selection highlight
+    this.setToolbarSelected_(this.toolbarButtons.draw, this._editorTool === 'draw');
+    this.setToolbarSelected_(this.toolbarButtons.erase, this._editorTool === 'erase');
+    this.setToolbarSelected_(this.toolbarButtons.treasure, this._editorTool === 'item');
+
+    // Layout mode label + buttons
+    if (this.toolbarModeText) {
+      const label = isPuzzle ? 'Puzzle' : 'Free';
+      this.toolbarModeText.setText(`Mode: ${label}`);
+      this.toolbarModeText.setPosition(toolbarW / 2, TOOLBAR_PAD + 20);
+      this.toolbarModeText.setVisible(!overlayVisible);
+    }
+
+    const order = isPuzzle
+      ? ['draw', 'erase', 'start', 'test', 'stop', 'next']
+      : ['draw', 'erase', 'treasure', 'start', 'test', 'stop', 'next'];
+    let y = TOOLBAR_PAD + 60;
+    for (const key of order) {
+      const btn = this.toolbarButtons[key];
+      if (!btn.visible) continue;
+      btn.setPosition(toolbarW / 2, y);
+      y += TOOLBAR_BTN_H;
+    }
+
+    // Route status sits under Reset (visible only during autoplay/test).
+    if (this.toolbarRouteText) {
+      const ok = Boolean(state.routeComplete);
+      this.toolbarRouteText.setText(ok ? 'Complete!' : 'Not yet...');
+      this.toolbarRouteText.setColor(ok ? '#0a7a1e' : '#c00000');
+
+      const anchor = this.toolbarButtons?.stop;
+      const anchorY = anchor?.visible ? anchor.y : TOOLBAR_PAD + 60;
+      this.toolbarRouteText.setPosition(toolbarW / 2, anchorY + Math.floor(TOOLBAR_BTN_H * 0.7));
+      this.toolbarRouteText.setVisible(showRoute);
+    }
+
+    // Treasure picker position and selection
+    if (this._editorPickerOpen && !inTest && !isPuzzle) {
+      const anchor = this.toolbarButtons.treasure;
+      const px = x0 + Math.max(TOOLBAR_PAD, Math.floor((toolbarW - 220) / 2));
+      const py = Math.min(H - 90, Math.max(TOOLBAR_PAD, Math.floor((anchor?.y ?? 120) + 22)));
+      this.treasurePicker.setPosition(px, py);
+      this.treasurePicker.setVisible(true);
+    } else {
+      this.treasurePicker.setVisible(false);
+    }
+
+    // Update playfield hitbox to match the maze area
+    if (this.playfieldHit) {
+      this.playfieldHit.setPosition(layout.offsetX, layout.offsetY);
+      const wpx = state.w * layout.cellSize;
+      const hpx = state.h * layout.cellSize;
+      this.playfieldHit.width = wpx;
+      this.playfieldHit.height = hpx;
+      if (this.playfieldHit.input?.hitArea) {
+        this.playfieldHit.input.hitArea.width = wpx;
+        this.playfieldHit.input.hitArea.height = hpx;
+      }
+    }
+  }
+
+  onPlayfieldPointer_(pointer) {
+    if (!this._allowEditInput) return;
+    const state = this.game.net?.latestState;
+    if (!state) return;
+    const layout = this._lastLayout;
+    if (!layout) return;
+
+    const cs = layout.cellSize;
+    const lx = pointer.worldX - layout.offsetX;
+    const ly = pointer.worldY - layout.offsetY;
+    const x = Math.floor(lx / cs);
+    const y = Math.floor(ly / cs);
+    if (x < 0 || y < 0 || x >= state.w || y >= state.h) return;
+
+    const fx = (lx - x * cs) / cs;
+    const fy = (ly - y * cs) / cs;
+
+    const distL = fx;
+    const distR = 1 - fx;
+    const distT = fy;
+    const distB = 1 - fy;
+    const min = Math.min(distL, distR, distT, distB);
+
+    // iPad/touch-friendly behavior:
+    // - Draw/Erase always affect the nearest edge (no precision required).
+    // - Item placement works anywhere inside the cell.
+    const centerThresh = 0.34;
+    const nearCenter = min > centerThresh;
+
+    if (this._editorTool === 'draw' || this._editorTool === 'erase') {
+      // Center tap with erase removes any item.
+      if (this._editorTool === 'erase' && nearCenter) {
+        this.game.net.send('edit_place', { kind: 'erase', x, y });
+        return;
+      }
+
+      let dir = null;
+      if (min === distT) dir = 'UP';
+      else if (min === distR) dir = 'RIGHT';
+      else if (min === distB) dir = 'DOWN';
+      else dir = 'LEFT';
+
+      this.game.net.send('edit_set_wall', { x, y, dir, on: this._editorTool === 'draw' });
+      return;
+    }
+
+    if (this._editorTool === 'item') {
+      // Place item anywhere in the cell.
+      this.game.net.send('edit_place', { kind: this._editorItemKind, x, y });
+    }
+  }
+
   hasWall(mask, bit) {
     return (mask & bit) !== 0;
   }
@@ -496,6 +1099,8 @@ export default class PlayScene extends Phaser.Scene {
     // Slightly tighter margins so the playfield can be bigger.
     const margin = 8;
 
+    const editorReserve = this.getEditorReserve_?.() ? this.getEditorReserve_() : 0;
+
     const reserve = getTouchControlsReserve({ enabled: this.touchControlsEnabled, margin: this.touchControlsMargin ?? 20 });
     // Reserve less top space so the maze can be larger.
     // (Still keeps the top-left info text and objective HUD from overlapping the first row.)
@@ -503,7 +1108,7 @@ export default class PlayScene extends Phaser.Scene {
 
     // Compute the biggest possible maze area for the screen, leaving a bottom
     // "unused" band (for safety + for the D-pad to sit above).
-    const availableW = Math.max(160, W - (margin * 2));
+    const availableW = Math.max(160, W - (margin * 2) - editorReserve);
 
     const minBottomGapPx = this.touchControlsEnabled ? (TOUCH_KEY_H * TOUCH_GAP_MULT) : 0;
 
@@ -543,7 +1148,7 @@ export default class PlayScene extends Phaser.Scene {
       const playX1 = playX0 + gridPxW;
       const playY1 = playY0 + gridPxH;
 
-      const cornerX0 = W - reserve.w;
+      const cornerX0 = W - Math.max(reserve.w, editorReserve);
       const cornerY0 = H - reserve.h;
 
       const overlapsCorner = (playX1 > cornerX0) && (playY1 > cornerY0);
@@ -553,10 +1158,13 @@ export default class PlayScene extends Phaser.Scene {
         if (shiftLeft < shiftUp) offsetX -= shiftLeft;
         else offsetY -= shiftUp;
 
-        offsetX = Math.max(margin, Math.min(W - margin - gridPxW, offsetX));
+        offsetX = Math.max(margin, Math.min(W - margin - editorReserve - gridPxW, offsetX));
         offsetY = Math.max(margin + hudTop, Math.min(H - margin - bottomInset - gridPxH, offsetY));
       }
     }
+
+    // Final clamp to keep the maze left of the toolbar.
+    offsetX = Math.max(margin, Math.min(W - margin - editorReserve - gridPxW, offsetX));
 
     return { cellSize, offsetX, offsetY };
   }
@@ -591,6 +1199,16 @@ export default class PlayScene extends Phaser.Scene {
       btn._selected = selected;
       btn.setBackgroundColor(selected ? UI_BTN_BG_SELECTED : UI_BTN_BG);
       btn.setColor(UI_BTN_TEXT);
+    }
+
+    if (this.modeButtons) {
+      const curMode = String(state.mode || 'freeform').toLowerCase();
+      for (const [key, btn] of Object.entries(this.modeButtons)) {
+        const selected = curMode === key;
+        btn._selected = selected;
+        btn.setBackgroundColor(selected ? UI_BTN_BG_SELECTED : UI_BTN_BG);
+        btn.setColor(UI_BTN_TEXT);
+      }
     }
 
     if (this.soundButtons) {
@@ -659,13 +1277,30 @@ export default class PlayScene extends Phaser.Scene {
 
     const myId = this.game.net?.playerId;
     const me = myId ? state.players?.[myId] : null;
-    const overlayVisible = Boolean((state.paused && state.reasonPaused === 'start') || me?.paused);
+
+    const isLobby = Boolean(state.paused && state.reasonPaused === 'start');
+    if (this._suppressLobbyAfterNext) {
+      if (isLobby) {
+        if (!this._resumeSentForSuppress) {
+          this._resumeSentForSuppress = true;
+          this.game.net.send('resume');
+        }
+      } else {
+        this._suppressLobbyAfterNext = false;
+        this._resumeSentForSuppress = false;
+      }
+    }
+
+    const overlayVisible = Boolean((isLobby && !this._suppressLobbyAfterNext) || me?.paused);
     this._overlayVisible = overlayVisible;
 
     let layout = this.computeLayout(state);
     if (this.ensureTouchControlsGap_(layout.cellSize)) {
       layout = this.computeLayout(state);
     }
+
+    this._lastLayout = layout;
+    this.updateEditorUI_?.(state, layout, overlayVisible);
 
     // Pickup SFX (client-only): detect counter deltas.
     const applesCollected = Number(state.applesCollected ?? 0);
@@ -685,13 +1320,20 @@ export default class PlayScene extends Phaser.Scene {
       this._prevCollectCounts = { applesCollected, treasuresCollected, batteriesCollected, fishesCollected, ducksCollected };
     }
 
-    // Trigger a small fireworks burst once when the server announces a level-up.
-    // We anchor to the goal tile(s) so it appears around the winner.
+    // Trigger fireworks on win (Wallmover uses manual next-level).
     const msg = String(state.message || '');
-    if (this.isLevelUpMessage_(msg) && msg !== this._lastMessageForFx) {
-      this.spawnGoalFireworks_(layout, state);
-      sfx.playTrumpet();
+    if (msg !== this._lastCenterMessageSeen) {
+      this._lastCenterMessageSeen = msg;
+      this._dismissedCenterMessage = null;
     }
+    if (state.win && !this._winFxShown) {
+      const { cx, cy } = this.cellCenter(layout, state.goal.x, state.goal.y);
+      this.spawnFireworksAt_(cx, cy, layout.cellSize);
+      sfx.playTrumpet();
+      this._winFxShown = true;
+    }
+    if (!state.win) this._winFxShown = false;
+
     // Minotaur hit sound effect.
     if (msg.includes('Minotaur') && msg !== this._lastMessageForFx) {
       sfx.playUhOh();
@@ -712,14 +1354,25 @@ export default class PlayScene extends Phaser.Scene {
       .map((id) => state.players?.[id])
       .filter((p) => p && p.connected);
 
-    let info = `Room: ${this.game.net.roomId || ''}\nLevel: ${state.level}\nMode: ${state.visionMode}`;
+    const inTest = Boolean(state.testing);
+    const glassMode = (!inTest) || state.visionMode === 'glass';
+
+    let info = `Room: ${this.game.net.roomId || ''}\nLevel: ${state.level}`;
+    info += `\nMode: ${inTest ? state.visionMode : 'edit'}`;
     info += `\nPlayers: ${players.length}/4`;
     this.uiText.setText(info);
 
-    if (state.visionMode === 'glass') {
+    if (glassMode) {
       this.graphics.fillStyle(0xffffff, 1);
       this.graphics.fillRect(0, 0, this.scale.width, this.scale.height);
+
+      // Edit-mode grid (hide during play mode).
+      if (!inTest && !overlayVisible) this.drawEditGrid_(layout, state);
+
       this.drawFullMaze(layout, state);
+      if (!inTest && !overlayVisible && String(state.mode || 'freeform').toLowerCase() === 'puzzle') {
+        this.drawSoftWalls_(layout, state);
+      }
       this.drawGoal(layout, state, true);
       this.drawApples(layout, state, true);
       this.drawTreasures(layout, state, true);
@@ -758,8 +1411,21 @@ export default class PlayScene extends Phaser.Scene {
       const msLeft = Math.max(0, Number(state._minoResetAt) - Date.now());
       const secLeft = Math.max(1, Math.ceil(msLeft / 1000));
       this.centerText.setText(`⚠️ The Minotaur got you! Resetting in ${secLeft}s`);
+      if (this.centerDismissHit) this.centerDismissHit.setVisible(false);
     } else if (state.message) {
-      this.centerText.setText(state.message);
+      const autoplayDoneMsg = 'Explored all paths!';
+      const isAutoplayDone = String(state.message || '') === autoplayDoneMsg;
+      const dismissed = String(this._dismissedCenterMessage || '') === String(state.message || '');
+
+      if (isAutoplayDone && dismissed) {
+        this.centerText.setText('');
+        if (this.centerDismissHit) this.centerDismissHit.setVisible(false);
+      } else {
+        this.centerText.setText(state.message);
+        if (this.centerDismissHit) this.centerDismissHit.setVisible(isAutoplayDone && !overlayVisible);
+      }
+    } else {
+      if (this.centerDismissHit) this.centerDismissHit.setVisible(false);
     }
   }
 
@@ -917,19 +1583,79 @@ export default class PlayScene extends Phaser.Scene {
   }
 
   drawFullMaze(layout, state) {
-    const wallW = 2.5;
-    this.graphics.lineStyle(wallW, 0x000000, 1);
+    const mode = String(state?.mode || 'freeform').toLowerCase();
+    const isPuzzle = mode === 'puzzle';
+    const thickW = isPuzzle ? 4.0 : 2.5;
+    // Editable walls should look like Maze walls.
+    const thinW = isPuzzle ? 2.5 : 2.5;
+
+    const effectiveMaskAt = (x, y) => {
+      const heavy = state.walls?.[y]?.[x] ?? 0;
+      const editable = state.softMask?.[y]?.[x] ?? 0;
+      const soft = state.softWalls?.[y]?.[x] ?? 0;
+      return (heavy & ~editable) | (soft & editable);
+    };
+
+    const isEditableBit = (x, y, bit) => ((state.softMask?.[y]?.[x] ?? 0) & bit) !== 0;
 
     for (let y = 0; y < state.h; y++) {
       for (let x = 0; x < state.w; x++) {
-        const mask = state.walls[y][x];
+        const mask = effectiveMaskAt(x, y);
         const { x0, y0, x1, y1 } = this.cellRect(layout, x, y);
 
-        if (this.hasWall(mask, WALL_N)) this.graphics.lineBetween(x0, y0, x1, y0);
-        if (this.hasWall(mask, WALL_W)) this.graphics.lineBetween(x0, y0, x0, y1);
+        const drawSeg = (bit, ax, ay, bx, by) => {
+          if (!this.hasWall(mask, bit)) return;
+          const w = (isPuzzle && isEditableBit(x, y, bit)) ? thinW : thickW;
+          this.graphics.lineStyle(w, 0x000000, 1);
+          this.graphics.lineBetween(ax, ay, bx, by);
+        };
 
-        if (this.hasWall(mask, WALL_E) && x === state.w - 1) this.graphics.lineBetween(x1, y0, x1, y1);
-        if (this.hasWall(mask, WALL_S) && y === state.h - 1) this.graphics.lineBetween(x0, y1, x1, y1);
+        drawSeg(WALL_N, x0, y0, x1, y0);
+        drawSeg(WALL_W, x0, y0, x0, y1);
+
+        if (x === state.w - 1) drawSeg(WALL_E, x1, y0, x1, y1);
+        if (y === state.h - 1) drawSeg(WALL_S, x0, y1, x1, y1);
+      }
+    }
+  }
+
+  drawSoftWalls_(layout, state) {
+    const softMask = state?.softMask;
+    if (!Array.isArray(softMask) || softMask.length === 0) return;
+
+    const softWalls = state?.softWalls;
+    // Edit-mode hint overlay for editable edges.
+    // Keep this as faint as the Free-mode cell grid so Puzzle mode doesn't
+    // look "darker" just because many edges are editable.
+    const wallW = 1;
+    const color = 0x000000;
+
+    const getMask = (arr, x, y) => (Array.isArray(arr?.[y]) ? (arr[y][x] ?? 0) : 0);
+
+    for (let y = 0; y < state.h; y++) {
+      for (let x = 0; x < state.w; x++) {
+        const mask = getMask(softMask, x, y);
+        if (!mask) continue;
+        const cur = getMask(softWalls, x, y);
+        const { x0, y0, x1, y1 } = this.cellRect(layout, x, y);
+
+        const drawSeg = (bit, ax, ay, bx, by) => {
+          if (!this.hasWall(mask, bit)) return;
+          const on = this.hasWall(cur, bit);
+          // Only hint editable edges that are currently open.
+          // If a wall exists, thickness already communicates editability.
+          if (on) return;
+          const alpha = 0.10;
+          this.graphics.lineStyle(wallW, color, alpha);
+          this.graphics.lineBetween(ax, ay, bx, by);
+        };
+
+        drawSeg(WALL_N, x0, y0, x1, y0);
+        drawSeg(WALL_W, x0, y0, x0, y1);
+
+        // Border drawing parity (should be rare because puzzle edges are interior).
+        if (x === state.w - 1) drawSeg(WALL_E, x1, y0, x1, y1);
+        if (y === state.h - 1) drawSeg(WALL_S, x0, y1, x1, y1);
       }
     }
   }
@@ -938,7 +1664,20 @@ export default class PlayScene extends Phaser.Scene {
     const spillDepth = Math.floor(layout.cellSize * 0.35);
     const doorHalf = Math.floor(layout.cellSize * 0.48);
     const inward = Math.floor(spillDepth / 2);
-    const wallW = 2.5;
+    const mode = String(state?.mode || 'freeform').toLowerCase();
+    const isPuzzle = mode === 'puzzle';
+    const thickW = isPuzzle ? 4.0 : 2.5;
+    // Editable walls should look like Maze walls.
+    const thinW = isPuzzle ? 2.5 : 2.5;
+
+    const effectiveMaskAt = (x, y) => {
+      const heavy = state.walls?.[y]?.[x] ?? 0;
+      const editable = state.softMask?.[y]?.[x] ?? 0;
+      const soft = state.softWalls?.[y]?.[x] ?? 0;
+      return (heavy & ~editable) | (soft & editable);
+    };
+
+    const isEditableBit = (x, y, bit) => ((state.softMask?.[y]?.[x] ?? 0) & bit) !== 0;
 
     // 1) Paint revealed floor
     this.graphics.fillStyle(0xffffff, 1);
@@ -953,7 +1692,7 @@ export default class PlayScene extends Phaser.Scene {
     for (const idx of state.revealed || []) {
       const x = idx % state.w;
       const y = Math.floor(idx / state.w);
-      const mask = state.walls[y][x];
+      const mask = effectiveMaskAt(x, y);
       const { x0, y0, x1, y1 } = this.cellRect(layout, x, y);
       const { cx, cy } = this.cellCenter(layout, x, y);
 
@@ -980,22 +1719,36 @@ export default class PlayScene extends Phaser.Scene {
     }
 
     // 3) Walls for revealed cells
-    this.graphics.lineStyle(wallW, 0x000000, 1);
     for (const idx of state.revealed || []) {
       const x = idx % state.w;
       const y = Math.floor(idx / state.w);
-      const mask = state.walls[y][x];
+      const mask = effectiveMaskAt(x, y);
       const { x0, y0, x1, y1 } = this.cellRect(layout, x, y);
 
-      if (this.hasWall(mask, WALL_N)) this.graphics.lineBetween(x0, y0, x1, y0);
-      if (this.hasWall(mask, WALL_W)) this.graphics.lineBetween(x0, y0, x0, y1);
+      const drawSeg = (bit, ax, ay, bx, by) => {
+        if (!this.hasWall(mask, bit)) return;
+        const w = (isPuzzle && isEditableBit(x, y, bit)) ? thinW : thickW;
+        this.graphics.lineStyle(w, 0x000000, 1);
+        this.graphics.lineBetween(ax, ay, bx, by);
+      };
+
+      drawSeg(WALL_N, x0, y0, x1, y0);
+      drawSeg(WALL_W, x0, y0, x0, y1);
 
       if (this.hasWall(mask, WALL_E)) {
-        if (x === state.w - 1 || !isRevealed(x + 1, y)) this.graphics.lineBetween(x1, y0, x1, y1);
+        if (x === state.w - 1 || !isRevealed(x + 1, y)) {
+          const w = (isPuzzle && isEditableBit(x, y, WALL_E)) ? thinW : thickW;
+          this.graphics.lineStyle(w, 0x000000, 1);
+          this.graphics.lineBetween(x1, y0, x1, y1);
+        }
       }
 
       if (this.hasWall(mask, WALL_S)) {
-        if (y === state.h - 1 || !isRevealed(x, y + 1)) this.graphics.lineBetween(x0, y1, x1, y1);
+        if (y === state.h - 1 || !isRevealed(x, y + 1)) {
+          const w = (isPuzzle && isEditableBit(x, y, WALL_S)) ? thinW : thickW;
+          this.graphics.lineStyle(w, 0x000000, 1);
+          this.graphics.lineBetween(x0, y1, x1, y1);
+        }
       }
     }
   }
@@ -1071,11 +1824,11 @@ export default class PlayScene extends Phaser.Scene {
   drawFishIcon(g, cx, cy, size, alpha = 1) {
     // Vector fish icon so we don't rely on emoji glyph availability.
     const s = Math.max(12, Number(size) || 0);
-    // Keep height, shorten length slightly.
-    const bodyW = s * 0.60;
-    const bodyH = s * 0.42;
-    const tailW = s * 0.28;
-    const tailH = s * 0.34;
+    // Requested: ~50% less wide and ~10% shorter.
+    const bodyW = s * 0.60 * 0.50;
+    const bodyH = s * 0.42 * 0.90;
+    const tailW = s * 0.28 * 0.50;
+    const tailH = s * 0.34 * 0.90;
     const eyeR = Math.max(1.2, s * 0.045);
 
     // Body

@@ -1,8 +1,13 @@
 import Phaser from 'phaser';
-import { createTouchControls, getTouchControlsReserve, isTouchDevice } from '@games/touch-controls';
+import { createTouchControls, isTouchDevice } from '@games/touch-controls';
 
 const WORLD_W = 800;
 const WORLD_H = 600;
+
+// Touch-controls default key height (used as a "one button" baseline).
+const TOUCH_KEY_H = 54;
+const TOUCH_GAP_MULT = 2;
+const DESKTOP_BOTTOM_GAP_PX = 24;
 
 function hexToInt(hex) {
   return parseInt(String(hex).replace('#', '0x'), 16);
@@ -490,6 +495,34 @@ export default class PlayScene extends Phaser.Scene {
     this._touchHeld = { up: false, down: false, left: false, right: false, shoot: false };
   }
 
+  createTouchControls_() {
+    if (!this.touchControlsEnabled) return;
+    if (this.touchControls?.destroy) this.touchControls.destroy();
+    this.touchControls = createTouchControls(this, {
+      onDirDown: (dir) => this.onTouchDir(dir, true),
+      onDirUp: (dir) => this.onTouchDir(dir, false),
+      onPause: () => this.game.net.send('pause'),
+      actions: [{
+        id: 'shoot',
+        label: 'Fire',
+        theme: {
+          face: '#ef4444',
+          faceHover: '#f87171',
+          faceDown: '#dc2626',
+          stroke: '#7f1d1d',
+          text: '#ffffff',
+        },
+      }],
+      onActionDown: (id) => {
+        if (id === 'shoot') this._touchHeld.shoot = true;
+      },
+      onActionUp: (id) => {
+        if (id === 'shoot') this._touchHeld.shoot = false;
+      },
+      margin: this.touchControlsMargin,
+    });
+  }
+
   spawnCrashFireworks(worldX, worldY, dimScreen) {
     if (!Number.isFinite(worldX) || !Number.isFinite(worldY)) return;
     const start = Number.isFinite(this.time?.now) ? this.time.now : performance.now();
@@ -614,30 +647,12 @@ export default class PlayScene extends Phaser.Scene {
 
     this.setupInput();
 
-    this.touchEnabled = isTouchDevice();
-    if (this.touchEnabled) {
-      this.touchControls = createTouchControls(this, {
-        onDirDown: (dir) => this.onTouchDir(dir, true),
-        onDirUp: (dir) => this.onTouchDir(dir, false),
-        onPause: () => this.game.net.send('pause'),
-        actions: [{
-          id: 'shoot',
-          label: 'Fire',
-          theme: {
-            face: '#ef4444',
-            faceHover: '#f87171',
-            faceDown: '#dc2626',
-            stroke: '#7f1d1d',
-            text: '#ffffff',
-          },
-        }],
-        onActionDown: (id) => {
-          if (id === 'shoot') this._touchHeld.shoot = true;
-        },
-        onActionUp: (id) => {
-          if (id === 'shoot') this._touchHeld.shoot = false;
-        },
-      });
+    // Touch controls (D-pad + pause + fire) for tablets/phones.
+    // We intentionally keep a bottom "unused" band so controls sit above the bottom edge.
+    this.touchControlsEnabled = isTouchDevice();
+    if (this.touchControlsEnabled) {
+      this.touchControlsMargin = TOUCH_KEY_H * TOUCH_GAP_MULT;
+      this.createTouchControls_();
     }
 
     this.onState = (e) => this.renderState(e.detail);
@@ -690,7 +705,14 @@ export default class PlayScene extends Phaser.Scene {
 
     const reserve = this.reserve();
     const usableW = Math.max(200, this.scale.width);
-    const usableH = Math.max(200, this.scale.height);
+
+    const minBottomGapPx = this.touchControlsEnabled ? (TOUCH_KEY_H * TOUCH_GAP_MULT) : 0;
+    const bottomGapPx = this.touchControlsEnabled
+      ? Math.max(minBottomGapPx, Math.max(0, Math.floor(Number(this.touchControlsMargin) || 0)))
+      : DESKTOP_BOTTOM_GAP_PX;
+
+    // Leave a bottom "unused" band so the playfield and touch controls both have breathing room.
+    const usableH = Math.max(200, this.scale.height - bottomGapPx);
 
     const scale = Math.min(usableW / w, usableH / h);
 
