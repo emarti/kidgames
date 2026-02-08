@@ -6,6 +6,9 @@ This repo can be deployed to a single Lightsail **Instance** (VM) without Docker
 - Caddy reverse-proxies WebSockets by path:
   - `/games/snake/ws` → unified games backend
   - `/games/maze/ws` → unified games backend
+  - `/games/comet/ws` → unified games backend
+  - `/games/archimedes/ws` → unified games backend
+  - `/games/wallmover/ws` → unified games backend
 - One Node.js backend runs under `systemd`
 
 ## Endpoints
@@ -15,6 +18,12 @@ This repo can be deployed to a single Lightsail **Instance** (VM) without Docker
 - `/games/snake/ws` (Snake WebSocket)
 - `/games/maze/` (Maze client)
 - `/games/maze/ws` (Maze WebSocket)
+- `/games/comet/` (Comet client)
+- `/games/comet/ws` (Comet WebSocket)
+- `/games/archimedes/` (Archimedes client)
+- `/games/archimedes/ws` (Archimedes WebSocket)
+- `/games/wallmover/` (Wallmover client)
+- `/games/wallmover/ws` (Wallmover WebSocket)
 
 ## 0) Create the Lightsail instance + networking
 
@@ -105,6 +114,9 @@ cd ~/games
 
 (cd snake/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/snake/ npm run build)
 (cd maze/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/maze/ npm run build)
+(cd comet/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/comet/ npm run build)
+(cd archimedes/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/archimedes/ npm run build)
+(cd wallmover/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/wallmover/ npm run build)
 ```
 
 If `npm install` gets killed during client install/build, that’s usually an out-of-memory kill on small instances.
@@ -118,10 +130,13 @@ If `vite build` fails with `JavaScript heap out of memory`, increase Node’s he
 ### 4) Deploy static files
 
 ```bash
-sudo mkdir -p /srv/games /srv/games/snake /srv/games/maze
+sudo mkdir -p /srv/games /srv/games/snake /srv/games/maze /srv/games/comet /srv/games/archimedes /srv/games/wallmover
 sudo rsync -a --delete ~/games/infra/site/games/ /srv/games/
 sudo rsync -a --delete ~/games/snake/client/dist/ /srv/games/snake/
 sudo rsync -a --delete ~/games/maze/client/dist/ /srv/games/maze/
+sudo rsync -a --delete ~/games/comet/client/dist/ /srv/games/comet/
+sudo rsync -a --delete ~/games/archimedes/client/dist/ /srv/games/archimedes/
+sudo rsync -a --delete ~/games/wallmover/client/dist/ /srv/games/wallmover/
 sudo chmod -R a+rX /srv
 ```
 
@@ -199,6 +214,20 @@ Caddy is serving `/games/` (expect `200` or a `308` redirect depending on the ex
 curl -I http://127.0.0.1/games/
 curl -I http://127.0.0.1/games/snake/
 curl -I http://127.0.0.1/games/maze/
+curl -I http://127.0.0.1/games/comet/
+curl -I http://127.0.0.1/games/archimedes/
+curl -I http://127.0.0.1/games/wallmover/
+
+WebSocket routing sanity (expects `101 Switching Protocols`). Use `--resolve` so TLS SNI matches the real hostname (don’t use `https://127.0.0.1/...` directly):
+
+```bash
+curl -vk --http1.1 --resolve brillanmarti.com:443:127.0.0.1 \
+  -H 'Connection: Upgrade' \
+  -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' \
+  -H 'Sec-WebSocket-Key: SGVsbG8sIHdvcmxkIQ==' \
+  https://brillanmarti.com/games/wallmover/ws
+```
 ```
 
 End-to-end sanity (browser):
@@ -284,10 +313,16 @@ sudo -E bash infra/lightsail/lightsail_restart.sh
 
 (cd snake/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/snake/ npm run build)
 (cd maze/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/maze/ npm run build)
+(cd comet/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/comet/ npm run build)
+(cd archimedes/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/archimedes/ npm run build)
+(cd wallmover/client && (test -f package-lock.json && npm ci || npm install) && VITE_BASE=/games/wallmover/ npm run build)
 
 sudo rsync -a --delete ~/games/infra/site/games/ /srv/games/
 sudo rsync -a --delete ~/games/snake/client/dist/ /srv/games/snake/
 sudo rsync -a --delete ~/games/maze/client/dist/ /srv/games/maze/
+sudo rsync -a --delete ~/games/comet/client/dist/ /srv/games/comet/
+sudo rsync -a --delete ~/games/archimedes/client/dist/ /srv/games/archimedes/
+sudo rsync -a --delete ~/games/wallmover/client/dist/ /srv/games/wallmover/
 
 sudo systemctl restart games-backend caddy
 ```

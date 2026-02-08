@@ -22,6 +22,10 @@ If you are an LLM helping with changes, start here, then follow the docs links b
   - `<game>-client-build` stages (Vite builds)
   - `gateway` (Caddy + built static assets)
 
+
+### Testing
+- All testing is performed through docker. npm is not installed locally.
+
 ### Where the code lives
 - Server entry: `apps/ws/src/server.js`
 - Server helpers: `apps/ws/src/shared.js`

@@ -32,6 +32,16 @@ require_cmd() {
   command -v "$cmd" >/dev/null 2>&1 || die "Missing required command: $cmd"
 }
 
+maybe_validate_caddyfile() {
+  # Caddy may not be installed in some dev contexts; skip validation if absent.
+  if command -v caddy >/dev/null 2>&1; then
+    log "Validating Caddyfile"
+    caddy validate --config /etc/caddy/Caddyfile
+  else
+    log "NOTE: 'caddy' command not found; skipping Caddyfile validation"
+  fi
+}
+
 npm_install() {
   # Usage: npm_install <dir> <mode>
   # mode: server|client
@@ -87,6 +97,11 @@ main() {
   rsync -a --delete "$APP_DIR/comet/client/dist/" /srv/games/comet/
   rsync -a --delete "$APP_DIR/wallmover/client/dist/" /srv/games/wallmover/
   chmod -R a+rX /srv
+
+  log "Installing Caddyfile"
+  mkdir -p /etc/caddy
+  cp "$APP_DIR/infra/caddy/Caddyfile" /etc/caddy/Caddyfile
+  maybe_validate_caddyfile
 
   log "Restarting services"
   systemctl daemon-reload || true

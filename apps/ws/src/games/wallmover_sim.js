@@ -992,7 +992,8 @@ export function newGameState() {
     visionMode: 'fog',
 
     // Wallmover mode ("Free" editor canvas is 'freeform').
-    mode: 'freeform',
+    // Default to Puzzle so hosted games land in the curated ruleset.
+    mode: 'puzzle',
 
     start,
     goal: { x: 0, y: h - 1 },

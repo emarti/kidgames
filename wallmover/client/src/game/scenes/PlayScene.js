@@ -435,12 +435,12 @@ export default class PlayScene extends Phaser.Scene {
     this.setupContainer.add(this.setupTitle);
 
     // Place Mode on the first row, then space the rest out a bit more.
-    // Wallmover mode selector (Free now; Puzzle later)
+    // Wallmover mode selector
     const modeY = -170;
     this.setupContainer.add(this.add.text(-300, modeY, 'Mode:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5));
     this.modeButtons = {
-      freeform: this.addSetupButton(-120, modeY, 'Free', () => this.game.net.send('set_mode', { mode: 'freeform' })),
-      puzzle: this.addSetupButton(40, modeY, 'Puzzle', () => this.game.net.send('set_mode', { mode: 'puzzle' })),
+      puzzle: this.addSetupButton(-120, modeY, 'Puzzle', () => this.game.net.send('set_mode', { mode: 'puzzle' })),
+      freeform: this.addSetupButton(40, modeY, 'Free', () => this.game.net.send('set_mode', { mode: 'freeform' })),
     };
 
     const visionY = -125;
@@ -622,7 +622,7 @@ export default class PlayScene extends Phaser.Scene {
 
     // Mode label above tools.
     this.toolbarModeText = this.add
-      .text(0, 0, 'Mode: Free', { fontSize: '18px', color: '#000', fontStyle: 'bold' })
+      .text(0, 0, 'Mode: Puzzle', { fontSize: '18px', color: '#000', fontStyle: 'bold' })
       .setOrigin(0.5);
     this.editorContainer.add(this.toolbarModeText);
 
