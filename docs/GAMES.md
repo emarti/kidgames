@@ -101,6 +101,29 @@ Collaboration hooks:
 
 Canonical per-game overview: `archimedes_LLM.md`.
 
+## Fling
+
+Folder:
+- Client: `fling/client/`
+- Server: `apps/ws/src/games/fling.js`, `apps/ws/src/games/fling_sim.js`
+
+Intent:
+- A cooperative projectile game inspired by QBasic Gorilla.
+- Players choose from 7 story characters (Hunter, Mr. What What, Chaihou, Taolabi, Chichi Gonju, Starway, Brillan) and fling rubber ducks at alien ships eating the Earth.
+- Point-and-click aiming with persistent angle/power between shots.
+- Outdoor hills landscape with tumbling projectiles and air resistance.
+
+Collaboration hooks:
+- All players fire at the same shared targets from the left side.
+- Shared progress: targets hit by any player count for everyone.
+- Level progression is shared (5 levels, increasing targets and terrain complexity).
+
+Theme notes:
+- The projectile type (`rubber_duck`) and target type (`alien_ship`) are designed to be easily swapped.
+- 7 selectable character avatars with distinct visual designs and associated colors.
+
+Canonical per-game overview: `fling_LLM.md`.
+
 ## Adding a new co-op game (recommended checklist)
 
 - Server:

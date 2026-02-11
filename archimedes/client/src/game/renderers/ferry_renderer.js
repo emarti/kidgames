@@ -213,8 +213,9 @@ function drawBoat(scene, state, waterScreenY) {
   if (boat.hasSail && !boat.capsized) {
     const mastH = 110 * (scene.scale.height / 500);
     const mastX = bx;
-    const mastBaseY = deckY - 4;
-    const mastTopY = deckY - mastH;
+    const sailRaise = 10 * (scene.scale.height / 500);
+    const mastBaseY = deckY - 4 - sailRaise;
+    const mastTopY = mastBaseY - mastH;
 
     g.lineStyle(4, 0x5d4037);
     g.lineBetween(mastX, mastBaseY, mastX, mastTopY);
@@ -223,9 +224,6 @@ function drawBoat(scene, state, waterScreenY) {
     const sailSide = windDir !== 0 ? windDir : 1;
     const boomLen = hw * 0.7;
     const boomEndX = mastX + sailSide * boomLen;
-
-    g.lineStyle(3, 0x5d4037);
-    g.lineBetween(mastX, mastBaseY, boomEndX, mastBaseY);
 
     const bellyX = mastX + sailSide * boomLen * 0.65;
     const bellyY = mastBaseY - mastH * 0.5;
@@ -239,6 +237,10 @@ function drawBoat(scene, state, waterScreenY) {
     g.fillPath();
     g.lineStyle(1, 0xbbbbbb);
     g.strokePath();
+
+    // Boom on top (otherwise the sail fill can obscure it).
+    g.lineStyle(3, 0x5d4037);
+    g.lineBetween(mastX, mastBaseY, boomEndX, mastBaseY);
 
     g.lineStyle(1, 0x999999, 0.6);
     g.lineBetween(mastX, mastTopY, boomEndX, mastBaseY);

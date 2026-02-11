@@ -1485,6 +1485,104 @@ export function placeCollectible(state, kind, x, y) {
   return false;
 }
 
+function clone2dIntArray_(grid) {
+  if (!Array.isArray(grid)) return null;
+  return grid.map((row) => (Array.isArray(row) ? row.slice() : []));
+}
+
+function clonePoints_(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y))
+    .map((p) => ({ x: Math.floor(p.x), y: Math.floor(p.y) }));
+}
+
+function sanitizePoints_(state, arr) {
+  const out = [];
+  const seen = new Set();
+  const startIdx = cellIndex(state.w, state.start.x, state.start.y);
+  const goalIdx = cellIndex(state.w, state.goal.x, state.goal.y);
+
+  for (const p of clonePoints_(arr)) {
+    if (!inBounds(state.w, state.h, p.x, p.y)) continue;
+    const idx = cellIndex(state.w, p.x, p.y);
+    if (idx === startIdx || idx === goalIdx) continue;
+    const key = String(idx);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ x: p.x, y: p.y });
+  }
+  return out;
+}
+
+export function serializeFreeformLayout(state) {
+  const mode = String(state?.mode || 'freeform').toLowerCase();
+  if (mode !== 'freeform') return null;
+  if (!state?.walls || !Array.isArray(state.walls)) return null;
+
+  return {
+    v: 1,
+    level: Number(state.level || 1),
+    w: Number(state.w || 0),
+    h: Number(state.h || 0),
+    walls: clone2dIntArray_(state.walls),
+    apples: clonePoints_(state.apples),
+    treasures: clonePoints_(state.treasures),
+    batteries: clonePoints_(state.batteries),
+    fishes: clonePoints_(state.fishes),
+    ducks: clonePoints_(state.ducks),
+  };
+}
+
+export function loadFreeformLayout(state, snapshot) {
+  if (!state || !snapshot) return false;
+  if (state.testing || state.playing) return false;
+  const mode = String(state.mode || 'freeform').toLowerCase();
+  if (mode !== 'freeform') return false;
+
+  const level = clamp(Number(snapshot.level || 1), 1, 999);
+  if (level !== state.level) {
+    buildLevel(state, level);
+  }
+
+  const nextWalls = clone2dIntArray_(snapshot.walls);
+  if (!nextWalls || nextWalls.length !== state.h) return false;
+  for (let y = 0; y < state.h; y++) {
+    if (!Array.isArray(nextWalls[y]) || nextWalls[y].length !== state.w) return false;
+  }
+
+  state.walls = nextWalls;
+  enforceBorderWalls(state);
+
+  // Replace collectibles (targets are still derived from level).
+  clearAllCollectibles(state);
+  state.apples = sanitizePoints_(state, snapshot.apples);
+  state.treasures = sanitizePoints_(state, snapshot.treasures);
+  state.batteries = sanitizePoints_(state, snapshot.batteries);
+  state.fishes = sanitizePoints_(state, snapshot.fishes);
+  state.ducks = sanitizePoints_(state, snapshot.ducks);
+
+  // Reset transient run-state.
+  state.win = false;
+  state.message = '';
+  state.testing = false;
+  state.playing = false;
+  if (state.solver) state.solver.running = false;
+  if (state.autoplay) state.autoplay.running = false;
+  state._advanceAt = null;
+  state._advanceToLevel = null;
+  state._minoResetAt = null;
+  state._minoHit = null;
+
+  resetPlayerPositionsAndTrails(state);
+  state.paths = [];
+  state._pathOwners = {};
+  state.revealed = [];
+  updateVisibility(state);
+  updateRouteStatus_(state);
+  return true;
+}
+
 export function getPublicState(state) {
   // State is already safe/plain JSON. This hook exists if we later want to hide internals.
   return state;

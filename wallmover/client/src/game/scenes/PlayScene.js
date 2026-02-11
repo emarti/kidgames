@@ -36,10 +36,93 @@ const ICON_START = '🚦';
 const ICON_TEST = '🚶';
 const ICON_STOP = '🛑';
 const ICON_NEXT = '🚪';
+const ICON_SAVE = '💾';
+const ICON_LOAD = '📂';
 
 export default class PlayScene extends Phaser.Scene {
   constructor() {
     super({ key: 'PlayScene' });
+  }
+
+  rebuildLoadPicker_(saves) {
+    if (!this.loadPicker || !this.loadPickerBg) return;
+
+    for (const obj of this.loadPickerItems || []) {
+      try {
+        obj.destroy();
+      } catch {
+        // ignore
+      }
+    }
+    this.loadPickerItems = [];
+
+    const W = 240;
+    const PAD = 12;
+    const LINE_H = 38;
+    const list = Array.isArray(saves) ? saves : [];
+    const shown = list.slice(0, 8);
+
+    let y = PAD;
+
+    const title = this.add
+      .text(W / 2, y, 'Load layout', { fontSize: '18px', color: '#000', fontStyle: 'bold' })
+      .setOrigin(0.5, 0);
+    this.loadPicker.add(title);
+    this.loadPickerItems.push(title);
+
+    const close = this.add
+      .text(W - 8, 6, '✕', { fontSize: '22px', color: '#000' })
+      .setOrigin(1, 0)
+      .setInteractive({ useHandCursor: true });
+    close.on('pointerdown', () => {
+      this._loadPickerOpen = false;
+      this.loadPicker.setVisible(false);
+    });
+    this.loadPicker.add(close);
+    this.loadPickerItems.push(close);
+
+    y += 34;
+
+    if (shown.length === 0) {
+      const empty = this.add.text(W / 2, y + 8, '(no saves yet)', { fontSize: '16px', color: '#333' }).setOrigin(0.5, 0);
+      this.loadPicker.add(empty);
+      this.loadPickerItems.push(empty);
+      y += 34;
+    } else {
+      for (const s of shown) {
+        const code = String(s?.code || '');
+        const hit = this.add.rectangle(PAD, y, W - PAD * 2, 30, 0x777777, 0.08).setOrigin(0, 0);
+        hit.setStrokeStyle(2, 0x000000, 0.15);
+        hit.setInteractive({ useHandCursor: true });
+
+        const label = this.add.text(W / 2, y + 15, code, { fontSize: '18px', color: '#000' }).setOrigin(0.5);
+
+        hit.on('pointerdown', () => {
+          if (!/^[0-9]{8}$/.test(code)) return;
+          this._loadPickerOpen = false;
+          this.loadPicker.setVisible(false);
+          this.game.net.send('load_layout', { code });
+        });
+
+        this.loadPicker.add(hit);
+        this.loadPicker.add(label);
+        this.loadPickerItems.push(hit, label);
+        y += LINE_H;
+      }
+
+      if (list.length > shown.length) {
+        const more = this.add
+          .text(W / 2, y + 4, `…and ${list.length - shown.length} more`, { fontSize: '14px', color: '#333' })
+          .setOrigin(0.5, 0);
+        this.loadPicker.add(more);
+        this.loadPickerItems.push(more);
+        y += 24;
+      }
+    }
+
+    const totalH = Math.max(96, y + PAD);
+    this.loadPickerBg.setSize(W, totalH);
+    this.loadPickerBg.setPosition(0, 0);
   }
 
   drawEditGrid_(layout, state) {
@@ -379,6 +462,36 @@ export default class PlayScene extends Phaser.Scene {
     this.onState = (e) => this.renderState(e.detail);
     this.game.net.addEventListener('state', this.onState);
 
+    this.onSaveLayoutOk_ = (e) => {
+      const code = String(e?.detail?.code || '').trim();
+      if (/^[0-9]{8}$/.test(code)) {
+        this._lastSaveCode = code;
+        this._lastSaveToastUntil = Date.now() + 8000;
+      }
+    };
+    this.onSaveList_ = (e) => {
+      this._saveList = Array.isArray(e?.detail) ? e.detail : [];
+      this.rebuildLoadPicker_(this._saveList);
+    };
+    this.onLoadLayoutOk_ = (e) => {
+      const code = String(e?.detail?.code || '').trim();
+      if (/^[0-9]{8}$/.test(code)) {
+        this._lastSaveCode = code;
+        this._lastSaveToastUntil = Date.now() + 8000;
+      }
+      this._loadPickerOpen = false;
+      if (this.loadPicker) this.loadPicker.setVisible(false);
+    };
+    this.game.net.addEventListener('save_layout_ok', this.onSaveLayoutOk_);
+    this.game.net.addEventListener('save_list', this.onSaveList_);
+    this.game.net.addEventListener('load_layout_ok', this.onLoadLayoutOk_);
+
+    this.events.once('shutdown', () => {
+      this.game.net.removeEventListener('save_layout_ok', this.onSaveLayoutOk_);
+      this.game.net.removeEventListener('save_list', this.onSaveList_);
+      this.game.net.removeEventListener('load_layout_ok', this.onLoadLayoutOk_);
+    });
+
     if (this.game.net.latestState) {
       this.renderState(this.game.net.latestState);
     }
@@ -635,19 +748,34 @@ export default class PlayScene extends Phaser.Scene {
       draw: this.addToolbarButton_(`${ICON_DRAW}  Draw`, () => {
         this._editorTool = 'draw';
         this._editorPickerOpen = false;
+        this._loadPickerOpen = false;
       }),
       erase: this.addToolbarButton_(`${ICON_ERASE}  Erase`, () => {
         this._editorTool = 'erase';
         this._editorPickerOpen = false;
+        this._loadPickerOpen = false;
       }),
       treasure: this.addToolbarButton_(`${ICON_TREASURE}  Treasure`, () => {
         this._editorTool = 'item';
         this._editorPickerOpen = !this._editorPickerOpen;
+        this._loadPickerOpen = false;
+      }),
+      save: this.addToolbarButton_(`${ICON_SAVE}  Save`, () => {
+        this._editorPickerOpen = false;
+        this._loadPickerOpen = false;
+        this.game.net.send('save_layout');
+      }),
+      load: this.addToolbarButton_(`${ICON_LOAD}  Load`, () => {
+        this._editorPickerOpen = false;
+        this._loadPickerOpen = !this._loadPickerOpen;
+        if (this._loadPickerOpen) this.game.net.send('list_saves');
+        if (!this._loadPickerOpen && this.loadPicker) this.loadPicker.setVisible(false);
       }),
       start: this.addToolbarButton_(`${ICON_START}  Start`, () => this.game.net.send('autoplay_start')),
       test: this.addToolbarButton_(`${ICON_TEST}  Play`, () => this.game.net.send('start_play')),
       stop: this.addToolbarButton_(`${ICON_STOP}  Reset`, () => {
         this._editorPickerOpen = false;
+        this._loadPickerOpen = false;
         this.game.net.send('autoplay_stop');
         this.game.net.send('stop_test');
       }),
@@ -658,6 +786,12 @@ export default class PlayScene extends Phaser.Scene {
         this.game.net.send('next_level');
       }),
     };
+
+    // Save code toast (Free mode only).
+    this.toolbarSaveText = this.add
+      .text(0, 0, '', { fontSize: '16px', color: '#000', fontStyle: 'bold', backgroundColor: '#ffffff' })
+      .setOrigin(0.5);
+    this.editorContainer.add(this.toolbarSaveText);
 
     // Treasure picker (icons like Maze)
     this.treasurePicker = this.add.container(0, 0);
@@ -711,6 +845,18 @@ export default class PlayScene extends Phaser.Scene {
       this.treasurePickerButtons[k.key] = hit;
     });
     this.treasurePicker.setVisible(false);
+
+    // Load picker panel (Free mode only).
+    this._loadPickerOpen = false;
+    this._saveList = [];
+    this.loadPicker = this.add.container(0, 0);
+    this.loadPicker.setDepth(460);
+    this.loadPickerBg = this.add.rectangle(0, 0, 240, 120, 0xffffff, 0.96).setOrigin(0, 0);
+    this.loadPickerBg.setStrokeStyle(2, 0x000000, 0.25);
+    this.loadPicker.add(this.loadPickerBg);
+    this.loadPickerItems = [];
+    this.rebuildLoadPicker_([]);
+    this.loadPicker.setVisible(false);
 
     // Playfield hitbox for editor interactions
     this.playfieldHit = this.add.rectangle(0, 0, 10, 10, 0x000000, 0).setOrigin(0, 0);
@@ -965,6 +1111,8 @@ export default class PlayScene extends Phaser.Scene {
     this.toolbarButtons.draw.setVisible(!inTest);
     this.toolbarButtons.erase.setVisible(!inTest);
     this.toolbarButtons.treasure.setVisible(!inTest && !isPuzzle);
+    this.toolbarButtons.save.setVisible(!inTest && !isPuzzle);
+    this.toolbarButtons.load.setVisible(!inTest && !isPuzzle);
     this.toolbarButtons.start.setVisible(!inTest);
     this.toolbarButtons.test.setVisible(!inTest);
     this.toolbarButtons.stop.setVisible(inTest || autoplayRunning || Boolean(state.win));
@@ -974,6 +1122,7 @@ export default class PlayScene extends Phaser.Scene {
     if (isPuzzle) {
       if (this._editorTool === 'item') this._editorTool = 'draw';
       this._editorPickerOpen = false;
+      this._loadPickerOpen = false;
     }
 
     // Selection highlight
@@ -991,7 +1140,7 @@ export default class PlayScene extends Phaser.Scene {
 
     const order = isPuzzle
       ? ['draw', 'erase', 'start', 'test', 'stop', 'next']
-      : ['draw', 'erase', 'treasure', 'start', 'test', 'stop', 'next'];
+      : ['draw', 'erase', 'treasure', 'save', 'load', 'start', 'test', 'stop', 'next'];
     let y = TOOLBAR_PAD + 60;
     for (const key of order) {
       const btn = this.toolbarButtons[key];
@@ -1021,6 +1170,30 @@ export default class PlayScene extends Phaser.Scene {
       this.treasurePicker.setVisible(true);
     } else {
       this.treasurePicker.setVisible(false);
+    }
+
+    // Load picker position
+    if (this._loadPickerOpen && !inTest && !isPuzzle && !overlayVisible) {
+      const anchor = this.toolbarButtons.load;
+      const panelW = this.loadPickerBg?.width ?? 240;
+      const panelH = this.loadPickerBg?.height ?? 120;
+      const px = x0 + Math.max(TOOLBAR_PAD, Math.floor((toolbarW - panelW) / 2));
+      const py = Math.min(H - panelH - TOOLBAR_PAD, Math.max(TOOLBAR_PAD, Math.floor((anchor?.y ?? 180) + 22)));
+      this.loadPicker.setPosition(px, py);
+      this.loadPicker.setVisible(true);
+    } else if (this.loadPicker) {
+      this.loadPicker.setVisible(false);
+    }
+
+    // Save/load toast text
+    if (this.toolbarSaveText) {
+      const now = Date.now();
+      const showToast = !overlayVisible && !inTest && !isPuzzle && this._lastSaveCode && (now <= (this._lastSaveToastUntil ?? 0));
+      this.toolbarSaveText.setVisible(Boolean(showToast));
+      if (showToast) {
+        this.toolbarSaveText.setText(`Code: ${this._lastSaveCode}`);
+        this.toolbarSaveText.setPosition(toolbarW / 2, H - TOOLBAR_PAD - 22);
+      }
     }
 
     // Update playfield hitbox to match the maze area

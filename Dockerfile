@@ -131,6 +131,28 @@ RUN cd wallmover/client && npm run build
 
 
 ########################
+# Fling client build
+########################
+FROM node:20-slim AS fling-client-build
+
+WORKDIR /repo
+
+# Shared local package dependency used by clients
+COPY packages/touch-controls/ ./packages/touch-controls/
+
+# Install deps (cache-friendly)
+COPY fling/client/package*.json ./fling/client/
+RUN cd fling/client && npm install --no-audit --no-fund
+
+# App source
+COPY fling/client/ ./fling/client/
+
+# Host fling under /games/fling/
+ENV VITE_BASE=/games/fling/
+RUN cd fling/client && npm run build
+
+
+########################
 # Gateway (Caddy) image
 ########################
 FROM caddy:2-alpine AS gateway
@@ -159,6 +181,10 @@ COPY --from=archimedes-client-build /repo/archimedes/client/dist/ /srv/games/arc
 # Wallmover client build output lives at /games/wallmover/
 RUN mkdir -p /srv/games/wallmover
 COPY --from=wallmover-client-build /repo/wallmover/client/dist/ /srv/games/wallmover/
+
+# Fling client build output lives at /games/fling/
+RUN mkdir -p /srv/games/fling
+COPY --from=fling-client-build /repo/fling/client/dist/ /srv/games/fling/
 
 # Caddy config
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile

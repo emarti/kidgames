@@ -2,7 +2,6 @@
 
 This repo can be deployed to a single Lightsail **Instance** (VM) without Docker:
 
-- Caddy runs on the VM and serves static files under `/games/*`
 - Caddy reverse-proxies WebSockets by path:
   - `/games/snake/ws` → unified games backend
   - `/games/maze/ws` → unified games backend
@@ -14,6 +13,32 @@ This repo can be deployed to a single Lightsail **Instance** (VM) without Docker
 ## Endpoints
 
 - `/games/` (landing page)
+
+### Optional: coarse Geo (country/region/city)
+
+The backend can log coarse geo (country/region/city) for joins **without storing IPs**.
+This uses a local MaxMind MMDB file (not bundled).
+
+- Put `GeoLite2-City.mmdb` somewhere on disk (example: `/var/lib/geoip/GeoLite2-City.mmdb`).
+- Set an env var on the `games-backend` systemd service:
+
+```bash
+sudo systemctl edit games-backend
+```
+
+Add:
+
+```ini
+[Service]
+Environment=MAXMIND_DB_PATH=/var/lib/geoip/GeoLite2-City.mmdb
+```
+
+Then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart games-backend
+```
 - `/games/snake/` (Snake client)
 - `/games/snake/ws` (Snake WebSocket)
 - `/games/maze/` (Maze client)

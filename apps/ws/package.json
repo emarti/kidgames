@@ -7,7 +7,7 @@
     "dev": "node src/server.js"
   },
   "dependencies": {
-    "geoip-lite": "^1.4.10",
+    "maxmind": "^4.3.0",
     "ws": "^8.18.3"
   }
 }

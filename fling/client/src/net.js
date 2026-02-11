@@ -14,15 +14,14 @@ export class Net extends EventTarget {
     const configuredUrl = import.meta.env.VITE_WS_URL ?? import.meta.env.VITE_API_URL;
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const defaultDevUrl = 'ws://localhost:8080';
-    const defaultProdUrl = `${protocol}://${window.location.host}/games/wallmover/ws`;
+    const defaultProdUrl = `${protocol}://${window.location.host}/games/fling/ws`;
     const wsUrl = configuredUrl ?? (import.meta.env.DEV ? defaultDevUrl : defaultProdUrl);
 
     this.socket = new WebSocket(wsUrl);
 
     this.socket.onopen = () => {
       this.connected = true;
-      // Unified backend expects a hello handshake selecting the game.
-      this.socket.send(JSON.stringify({ type: 'hello', gameId: 'wallmover', protocol: 1 }));
+      this.socket.send(JSON.stringify({ type: 'hello', gameId: 'fling', protocol: 1 }));
       this.dispatchEvent(new Event('connected'));
     };
 
@@ -50,20 +49,23 @@ export class Net extends EventTarget {
     if (msg.type === 'state') {
       this.latestState = msg.state;
       this.dispatchEvent(new CustomEvent('state', { detail: msg.state }));
-    } else if (msg.type === 'room_joined') {
+      return;
+    }
+
+    if (msg.type === 'room_joined') {
       this.roomId = msg.roomId;
       this.playerId = msg.playerId;
       this.latestState = msg.state;
       this.dispatchEvent(new CustomEvent('room_joined', { detail: msg }));
-    } else if (msg.type === 'room_list') {
+      return;
+    }
+
+    if (msg.type === 'room_list') {
       this.dispatchEvent(new CustomEvent('room_list', { detail: msg.rooms }));
-    } else if (msg.type === 'save_layout_ok') {
-      this.dispatchEvent(new CustomEvent('save_layout_ok', { detail: msg }));
-    } else if (msg.type === 'save_list') {
-      this.dispatchEvent(new CustomEvent('save_list', { detail: msg.saves }));
-    } else if (msg.type === 'load_layout_ok') {
-      this.dispatchEvent(new CustomEvent('load_layout_ok', { detail: msg }));
-    } else if (msg.type === 'error') {
+      return;
+    }
+
+    if (msg.type === 'error') {
       console.error('Server error:', msg.message);
       alert(msg.message);
     }

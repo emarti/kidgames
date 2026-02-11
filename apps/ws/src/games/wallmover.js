@@ -3,12 +3,63 @@ import { normalizeRoomCode } from '../shared.js';
 import { countConnectedPlayers, generateRoomIdUnique, nowMs, safeBroadcast, send } from './room_utils.js';
 
 export function createWallmoverHost() {
-  const rooms = new Map(); // roomId -> { id, state, clients: [], updatedAt }
+  const rooms = new Map(); // roomId -> { id, state, clients: [], updatedAt, saves: [], savesByCode }
 
   const ROOM_EXPIRE_MS = 10 * 60 * 1000;
 
   function generateRoomIdUniqueForHost() {
     return generateRoomIdUnique(rooms);
+  }
+
+  function generateSaveCode_(room) {
+    const used = room?.savesByCode;
+    for (let i = 0; i < 50; i++) {
+      const n = Math.floor(Math.random() * 100000000);
+      const code = String(n).padStart(8, '0');
+      if (!used?.has(code)) return code;
+    }
+    // Fallback (should be extremely rare).
+    return String(Math.floor(Date.now() % 100000000)).padStart(8, '0');
+  }
+
+  function clonePoints_(arr) {
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y))
+      .map((p) => ({ x: Math.floor(p.x), y: Math.floor(p.y) }));
+  }
+
+  function takeCollectiblesSnapshot_(state) {
+    if (!state) return null;
+    return {
+      apples: clonePoints_(state.apples),
+      treasures: clonePoints_(state.treasures),
+      batteries: clonePoints_(state.batteries),
+      fishes: clonePoints_(state.fishes),
+      ducks: clonePoints_(state.ducks),
+      applesCollected: Number(state.applesCollected ?? 0),
+      treasuresCollected: Number(state.treasuresCollected ?? 0),
+      batteriesCollected: Number(state.batteriesCollected ?? 0),
+      fishesCollected: Number(state.fishesCollected ?? 0),
+      ducksCollected: Number(state.ducksCollected ?? 0),
+    };
+  }
+
+  function restoreCollectiblesSnapshot_(state, snap) {
+    if (!state || !snap) return false;
+    state.apples = clonePoints_(snap.apples);
+    state.treasures = clonePoints_(snap.treasures);
+    state.batteries = clonePoints_(snap.batteries);
+    state.fishes = clonePoints_(snap.fishes);
+    state.ducks = clonePoints_(snap.ducks);
+
+    // Reset counters to their pre-run values (typically 0).
+    state.applesCollected = Math.max(0, Math.floor(Number(snap.applesCollected ?? 0)));
+    state.treasuresCollected = Math.max(0, Math.floor(Number(snap.treasuresCollected ?? 0)));
+    state.batteriesCollected = Math.max(0, Math.floor(Number(snap.batteriesCollected ?? 0)));
+    state.fishesCollected = Math.max(0, Math.floor(Number(snap.fishesCollected ?? 0)));
+    state.ducksCollected = Math.max(0, Math.floor(Number(snap.ducksCollected ?? 0)));
+    return true;
   }
 
   // Fixed tick loop for all wallmover rooms
@@ -65,7 +116,15 @@ export function createWallmoverHost() {
       case 'create_room': {
         const roomId = generateRoomIdUniqueForHost();
         const state = Sim.newGameState();
-        const room = { id: roomId, state, clients: [ws], updatedAt: nowMs() };
+        const room = {
+          id: roomId,
+          state,
+          clients: [ws],
+          updatedAt: nowMs(),
+          saves: [],
+          savesByCode: new Map(),
+          runSnapshot: null,
+        };
         rooms.set(roomId, room);
 
         ws.room = roomId;
@@ -146,6 +205,7 @@ export function createWallmoverHost() {
         if (!ws.room) return;
         const room = rooms.get(ws.room);
         if (!room) return;
+        room.runSnapshot = null;
         Sim.setLevel(room.state, msg.level);
         break;
       }
@@ -154,6 +214,7 @@ export function createWallmoverHost() {
         if (!ws.room) return;
         const room = rooms.get(ws.room);
         if (!room) return;
+        room.runSnapshot = null;
         Sim.restart(room.state);
         break;
       }
@@ -178,6 +239,7 @@ export function createWallmoverHost() {
         if (!ws.room) return;
         const room = rooms.get(ws.room);
         if (!room) return;
+        room.runSnapshot = takeCollectiblesSnapshot_(room.state);
         if (ws.playerId) Sim.startPlay(room.state, ws.playerId);
         break;
       }
@@ -186,6 +248,7 @@ export function createWallmoverHost() {
         if (!ws.room) return;
         const room = rooms.get(ws.room);
         if (!room) return;
+        room.runSnapshot = null;
         Sim.setMode(room.state, msg.mode);
         break;
       }
@@ -206,10 +269,92 @@ export function createWallmoverHost() {
         break;
       }
 
+      case 'save_layout': {
+        if (!ws.room) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        const mode = String(room.state?.mode || 'freeform').toLowerCase();
+        if (mode !== 'freeform') {
+          send(ws, { type: 'error', message: 'Save is only available in Free mode.' });
+          return;
+        }
+
+        const snapshot = Sim.serializeFreeformLayout(room.state);
+        if (!snapshot) {
+          send(ws, { type: 'error', message: 'Could not save this layout.' });
+          return;
+        }
+
+        const code = generateSaveCode_(room);
+        const savedAt = nowMs();
+        const entry = { code, savedAt, snapshot };
+
+        room.savesByCode.set(code, entry);
+        room.saves = [entry, ...(room.saves || []).filter((e) => e?.code !== code)];
+
+        const MAX_SAVES = 25;
+        while (room.saves.length > MAX_SAVES) {
+          const removed = room.saves.pop();
+          if (removed?.code) room.savesByCode.delete(removed.code);
+        }
+
+        send(ws, { type: 'save_layout_ok', code, savedAt });
+        break;
+      }
+
+      case 'list_saves': {
+        if (!ws.room) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        const mode = String(room.state?.mode || 'freeform').toLowerCase();
+        if (mode !== 'freeform') {
+          send(ws, { type: 'save_list', saves: [] });
+          return;
+        }
+        const saves = (room.saves || []).map((e) => ({ code: e.code, savedAt: e.savedAt }));
+        send(ws, { type: 'save_list', saves });
+        break;
+      }
+
+      case 'load_layout': {
+        if (!ws.room) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        const mode = String(room.state?.mode || 'freeform').toLowerCase();
+        if (mode !== 'freeform') {
+          send(ws, { type: 'error', message: 'Load is only available in Free mode.' });
+          return;
+        }
+
+        const code = String(msg.code || '').trim();
+        if (!/^[0-9]{8}$/.test(code)) {
+          send(ws, { type: 'error', message: 'Invalid save code (must be 8 digits).' });
+          return;
+        }
+
+        const entry = room.savesByCode?.get(code);
+        if (!entry?.snapshot) {
+          send(ws, { type: 'error', message: 'Save not found.' });
+          return;
+        }
+
+        const ok = Sim.loadFreeformLayout(room.state, entry.snapshot);
+        if (!ok) {
+          send(ws, { type: 'error', message: 'Could not load this layout.' });
+          return;
+        }
+
+        room.updatedAt = nowMs();
+        safeBroadcast(room, { type: 'state', state: room.state });
+        send(ws, { type: 'load_layout_ok', code });
+        break;
+      }
+
       case 'autoplay_start': {
         if (!ws.room) return;
         const room = rooms.get(ws.room);
         if (!room) return;
+        room.runSnapshot = takeCollectiblesSnapshot_(room.state);
         if (ws.playerId) Sim.autoplayStart(room.state, ws.playerId);
         break;
       }
@@ -226,6 +371,7 @@ export function createWallmoverHost() {
         if (!ws.room) return;
         const room = rooms.get(ws.room);
         if (!room) return;
+        room.runSnapshot = takeCollectiblesSnapshot_(room.state);
         Sim.solverStart(room.state);
         break;
       }
@@ -242,6 +388,7 @@ export function createWallmoverHost() {
         if (!ws.room) return;
         const room = rooms.get(ws.room);
         if (!room) return;
+        room.runSnapshot = null;
         Sim.solverReset(room.state);
         break;
       }
@@ -250,6 +397,7 @@ export function createWallmoverHost() {
         if (!ws.room) return;
         const room = rooms.get(ws.room);
         if (!room) return;
+        room.runSnapshot = null;
         Sim.nextLevel(room.state);
         break;
       }
@@ -259,6 +407,12 @@ export function createWallmoverHost() {
         const room = rooms.get(ws.room);
         if (!room) return;
         Sim.stopTest(room.state);
+
+        // Restore collectibles eaten during the run.
+        if (room.runSnapshot) {
+          restoreCollectiblesSnapshot_(room.state, room.runSnapshot);
+          room.runSnapshot = null;
+        }
         break;
       }
 

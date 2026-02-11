@@ -61,6 +61,7 @@ These are deliberately **specific** and point to the actual modules and message/
 - `wallmover_LLM.md`
 - `comet_LLM.md`
 - `archimedes_LLM.md`
+- `fling_LLM.md`
 
 ## Legacy / existing LLM notes
 - `snake/for_llm.txt` exists and contains Snake-specific details. Prefer the canonical docs above for cross-repo architecture.

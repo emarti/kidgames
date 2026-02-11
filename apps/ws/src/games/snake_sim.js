@@ -19,6 +19,9 @@ export const DIRS = {
   RIGHT: { x: 1, y: 0 }
 };
 
+const SNAKE_START_LEN = 3;
+const SNAKE_MIN_LEN = 1;
+
 export function isOpposite(a, b) {
   return (a === "UP" && b === "DOWN") ||
     (a === "DOWN" && b === "UP") ||
@@ -70,7 +73,7 @@ export function basePlayer(id, dir) {
     grow: 0,
     shrink: 0,
     body: [],
-    lengthAtLastDeath: 3
+    lengthAtLastDeath: SNAKE_START_LEN
   };
 }
 
@@ -95,7 +98,9 @@ export function requestRespawn(state, pid) {
 
 function respawnPlayer(state, pid) {
   const p = state.players[pid];
-  const len = Math.max(3, p.lengthAtLastDeath);
+  // Keep the classic start length, but allow red-food shrink runs to
+  // permanently reduce you down to 1 segment.
+  const len = Math.max(SNAKE_MIN_LEN, Math.floor(Number(p.lengthAtLastDeath ?? SNAKE_START_LEN)));
 
   p.body = [];
   if (pid === 1) {
@@ -379,7 +384,7 @@ export function step(state) {
 
     // Red food: -2 length over two move cycles, but no effect at length 3
     if (eatsRed[pid]) {
-      if (lenAtEat > 3) p.shrink += 2;
+      if (lenAtEat > SNAKE_MIN_LEN) p.shrink += 2;
     }
 
     if (p.grow > 0) {
@@ -389,14 +394,14 @@ export function step(state) {
     }
 
     // Apply pending shrink: pop one extra tail segment per move tick.
-    // Never shrink below length 3; discard any remaining shrink debt.
+    // Never shrink below length 1; discard any remaining shrink debt.
     if (p.shrink > 0) {
-      if (p.body.length <= 3) {
+      if (p.body.length <= SNAKE_MIN_LEN) {
         p.shrink = 0;
       } else {
         p.body.pop();
         p.shrink--;
-        if (p.body.length <= 3) p.shrink = 0;
+        if (p.body.length <= SNAKE_MIN_LEN) p.shrink = 0;
       }
     }
   }

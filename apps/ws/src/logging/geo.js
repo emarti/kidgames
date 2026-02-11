@@ -1,4 +1,31 @@
-import geoip from 'geoip-lite';
+import fs from 'node:fs';
+import maxmind from 'maxmind';
+
+let mmdbReader = null;
+let mmdbInitAttempted = false;
+
+function getMmdbReader_() {
+  if (mmdbInitAttempted) return mmdbReader;
+  mmdbInitAttempted = true;
+
+  const dbPath =
+    process.env.MAXMIND_DB_PATH ||
+    process.env.GEOIP_DB_PATH ||
+    '/var/lib/geoip/GeoLite2-City.mmdb';
+
+  try {
+    if (!dbPath || !fs.existsSync(dbPath)) {
+      mmdbReader = null;
+      return null;
+    }
+
+    mmdbReader = maxmind.openSync(dbPath);
+    return mmdbReader;
+  } catch {
+    mmdbReader = null;
+    return null;
+  }
+}
 
 function isLoopback(addr) {
   if (!addr) return false;
@@ -60,14 +87,17 @@ export function coarseGeoFromRequest(req) {
   const ip = (isTrustedProxyPeer(remoteAddr) ? (firstForwardedFor(req) || remoteAddr) : remoteAddr);
   if (!ip) return null;
 
-  const info = geoip.lookup(ip);
+  const reader = getMmdbReader_();
+  if (!reader) return null;
+
+  const info = reader.get(ip);
 
   // Discard IP immediately; do not return it or store it anywhere.
-  if (!info) return null;
+  if (!info || typeof info !== 'object') return null;
 
-  const country = typeof info.country === 'string' ? info.country : null;
-  const region = typeof info.region === 'string' ? info.region : null;
-  const city = typeof info.city === 'string' ? info.city : null;
+  const country = typeof info?.country?.iso_code === 'string' ? info.country.iso_code : null;
+  const region = typeof info?.subdivisions?.[0]?.iso_code === 'string' ? info.subdivisions[0].iso_code : null;
+  const city = typeof info?.city?.names?.en === 'string' ? info.city.names.en : null;
   if (!country && !region && !city) return null;
 
   // Discard IP immediately; do not return it or store it anywhere.

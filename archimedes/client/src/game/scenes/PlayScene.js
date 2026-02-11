@@ -24,6 +24,23 @@ export default class PlayScene extends Phaser.Scene {
     // …
   };
 
+  static MODULE_CATALOG = [
+    {
+      type: 'ferry',
+      name: '🚢 Buoyancy Ferry',
+      levels: [
+        { n: 1, label: 'Level 1: River Ferry', clr: '#27ae60' },
+        { n: 2, label: 'Level 2: Heavy Load', clr: '#3498db' },
+        { n: 3, label: 'Level 3: Boulder Run', clr: '#9b59b6' },
+      ],
+    },
+    { type: 'gears', name: '⚙️ Gears', levels: [{ n: 1, label: 'Level 1', clr: '#34495e' }] },
+    { type: 'sail', name: '⛵ Sailing', levels: [{ n: 1, label: 'Level 1', clr: '#16a085' }] },
+    { type: 'pi', name: '🥧 Pi Jar', levels: [{ n: 1, label: 'Level 1', clr: '#8e44ad' }] },
+    { type: 'seesaw', name: '⚖️ Seesaw', levels: [{ n: 1, label: 'Level 1', clr: '#d35400' }] },
+    { type: 'pulley', name: '🔗 Pulley', levels: [{ n: 1, label: 'Level 1', clr: '#7f8c8d' }] },
+  ];
+
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   create() {
@@ -172,22 +189,39 @@ export default class PlayScene extends Phaser.Scene {
 
     this.levelContainer = this.add.container(cx, cy).setDepth(400).setVisible(false);
 
-    const bg = this.add.rectangle(0, 0, 320, 320, 0x1a1a2e, 0.95).setOrigin(0.5);
+    const bg = this.add.rectangle(0, 0, 360, 380, 0x1a1a2e, 0.95).setOrigin(0.5);
     this.levelContainer.add(bg);
 
-    const title = this.add.text(0, -130, 'SELECT MODULE', {
-      fontSize: '22px', color: '#fff', fontStyle: 'bold',
+    this._levelSelectTitle = this.add.text(0, -165, 'SELECT MODULE + LEVEL', {
+      fontSize: '20px', color: '#fff', fontStyle: 'bold',
     }).setOrigin(0.5);
-    this.levelContainer.add(title);
+    this.levelContainer.add(this._levelSelectTitle);
+
+    this._levelSelectSubtitle = this.add.text(0, -140, '', {
+      fontSize: '13px', color: '#c7c7d1',
+    }).setOrigin(0.5);
+    this.levelContainer.add(this._levelSelectSubtitle);
+
+    this._levelSelectSectionModules = this.add.text(-160, -115, 'MODULES', {
+      fontSize: '12px', color: '#c7c7d1', fontStyle: 'bold',
+    }).setOrigin(0, 0.5);
+    this.levelContainer.add(this._levelSelectSectionModules);
+
+    this._levelSelectSectionLevels = this.add.text(-160, 30, 'LEVELS', {
+      fontSize: '12px', color: '#c7c7d1', fontStyle: 'bold',
+    }).setOrigin(0, 0.5);
+    this.levelContainer.add(this._levelSelectSectionLevels);
 
     // Module buttons will be populated dynamically from state
     this._levelSelectButtons = [];
+    this._levelSelectButtonMeta = [];
 
     const close = this.add.text(0, 130, 'CLOSE', {
       fontSize: '16px', color: '#fff', backgroundColor: '#e74c3c',
       padding: { x: 16, y: 6 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
     close.on('pointerdown', () => this.game.net.sendInput('toggle_level_select'));
+    close.setPosition(0, 160);
     this.levelContainer.add(close);
   }
 
@@ -202,26 +236,90 @@ export default class PlayScene extends Phaser.Scene {
       btn.destroy();
     }
     this._levelSelectButtons = [];
+    this._levelSelectButtonMeta = [];
 
-    // For now: show sub-levels for the active module (ferry has 3)
-    // This is module-aware and will work for any module that has levels in state
-    const subLevels = [
-      { n: 1, label: '1. River Ferry',   clr: '#27ae60' },
-      { n: 2, label: '2. Heavy Load',    clr: '#3498db' },
-      { n: 3, label: '3. Boulder Run',   clr: '#9b59b6' },
-    ];
+    const selectedModule = String(state?.moduleType || 'ferry');
+    const selectedLevel = Number(state?.level || 1);
 
-    for (let i = 0; i < subLevels.length; i++) {
-      const l = subLevels[i];
-      const btn = this.add.text(0, -70 + i * 50, l.label, {
-        fontSize: '18px', color: '#fff', backgroundColor: l.clr,
-        padding: { x: 20, y: 8 },
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-      btn.on('pointerdown', () => this.game.net.sendInput('set_level', { level: l.n }));
+    const modules = PlayScene.MODULE_CATALOG;
+
+    // Modules grid (2 columns)
+    const x0 = -85;
+    const y0 = -85;
+    const dx = 170;
+    const dy = 40;
+    for (let i = 0; i < modules.length; i++) {
+      const m = modules[i];
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+
+      const enabled = Boolean(PlayScene.RENDERERS[m.type]);
+      const isSelected = m.type === selectedModule;
+      const bg = isSelected ? '#2c3e50' : '#34495e';
+      const alpha = enabled ? 1 : 0.35;
+
+      const btn = this.add.text(x0 + col * dx, y0 + row * dy, m.name, {
+        fontSize: '14px', color: '#fff', backgroundColor: bg,
+        padding: { x: 10, y: 7 },
+      }).setOrigin(0.5).setAlpha(alpha);
+
+      if (enabled) {
+        btn.setInteractive({ useHandCursor: true });
+        btn.on('pointerdown', () => this.game.net.sendInput('set_module', { moduleType: m.type, subLevel: 1 }));
+      }
+
       this.levelContainer.add(btn);
       this._levelSelectButtons.push(btn);
+      this._levelSelectButtonMeta.push({ kind: 'module', type: m.type, btn, enabled });
+    }
+
+    // Levels list for selected module
+    const active = modules.find((m) => m.type === selectedModule) || modules[0];
+    const enabledLevels = Boolean(PlayScene.RENDERERS[active.type]);
+    const levels = Array.isArray(active.levels) ? active.levels : [];
+    for (let i = 0; i < levels.length; i++) {
+      const l = levels[i];
+      const isSelected = Number(l.n) === selectedLevel;
+      const alpha = enabledLevels ? 1 : 0.35;
+      const bg = isSelected ? '#1abc9c' : (l.clr || '#2ecc71');
+
+      const btn = this.add.text(0, 65 + i * 45, l.label, {
+        fontSize: '16px', color: '#fff', backgroundColor: bg,
+        padding: { x: 18, y: 8 },
+      }).setOrigin(0.5).setAlpha(alpha);
+
+      if (enabledLevels) {
+        btn.setInteractive({ useHandCursor: true });
+        btn.on('pointerdown', () => this.game.net.sendInput('set_level', { level: Number(l.n) || 1 }));
+      }
+
+      this.levelContainer.add(btn);
+      this._levelSelectButtons.push(btn);
+      this._levelSelectButtonMeta.push({ kind: 'level', moduleType: active.type, level: Number(l.n) || 1, btn, enabled: enabledLevels });
+    }
+
+    if (this._levelSelectSubtitle) {
+      const activeName = active?.name || 'Unknown';
+      const suffix = enabledLevels ? '' : ' (coming soon)';
+      this._levelSelectSubtitle.setText(`${activeName}${suffix}`);
     }
   }
+
+  _updateLevelSelectButtonStyles(state) {
+    const selectedModule = String(state?.moduleType || 'ferry');
+    const selectedLevel = Number(state?.level || 1);
+
+    for (const m of this._levelSelectButtonMeta || []) {
+      if (m.kind === 'module') {
+        const isSelected = m.type === selectedModule;
+        m.btn.setBackgroundColor(isSelected ? '#2c3e50' : '#34495e');
+      } else if (m.kind === 'level') {
+        const isSelected = m.moduleType === selectedModule && m.level === selectedLevel;
+        if (isSelected) m.btn.setBackgroundColor('#1abc9c');
+      }
+    }
+  }
+
 
   // ── Main render ────────────────────────────────────────────────────────────
 
@@ -283,6 +381,8 @@ export default class PlayScene extends Phaser.Scene {
     if (state.showLevelSelect && !this._levelSelectBuilt) {
       this._rebuildLevelSelectButtons(state);
       this._levelSelectBuilt = true;
+    } else if (state.showLevelSelect) {
+      this._updateLevelSelectButtonStyles(state);
     }
     if (!state.showLevelSelect) {
       this._levelSelectBuilt = false;

@@ -163,6 +163,24 @@ Wallmover puzzle add-ons:
 - `softWalls`: current wall bits on editable edges
 - `routeComplete`: whether start→goal is currently reachable under the effective walls
 
+## Fling-specific messages
+
+Fling is a cooperative projectile game: players fling rubber ducks at alien fish across planetary landscapes (Earth, Mars, Moon, Enceladus).
+
+Client → server:
+- `pause` / `resume`
+- `restart`
+- `select_level` `{ level: number }` (1–7)
+- `next_level`
+- `select_avatar` `{ avatar: string }` — one of: `hunter`, `mrwhatwhat`, `chaihou`, `taolabi`, `chichi`, `starway`, `brillan`
+- `set_guides` `{ show: boolean }` — toggle trajectory preview dots (global for all players)
+- `input` with one of:
+  - `{ action: "aim", angle: number, power: number }` — angle in degrees (5–85), power 5–100
+  - `{ action: "fire" }` — launch a projectile at the current aim
+
+Server → client:
+- `state` `{ state }`
+
 ## Backwards compatibility
 
 Different clients may exist across deployments. Prefer:
