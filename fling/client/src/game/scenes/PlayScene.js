@@ -36,6 +36,92 @@ const AVATAR_LABELS = {
   brillan: 'Brillan',
 };
 
+// Continent outlines [longitude°, latitude°] for Earth rendering — traced clockwise
+const EARTH_CONTINENTS = [
+  // North America (~100 pts)
+  [[-162,64],[-158,60],[-152,60],[-148,62],[-142,60],[-137,58],[-135,56],
+   [-132,54],[-130,52],[-128,50],[-126,48],[-125,46],[-124,44],[-124,42],
+   [-122,40],[-120,38],[-118,36],[-118,34],[-117,33],[-116,32],[-114,30],
+   [-112,28],[-110,26],[-109,24],[-108,22],[-106,20],[-104,18],[-102,17],
+   [-100,17],[-98,17],[-96,16],[-94,16],[-92,16],[-90,17],[-88,18],
+   [-87,20],[-88,22],[-90,24],[-92,26],[-94,27],[-96,27],[-97,26],
+   [-97,28],[-96,29],[-94,30],[-92,30],[-90,30],[-88,30],[-86,30],
+   [-85,29],[-84,28],[-83,27],[-82,26],[-81,25],[-80,25],[-80,26],
+   [-81,27],[-82,28],[-82,30],[-82,31],[-81,32],[-80,33],[-79,34],
+   [-78,35],[-76,36],[-75,38],[-74,40],[-73,41],[-72,42],[-70,43],
+   [-68,44],[-66,45],[-64,46],[-62,47],[-60,47],[-58,47],[-56,47],
+   [-53,47],[-54,49],[-56,50],[-58,52],[-60,54],[-62,56],[-64,58],
+   [-66,60],[-70,62],[-74,63],[-78,64],[-82,66],[-85,68],[-88,69],
+   [-92,70],[-96,72],[-100,73],[-105,72],[-110,72],[-115,72],[-120,72],
+   [-125,72],[-130,72],[-135,71],[-140,70],[-145,70],[-150,68],
+   [-155,66],[-158,65],[-160,64],[-165,64],[-168,66],[-165,62]],
+  // South America (~55 pts)
+  [[-78,10],[-76,11],[-74,12],[-72,12],[-70,11],[-68,9],[-66,7],
+   [-64,5],[-62,4],[-60,3],[-58,2],[-55,1],[-52,0],[-50,-1],
+   [-47,-2],[-44,-3],[-42,-4],[-40,-4],[-38,-5],[-36,-7],[-35,-10],
+   [-36,-12],[-37,-14],[-38,-16],[-39,-18],[-40,-20],[-41,-22],
+   [-43,-23],[-45,-24],[-47,-26],[-49,-28],[-50,-30],[-52,-32],
+   [-54,-34],[-56,-36],[-58,-38],[-60,-40],[-62,-42],[-64,-44],
+   [-66,-48],[-68,-52],[-70,-55],[-72,-52],[-73,-50],[-74,-48],
+   [-75,-44],[-75,-40],[-75,-36],[-74,-32],[-74,-28],[-73,-24],
+   [-72,-20],[-73,-16],[-74,-12],[-76,-8],[-78,-4],[-80,0],
+   [-80,4],[-80,8]],
+  // Europe (~72 pts)
+  [[-10,36],[-8,36],[-6,36],[-4,37],[-2,36],[0,36],[2,37],[3,38],
+   [2,39],[0,40],[-1,42],[-2,44],[-4,46],[-5,48],[-4,49],[-2,50],
+   [-1,51],[1,51],[2,52],[3,53],[4,54],[6,54],[8,55],[10,56],
+   [11,57],[13,58],[14,59],[16,60],[18,60],[20,61],[22,62],[24,64],
+   [26,66],[28,68],[30,70],[32,70],[30,68],[28,66],[26,64],[25,62],
+   [26,60],[28,58],[30,56],[30,54],[30,52],[30,50],[30,48],[30,46],
+   [29,44],[28,42],[27,40],[26,38],[24,37],[22,36],[20,36],[18,36],
+   [16,37],[15,38],[14,39],[14,40],[13,42],[12,44],[11,44],
+   [10,43],[8,43],[7,42],[6,41],[5,40],[4,40],[3,40],[2,39],
+   [0,39],[-2,38],[-4,37],[-6,37],[-8,37]],
+  // Africa (~68 pts)
+  [[-17,15],[-16,18],[-15,22],[-14,26],[-13,28],[-12,30],[-10,32],
+   [-8,34],[-6,35],[-4,36],[-2,36],[0,36],[2,37],[4,37],[6,37],
+   [8,37],[10,37],[12,36],[14,35],[16,34],[18,34],[20,33],[22,32],
+   [25,32],[28,31],[30,31],[32,30],[33,28],[34,26],[35,24],[36,22],
+   [36,18],[38,16],[40,14],[42,12],[44,10],[46,8],[48,5],[50,2],
+   [48,0],[46,-1],[44,-2],[42,-3],[40,-4],[40,-6],[38,-8],[37,-10],
+   [36,-14],[35,-16],[34,-18],[32,-22],[30,-26],[29,-28],[28,-30],
+   [28,-34],[26,-34],[24,-34],[22,-34],[20,-34],[18,-35],
+   [16,-30],[14,-26],[12,-22],[12,-18],[12,-14],[10,-10],[10,-5],
+   [9,0],[8,4],[6,5],[4,6],[2,6],[0,6],[-2,5],[-4,5],
+   [-6,5],[-8,5],[-10,6],[-12,8],[-14,10],[-16,12]],
+  // Asia (~85 pts)
+  [[30,42],[31,44],[32,46],[34,48],[36,50],[38,52],[40,54],
+   [42,55],[44,56],[46,56],[48,56],[50,56],[52,58],[55,58],
+   [58,60],[60,60],[62,62],[65,63],[68,64],[70,66],[72,68],
+   [75,70],[78,72],[82,72],[86,72],[90,72],[94,72],[98,72],
+   [102,72],[106,70],[110,70],[114,68],[118,66],[122,65],
+   [126,62],[130,60],[134,58],[138,55],[140,52],[142,50],
+   [144,48],[146,44],[145,42],[143,40],[142,38],[140,36],
+   [138,34],[136,32],[134,30],[132,28],[130,26],[128,24],
+   [126,22],[124,20],[122,20],[120,18],[118,16],[116,14],
+   [114,12],[112,12],[110,14],[108,12],[106,10],[104,12],
+   [102,14],[100,14],[98,12],[96,10],[94,8],[92,8],
+   [90,10],[88,12],[86,14],[84,14],[82,12],[80,10],
+   [78,8],[76,8],[74,8],[72,8],[70,12],[68,16],
+   [68,20],[66,22],[64,24],[62,26],[60,26],
+   [58,28],[56,28],[54,30],[52,30],[50,32],
+   [48,34],[46,36],[44,38],[42,38],[40,40],[36,40],[34,40]],
+  // Australia (~36 pts)
+  [[130,-12],[132,-12],[134,-12],[136,-12],[138,-12],[140,-12],
+   [142,-14],[144,-16],[146,-18],[148,-20],[150,-22],[152,-24],
+   [153,-26],[153,-28],[152,-30],[151,-32],[150,-34],[149,-36],
+   [148,-38],[146,-38],[144,-37],[142,-36],[140,-36],[138,-36],
+   [136,-35],[134,-34],[132,-34],[130,-34],[128,-34],[126,-34],
+   [122,-34],[118,-33],[116,-32],[114,-28],[114,-24],[114,-22],
+   [116,-18],[118,-16],[120,-14],[122,-13],[124,-12],[128,-12]],
+  // Greenland (~27 pts)
+  [[-55,62],[-52,61],[-48,60],[-44,60],[-40,61],[-36,62],
+   [-32,64],[-28,66],[-24,68],[-22,70],[-20,72],[-18,74],
+   [-18,76],[-18,78],[-20,80],[-24,81],[-28,82],[-32,82],
+   [-36,81],[-40,80],[-44,80],[-48,79],[-52,78],[-54,76],
+   [-56,74],[-58,72],[-58,70],[-58,68],[-56,64]],
+];
+
 // ---------------------------------------------------------------------------
 // Scene
 // ---------------------------------------------------------------------------
@@ -362,14 +448,14 @@ export default class PlayScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.setupContainer.add(this.setupTitle);
 
-    // --- Level selector (7 levels across 4 planets) ---
+    // --- Level selector (9 levels across 4 planets) ---
     this.setupContainer.add(
       this.add.text(-300, -160, 'Level:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5)
     );
     this.levelButtons = {};
-    for (let lv = 1; lv <= 7; lv++) {
+    for (let lv = 1; lv <= 9; lv++) {
       this.levelButtons[lv] = this.addSetupButton(
-        -200 + (lv - 1) * 60, -160, `${lv}`,
+        -200 + (lv - 1) * 52, -160, `${lv}`,
         () => this.game.net.send('select_level', { level: lv })
       );
     }
@@ -572,15 +658,63 @@ export default class PlayScene extends Phaser.Scene {
     // Earth in the distance (upper-left)
     const ex = cam.width * 0.18;
     const ey = cam.height * 0.15;
+    const er = 66;
+
+    // Random rotation & phase (regenerate each level)
+    if (this._earthLevel !== this.state.level) {
+      this._earthLevel = this.state.level;
+      this._earthRot = Math.random() * Math.PI * 2;
+      this._earthPhase = Math.random() * Math.PI * 2;
+    }
+    const rot0 = this._earthRot;
+    const deg = Math.PI / 180;
+
+    // Ocean
     g.fillStyle(0x2244aa, 1);
-    g.fillCircle(ex, ey, 22);
-    g.fillStyle(0x44aa55, 0.6);
-    // Land blobs
-    g.fillCircle(ex - 5, ey - 4, 8);
-    g.fillCircle(ex + 7, ey + 5, 6);
+    g.fillCircle(ex, ey, er);
+
+    // Continents — orthographic projection with random rotation
+    g.fillStyle(0x44aa55, 0.7);
+    for (const cont of EARTH_CONTINENTS) {
+      const pts = [];
+      let visible = false;
+      for (const [lon, lat] of cont) {
+        const phi = lat * deg;
+        const lam = lon * deg;
+        const cosPhi = Math.cos(phi);
+        const x = cosPhi * Math.sin(lam - rot0);
+        const y = -Math.sin(phi);
+        const z = cosPhi * Math.cos(lam - rot0);
+        if (z > 0) visible = true;
+        if (z < -0.2) continue; // well behind sphere
+        let px = x, py = y;
+        if (z <= 0) {
+          // Push to limb edge
+          const len = Math.sqrt(x * x + y * y);
+          if (len < 0.01) continue;
+          px = x / len * 0.99;
+          py = y / len * 0.99;
+        }
+        pts.push({ x: ex + px * er, y: ey + py * er });
+      }
+      if (!visible || pts.length < 3) continue;
+      g.beginPath();
+      g.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+      g.closePath();
+      g.fillPath();
+    }
+
+    // Phase — dark overlay on one hemisphere (not too dark)
+    g.fillStyle(0x0a0a1a, 0.3);
+    g.beginPath();
+    g.arc(ex, ey, er + 0.5, this._earthPhase - Math.PI / 2, this._earthPhase + Math.PI / 2);
+    g.closePath();
+    g.fillPath();
+
     // Atmosphere glow
     g.lineStyle(2, 0x88ccff, 0.4);
-    g.strokeCircle(ex, ey, 25);
+    g.strokeCircle(ex, ey, er + 3);
   }
 
   drawSkyEnceladus(g, cam) {
@@ -599,17 +733,31 @@ export default class PlayScene extends Phaser.Scene {
     // Saturn (large, with rings) — upper-right
     const sx = cam.width * 0.78;
     const sy = cam.height * 0.14;
-    const sr = 35;
+    const sr = 53;
     // Planet body (tan/gold)
     g.fillStyle(0xd4aa55, 1);
     g.fillCircle(sx, sy, sr);
     g.fillStyle(0xc89940, 0.7);
-    g.fillCircle(sx - 5, sy + 2, sr * 0.9);
+    g.fillCircle(sx - 8, sy + 3, sr * 0.9);
     // Rings
     g.lineStyle(3, 0xeedd99, 0.5);
     g.strokeEllipse(sx, sy, sr * 3.2, sr * 0.6);
     g.lineStyle(2, 0xccbb77, 0.35);
     g.strokeEllipse(sx, sy, sr * 3.8, sr * 0.72);
+    // Polar hexagonal storm (north pole — top of sphere)
+    g.fillStyle(0xb8883a, 0.7);
+    g.beginPath();
+    const hexR = sr * 0.25;
+    const hexY = sy - sr * 0.82;
+    for (let i = 0; i < 6; i++) {
+      const a = (Math.PI * 2 * i) / 6 - Math.PI / 2;
+      const hx = sx + Math.cos(a) * hexR;
+      const hy = hexY + Math.sin(a) * hexR * 0.5; // flatten for perspective
+      if (i === 0) g.moveTo(hx, hy);
+      else g.lineTo(hx, hy);
+    }
+    g.closePath();
+    g.fillPath();
 
     // Geysers in background (icy plumes from bottom)
     this.drawGeysers(g, cam);
@@ -783,14 +931,6 @@ export default class PlayScene extends Phaser.Scene {
       g.beginPath();
       g.arc(tx, ty, r, mouthEnd, mouthStart, false);
       g.strokePath();
-
-      // Mouth interior — darker cavity
-      g.fillStyle(0x1a1a30, 1);
-      g.beginPath();
-      g.moveTo(tx, ty);
-      g.arc(tx, ty, r * 0.85, mouthStart, mouthEnd, false); // short arc = mouth
-      g.closePath();
-      g.fillPath();
 
       // Mouth lip edges (two lines from center to rim)
       g.lineStyle(2, 0x3a4a60, 0.6);
@@ -1077,7 +1217,7 @@ export default class PlayScene extends Phaser.Scene {
 
     g.fillStyle(0xffffff, 0.35);
     const dt = 0.05;
-    for (let step = 0; step < 60; step++) {
+    for (let step = 0; step < 150; step++) {
       if (airRes > 0) {
         vx *= (1 - airRes * dt);
         vy *= (1 - airRes * dt);

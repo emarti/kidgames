@@ -13,7 +13,7 @@ Players choose from 7 story characters:
 - **Starway** — a blue electric eel with yellow lightning sparks
 - **Brillan** — a red robot boy with a square head, cyan eyes, and antenna
 
-**Targets:** Alien fish — blue-gray (`0x2a3a50`) pac-man-shaped fish oriented vertically, head pointing down, tail fin up, dorsal fin to one side. The bottom quarter of the body is a wide-open circular arc mouth "eating" the ground. Friendly single eye, no teeth or red parts. When hit, a rainbow explosion of 20 radial streaks bursts outward.
+**Targets:** Alien fish — blue-gray (`0x2a3a50`) pac-man-shaped fish oriented vertically, head pointing down, tail fin up, dorsal fin to one side. The bottom quarter of the body is a wide-open mouth gap (pac-man cutout, no dark fill). Fish are sunk 25% into the ground (center at `gy - TARGET_RADIUS * 0.5`). Friendly single eye, no teeth or red parts. When hit, a rainbow explosion of 20 radial streaks bursts outward.
 
 **Projectiles:** Rubber ducks — yellow with orange beak, tumble/rotate as they fly. Air resistance varies by planet.
 
@@ -46,7 +46,7 @@ Lobby / room messages (common):
 Setup/control:
 - `pause`, `resume`
 - `restart`
-- `select_level { level: number }` (1–7)
+- `select_level { level: number }` (1–9)
 - `next_level`
 - `select_avatar { avatar: string }` — one of: `hunter`, `mrwhatwhat`, `chaihou`, `taolabi`, `chichi`, `starway`, `brillan`
 - `set_guides { show: boolean }` — toggle trajectory preview dots (global for all players)
@@ -65,8 +65,8 @@ See `docs/STATE.md` for shared conventions.
 
 Fling state fields:
 - `w`, `h`: pixel dimensions (800×600)
-- `level`: current level (1–7)
-- `maxLevel`: 7
+- `level`: current level (1–9)
+- `maxLevel`: 9
 - `levelComplete`: boolean
 - `showGuides`: boolean — trajectory preview dots visible for all players (toggled via `set_guides`)
 - `planet`: `"earth"` | `"mars"` | `"moon"` | `"enceladus"` — current planet ID
@@ -89,8 +89,8 @@ Fling state fields:
 |-----------|-----------------|----------------|----------------|--------|
 | Earth     | 400             | 0.15           | 7.5            | 1–3    |
 | Mars      | 200             | 0.03           | 5.0            | 4–5    |
-| Moon      | 100             | 0.0            | 3.5            | 6      |
-| Enceladus | 50              | 0.0            | 2.5            | 7      |
+| Moon      | 100             | 0.0            | 3.5            | 6–7    |
+| Enceladus | 50              | 0.0            | 2.5            | 8–9    |
 
 Planet physics are stored in `PLANETS` config in `fling_sim.js` and broadcast as state fields (`state.gravity`, `state.airResistance`, `state.powerToVelocity`).
 
@@ -102,20 +102,22 @@ Planet physics are stored in `PLANETS` config in `fling_sim.js` and broadcast as
 - Terrain generation varies by planet:
   - **Earth**: 3 layered sine waves with random phases (rolling green hills)
   - **Mars**: Sine waves + `abs(sin)` for mesa/plateau features (red rocky terrain)
-  - **Moon**: Undulation + stamped parabolic craters with raised rims; bumpiness scales with difficulty via `bumpScale`
+  - **Moon**: 4 layered sine waves (including high-frequency surface roughness) + stamped parabolic craters with raised rims; bumpiness scales with difficulty via `bumpScale`
   - **Enceladus**: Large sine cliffs + sawtooth ridges + fine ice texture + extra jagged detail; bumpiness scales with difficulty via `bumpScale`
 
 ## Level design
 
-7 levels across 4 planets:
+9 levels across 4 planets:
 
 - **Level 1** (Earth): gentle hills, 1 target
 - **Level 2** (Earth): moderate hills, 2 targets
 - **Level 3** (Earth): steeper hills, 3 targets
 - **Level 4** (Mars): rocky plateaus, 3 targets
 - **Level 5** (Mars): varied terrain, 4 targets
-- **Level 6** (Moon): craters, 4 targets
-- **Level 7** (Enceladus): icy cliffs with geysers, 5 targets
+- **Level 6** (Moon): craters, 3 targets
+- **Level 7** (Moon): more craters, 4 targets
+- **Level 8** (Enceladus): icy cliffs with geysers, 4 targets
+- **Level 9** (Enceladus): extreme icy cliffs, 5 targets
 
 Players are placed on the left ~25% of the terrain.
 Targets are placed across the right ~35%.
@@ -137,8 +139,8 @@ PlayScene renders sky, terrain, and details based on `state.planet`:
 **Sky:**
 - Earth: blue gradient, yellow sun, white clouds
 - Mars: orange-red dusty gradient, small distant sun, dust particles
-- Moon: black starfield, Earth in distance (upper-left), stars
-- Enceladus: dark blue-black starfield, Saturn with rings (upper-right), geyser plumes
+- Moon: black starfield, Earth in distance (upper-left, radius 66) with orthographic-projected continent polygons (`EARTH_CONTINENTS` — 7 continents defined as [lon°, lat°] outlines), random rotation per level, half-sphere phase overlay (alpha 0.3), atmosphere glow; stars
+- Enceladus: dark blue-black starfield, Saturn with rings (upper-right, radius 53) and hexagonal polar storm, geyser plumes
 
 **Terrain colors:**
 - Earth: green surface, dark green depth, grass tufts
@@ -179,7 +181,7 @@ PlayScene renders sky, terrain, and details based on `state.planet`:
 
 - Uses the `setupContainer` pattern from maze/snake
 - Two modes:
-  - **Lobby** (`state.paused && state.reasonPaused === 'start'`): shows "GAME SETUP" title, level selector (1–7), avatar selector, Show guides toggle, Start button
+  - **Lobby** (`state.paused && state.reasonPaused === 'start'`): shows "GAME SETUP" title, level selector (1–9), avatar selector, Show guides toggle, Start button
   - **Pause** (`me.paused`): shows "PAUSED" title, avatar/level selectors, guides toggle, Continue button
 - Pause button is large, positioned top-left below the HUD text
 - Fire button is positioned dynamically below the player's character

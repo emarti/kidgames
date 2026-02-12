@@ -67,8 +67,10 @@ const LEVELS = [
   /* 3 */ { planet: 'earth',     targets: 3, difficulty: 3 },
   /* 4 */ { planet: 'mars',      targets: 3, difficulty: 2 },
   /* 5 */ { planet: 'mars',      targets: 4, difficulty: 3 },
-  /* 6 */ { planet: 'moon',      targets: 4, difficulty: 3 },
-  /* 7 */ { planet: 'enceladus', targets: 5, difficulty: 4 },
+  /* 6 */ { planet: 'moon',      targets: 3, difficulty: 2 },
+  /* 7 */ { planet: 'moon',      targets: 4, difficulty: 3 },
+  /* 8 */ { planet: 'enceladus', targets: 4, difficulty: 3 },
+  /* 9 */ { planet: 'enceladus', targets: 5, difficulty: 4 },
 ];
 
 function getLevelDef(level) {
@@ -153,16 +155,19 @@ function generateTerrain(level) {
     const bumpScale = 0.6 + diff * 0.35; // diff 3 → 1.65
     const p1 = randRange(0, Math.PI * 2);
     const p2 = randRange(0, Math.PI * 2);
+    const p3 = randRange(0, Math.PI * 2);
+    const p4 = randRange(0, Math.PI * 2);
     for (let i = 0; i < n; i++) {
       const t = (i * TERRAIN_STEP) / WORLD_W;
       let h = baseH;
-      h += Math.sin(t * Math.PI * 1.5 + p1) * 20 * bumpScale;
-      h += Math.sin(t * Math.PI * 3.2 + p2) * 12 * bumpScale;
-      h += Math.sin(t * Math.PI * 6.5) * 8 * bumpScale;
+      h += Math.sin(t * Math.PI * 1.5 + p1) * 28 * bumpScale;
+      h += Math.sin(t * Math.PI * 3.2 + p2) * 18 * bumpScale;
+      h += Math.sin(t * Math.PI * 6.5 + p3) * 12 * bumpScale;
+      h += Math.sin(t * Math.PI * 13 + p4) * 5 * bumpScale;
       heights[i] = h;
     }
     // Stamp craters (more craters with higher difficulty)
-    const craterCount = 2 + diff + Math.floor(Math.random() * 3);
+    const craterCount = 3 + diff + Math.floor(Math.random() * 3);
     for (let c = 0; c < craterCount; c++) {
       const cx = Math.floor(randRange(n * 0.15, n * 0.85));
       const craterW = Math.floor(randRange(5, 10 + diff * 2));
@@ -256,7 +261,7 @@ function placeTargets(state) {
     state.targets.push({
       id: `t${i}`,
       x: wx,
-      y: gy - TARGET_RADIUS,
+      y: gy - TARGET_RADIUS * 0.5,
       hit: false,
     });
   }

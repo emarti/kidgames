@@ -116,7 +116,7 @@ Intent:
 Collaboration hooks:
 - All players fire at the same shared targets from the left side.
 - Shared progress: targets hit by any player count for everyone.
-- Level progression is shared (5 levels, increasing targets and terrain complexity).
+- Level progression is shared (9 levels across 4 planets, increasing targets and terrain complexity).
 
 Theme notes:
 - The projectile type (`rubber_duck`) and target type (`alien_ship`) are designed to be easily swapped.
