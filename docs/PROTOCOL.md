@@ -165,14 +165,14 @@ Wallmover puzzle add-ons:
 
 ## Fling-specific messages
 
-Fling is a cooperative projectile game: players fling rubber ducks at alien fish across planetary landscapes (Earth, Mars, Moon, Enceladus).
+Fling is a cooperative projectile game: players fling rubber ducks at alien fish across planetary landscapes (Earth, Cave, Mars, Moon, Enceladus, Io, Comet).
 
 Client → server:
 - `pause` / `resume`
 - `restart`
-- `select_level` `{ level: number }` (1–7)
+- `select_level` `{ level: number }` (1–16)
 - `next_level`
-- `select_avatar` `{ avatar: string }` — one of: `hunter`, `mrwhatwhat`, `chaihou`, `taolabi`, `chichi`, `starway`, `brillan`
+- `select_avatar` `{ avatar: string }` — one of: `hunter`, `mrwhatwhat`, `chaihou`, `taolabi`, `chichi`, `starway`, `brillan`, `daddy`, `mama`, `gugu`
 - `set_guides` `{ show: boolean }` — toggle trajectory preview dots (global for all players)
 - `input` with one of:
   - `{ action: "aim", angle: number, power: number }` — angle in degrees (5–85), power 5–100

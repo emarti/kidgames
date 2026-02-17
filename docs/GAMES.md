@@ -109,18 +109,18 @@ Folder:
 
 Intent:
 - A cooperative projectile game inspired by QBasic Gorilla.
-- Players choose from 7 story characters (Hunter, Mr. What What, Chaihou, Taolabi, Chichi Gonju, Starway, Brillan) and fling rubber ducks at alien ships eating the Earth.
+- Players choose from 10 story characters (Hunter, Mr. What What, Chaihou, Taolabi, Chichi Gonju, Starway, Brillan, Daddy, Mama, Gugu) and fling rubber ducks at alien ships eating the Earth.
 - Point-and-click aiming with persistent angle/power between shots.
 - Outdoor hills landscape with tumbling projectiles and air resistance.
 
 Collaboration hooks:
 - All players fire at the same shared targets from the left side.
 - Shared progress: targets hit by any player count for everyone.
-- Level progression is shared (9 levels across 4 planets, increasing targets and terrain complexity).
+- Level progression is shared (16 levels across 7 worlds, increasing targets and terrain complexity).
 
 Theme notes:
 - The projectile type (`rubber_duck`) and target type (`alien_ship`) are designed to be easily swapped.
-- 7 selectable character avatars with distinct visual designs and associated colors.
+- 10 selectable character avatars with distinct visual designs and associated colors.
 
 Canonical per-game overview: `fling_LLM.md`.
 

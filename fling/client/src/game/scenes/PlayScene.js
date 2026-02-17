@@ -7,10 +7,12 @@ const PROJECTILE_RADIUS = 10;
 // Planet display names
 const PLANET_LABELS = {
   earth: 'Earth',
+  cave: 'Cave',
   mars: 'Mars',
   moon: 'Moon',
   enceladus: 'Enceladus',
   io: 'Io',
+  comet: 'Comet',
 };
 
 function hexToInt(hex) {
@@ -36,6 +38,8 @@ const AVATAR_LABELS = {
   starway: 'Starway',
   brillan: 'Brillan',
   daddy: 'Daddy',
+  mama: 'Mama',
+  gugu: 'Gugu',
 };
 
 // Continent outlines [longitude°, latitude°] for Earth rendering — traced clockwise
@@ -349,6 +353,15 @@ export default class PlayScene extends Phaser.Scene {
     return WORLD_H - h;
   }
 
+  terrainCeilingY(terrain, worldX) {
+    if (!terrain?.ceilingHeights) return null;
+    const idx = worldX / terrain.step;
+    const i0 = Math.max(0, Math.min(Math.floor(idx), terrain.ceilingHeights.length - 1));
+    const i1 = Math.min(i0 + 1, terrain.ceilingHeights.length - 1);
+    const frac = idx - Math.floor(idx);
+    return terrain.ceilingHeights[i0] * (1 - frac) + terrain.ceilingHeights[i1] * frac;
+  }
+
   // -----------------------------------------------------------------------
   // Update (called every frame)
   // -----------------------------------------------------------------------
@@ -457,11 +470,12 @@ export default class PlayScene extends Phaser.Scene {
     const avatarKeys = Object.keys(AVATAR_LABELS);
     this.avatarSetupButtons = {};
     const cols = 4;
+    const avatarStartY = -118; // Move list up ~1 line (18px)
     avatarKeys.forEach((av, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
-      const bx = -200 + col * 130;
-      const by = -100 + row * 44;
+      const bx = -165 + col * 130;
+      const by = avatarStartY + row * 44;
       this.avatarSetupButtons[av] = this.addSetupButton(
         bx, by, AVATAR_LABELS[av],
         () => this.game.net.send('select_avatar', { avatar: av })
@@ -588,6 +602,8 @@ export default class PlayScene extends Phaser.Scene {
 
     if (planet === 'earth') {
       this.drawSkyEarth(g, cam);
+    } else if (planet === 'cave') {
+      this.drawSkyCave(g, cam);
     } else if (planet === 'mars') {
       this.drawSkyMars(g, cam);
     } else if (planet === 'moon') {
@@ -596,7 +612,29 @@ export default class PlayScene extends Phaser.Scene {
       this.drawSkyEnceladus(g, cam);
     } else if (planet === 'io') {
       this.drawSkyIo(g, cam);
+    } else if (planet === 'comet') {
+      this.drawSkyComet(g, cam);
     }
+  }
+
+  drawSkyCave(g, cam) {
+    // Dark cave interior with subtle warm lantern glow.
+    g.fillStyle(0x101010, 1);
+    g.fillRect(0, 0, cam.width, cam.height);
+    g.fillStyle(0x1a1a1a, 1);
+    g.fillRect(0, 0, cam.width, cam.height * 0.6);
+    // Faint cave dust sparkle
+    for (let i = 0; i < 45; i++) {
+      const sx = ((i * 149 + 37) % cam.width);
+      const sy = ((i * 79 + 19) % cam.height);
+      g.fillStyle(0xffd180, 0.05 + (i % 5) * 0.02);
+      g.fillCircle(sx, sy, 0.8 + (i % 2));
+    }
+    // Two warm glows in deep background
+    g.fillStyle(0xffb74d, 0.08);
+    g.fillCircle(cam.width * 0.2, cam.height * 0.35, 80);
+    g.fillStyle(0xff8f00, 0.06);
+    g.fillCircle(cam.width * 0.82, cam.height * 0.28, 65);
   }
 
   drawSkyEarth(g, cam) {
@@ -870,6 +908,55 @@ export default class PlayScene extends Phaser.Scene {
     }
   }
 
+  drawSkyComet(g, cam) {
+    // Deep-space black-blue sky
+    g.fillStyle(0x03050f, 1);
+    g.fillRect(0, 0, cam.width, cam.height);
+
+    // Dense stars
+    for (let i = 0; i < 120; i++) {
+      let h = i * 2246822519 >>> 0;
+      const sx = (h % (cam.width | 0));
+      h = (h * 3266489917 + 11) >>> 0;
+      const sy = (h % ((cam.height * 0.75) | 0));
+      const bright = ((h >>> 8) % 100) / 100;
+      const radius = bright > 0.8 ? 1.8 : bright > 0.45 ? 1.1 : 0.7;
+      g.fillStyle(0xdde7ff, 0.2 + bright * 0.7);
+      g.fillCircle(sx, sy, radius);
+    }
+
+    // Distant sun glow
+    g.fillStyle(0xfff2c0, 0.12);
+    g.fillCircle(cam.width * 0.94, cam.height * 0.1, 42);
+
+    // Faint coma/tail haze across sky
+    g.lineStyle(22, 0x88aaff, 0.07);
+    g.beginPath();
+    g.moveTo(cam.width * 0.01, cam.height * 0.17);
+    g.lineTo(cam.width * 0.28, cam.height * 0.2);
+    g.lineTo(cam.width * 0.63, cam.height * 0.23);
+    g.lineTo(cam.width * 0.98, cam.height * 0.27);
+    g.strokePath();
+    g.lineStyle(10, 0xdde8ff, 0.06);
+    g.beginPath();
+    g.moveTo(cam.width * 0.05, cam.height * 0.14);
+    g.lineTo(cam.width * 0.4, cam.height * 0.18);
+    g.lineTo(cam.width * 0.92, cam.height * 0.24);
+    g.strokePath();
+
+    // Small distant 67P-like bilobed body in sky
+    const bx = cam.width * 0.17;
+    const by = cam.height * 0.14;
+    g.fillStyle(0x5e625d, 0.9);
+    g.fillEllipse(bx - 12, by, 34, 26);
+    g.fillEllipse(bx + 10, by + 2, 26, 21);
+    g.fillStyle(0x474b47, 0.9);
+    g.fillEllipse(bx - 1, by + 1, 10, 8);
+    g.lineStyle(1, 0x9aa19a, 0.25);
+    g.strokeEllipse(bx - 12, by, 34, 26);
+    g.strokeEllipse(bx + 10, by + 2, 26, 21);
+  }
+
   drawCloud(g, cx, cy, scale) {
     const s = scale * 20;
     g.fillCircle(cx, cy, s * 1.5);
@@ -890,10 +977,12 @@ export default class PlayScene extends Phaser.Scene {
     // Color palettes per planet
     const palettes = {
       earth:     { fill: 0x4caf50, depth: 0x388e3c, detail: 0x2e7d32 },
+      cave:      { fill: 0x5d5348, depth: 0x3f3830, detail: 0x7a6a56 },
       mars:      { fill: 0xb84c28, depth: 0x8b3a1f, detail: 0x993322 },
       moon:      { fill: 0x888888, depth: 0x666666, detail: 0x777777 },
       enceladus: { fill: 0xc8ddf0, depth: 0x99b8d8, detail: 0xaaccee },
       io:        { fill: 0xd4b840, depth: 0xb89830, detail: 0xe0a020 },
+      comet:     { fill: 0x6f746f, depth: 0x4f544f, detail: 0x9aa29a },
     };
     const pal = palettes[planet] || palettes.earth;
 
@@ -922,6 +1011,37 @@ export default class PlayScene extends Phaser.Scene {
     g.lineTo(cam.width, cam.height);
     g.closePath();
     g.fillPath();
+
+    // Cave ceiling and stalactites
+    if (planet === 'cave' && terrain.ceilingHeights) {
+      g.fillStyle(0x4b433a, 1);
+      g.beginPath();
+      g.moveTo(0, 0);
+      for (let i = 0; i < terrain.ceilingHeights.length; i++) {
+        const sx = (i * terrain.step) * scaleX;
+        const sy = terrain.ceilingHeights[i] * scaleY;
+        g.lineTo(sx, sy);
+      }
+      g.lineTo(cam.width, 0);
+      g.closePath();
+      g.fillPath();
+
+      g.lineStyle(1, 0x857361, 0.35);
+      for (let i = 2; i < terrain.ceilingHeights.length - 2; i += 4) {
+        const hPrev = terrain.ceilingHeights[i - 1];
+        const hCur = terrain.ceilingHeights[i];
+        const hNext = terrain.ceilingHeights[i + 1];
+        if (hCur > hPrev + 4 && hCur > hNext + 4) {
+          const sx = (i * terrain.step) * scaleX;
+          const sy = hCur * scaleY;
+          g.beginPath();
+          g.moveTo(sx - 3 * scaleX, sy - 1 * scaleY);
+          g.lineTo(sx, sy + 10 * scaleY);
+          g.lineTo(sx + 3 * scaleX, sy - 1 * scaleY);
+          g.strokePath();
+        }
+      }
+    }
 
     // Surface details per planet
     if (planet === 'earth') {
@@ -995,6 +1115,51 @@ export default class PlayScene extends Phaser.Scene {
         g.beginPath();
         g.moveTo(sx, sy);
         g.lineTo(sx + 6 * scaleX, sy + 3 * scaleY);
+        g.strokePath();
+      }
+    } else if (planet === 'comet') {
+      // Stratified scarps + pits + rubble (67P-inspired textures).
+      for (let i = 2; i < terrain.heights.length - 2; i++) {
+        const hL = terrain.heights[i - 1];
+        const hC = terrain.heights[i];
+        const hR = terrain.heights[i + 1];
+        const sx = (i * terrain.step) * scaleX;
+        const sy = (WORLD_H - hC) * scaleY;
+        const slope = hR - hL;
+
+        if (i % 3 === 0) {
+          g.fillStyle(0x3a3f3a, 0.32);
+          g.fillCircle(sx, sy + 3 * scaleY, 2.2);
+          g.fillStyle(0xbcc7bc, 0.18);
+          g.fillCircle(sx + 2.5 * scaleX, sy + 1.3 * scaleY, 1.4);
+        }
+
+        // Local pit shadows
+        if (hC < hL - 5 && hC < hR - 5 && i % 2 === 0) {
+          g.fillStyle(0x1b1d1b, 0.25);
+          g.fillEllipse(sx, sy + 2.2 * scaleY, 7 * scaleX, 3 * scaleY);
+          g.lineStyle(1, 0x9ea79e, 0.15);
+          g.strokeEllipse(sx, sy + 2.2 * scaleY, 7 * scaleX, 3 * scaleY);
+        }
+
+        // Scarp bands: light on one side, dark on the other.
+        if (Math.abs(slope) > 8 && i % 2 === 0) {
+          g.lineStyle(1.4, slope > 0 ? 0x2f332f : 0xc1c9c1, 0.2);
+          g.beginPath();
+          g.moveTo(sx - 2 * scaleX, sy + 1 * scaleY);
+          g.lineTo(sx + 3 * scaleX, sy - 1.5 * scaleY);
+          g.strokePath();
+        }
+      }
+
+      // Broad terrace contour hints.
+      g.lineStyle(1.2, 0xcfd8cf, 0.12);
+      for (let i = 1; i < terrain.heights.length; i += 5) {
+        const sx = (i * terrain.step) * scaleX;
+        const sy = (WORLD_H - terrain.heights[i]) * scaleY;
+        g.beginPath();
+        g.moveTo(sx - 4 * scaleX, sy + 2 * scaleY);
+        g.lineTo(sx + 5 * scaleX, sy + 0.5 * scaleY);
         g.strokePath();
       }
     }
@@ -1313,6 +1478,24 @@ export default class PlayScene extends Phaser.Scene {
   // -----------------------------------------------------------------------
   // Trajectory preview (accounts for air resistance)
   // -----------------------------------------------------------------------
+  getGuidePreviewProfile(level) {
+    if (level <= 3) {
+      // Full path on early levels
+      return { ratio: 1.0, capDots: Infinity };
+    }
+    if (level === 4) {
+      return { ratio: 0.75, capDots: Infinity };
+    }
+    if (level === 5) {
+      return { ratio: 0.5, capDots: Infinity };
+    }
+    if (level === 6) {
+      return { ratio: 0.25, capDots: Infinity };
+    }
+    // Late game and any future higher levels: very short hint
+    return { ratio: 1.0, capDots: 3 };
+  }
+
   drawTrajectoryPreview(g, cam, scaleX, scaleY, player, aimAngle, aimPower) {
     const angleRad = (aimAngle * Math.PI) / 180;
     const ptv = this.state.powerToVelocity || 7.5;
@@ -1320,15 +1503,19 @@ export default class PlayScene extends Phaser.Scene {
     const gravity = this.state.gravity || 400;
     const airRes = this.state.airResistance || 0;
     const terrain = this.state.terrain;
+    const guide = this.getGuidePreviewProfile(this.state.level || 1);
 
     let x = player.x;
     let y = player.y - 14;
     let vx = Math.cos(angleRad) * speed;
     let vy = -Math.sin(angleRad) * speed;
+    const points = [];
 
     g.fillStyle(0xffffff, 0.35);
     const dt = 0.05;
-    for (let step = 0; step < 150; step++) {
+    const dotEvery = 3;
+    const maxSimSteps = 150;
+    for (let step = 0; step < maxSimSteps; step++) {
       if (airRes > 0) {
         vx *= (1 - airRes * dt);
         vy *= (1 - airRes * dt);
@@ -1340,12 +1527,26 @@ export default class PlayScene extends Phaser.Scene {
       if (x < -20 || x > WORLD_W + 20 || y > WORLD_H + 20 || y < -200) break;
 
       if (terrain && x >= 0 && x <= WORLD_W) {
-        if (y >= this.terrainGroundY(terrain, x)) break;
+        const gy = this.terrainGroundY(terrain, x);
+        const cy = this.terrainCeilingY(terrain, x);
+        if (y >= gy) break;
+        if (cy != null && y <= cy) break;
       }
 
-      if (step % 3 === 0) {
-        g.fillCircle(x * scaleX, y * scaleY, 2.5);
+      if (step % dotEvery === 0) {
+        points.push({ x, y });
       }
+    }
+
+    let dotsToDraw = points.length;
+    if (Number.isFinite(guide.ratio)) {
+      dotsToDraw = Math.ceil(points.length * guide.ratio);
+    }
+    dotsToDraw = Math.min(dotsToDraw, guide.capDots);
+    dotsToDraw = Math.max(0, dotsToDraw);
+
+    for (let i = 0; i < dotsToDraw; i++) {
+      g.fillCircle(points[i].x * scaleX, points[i].y * scaleY, 2.5);
     }
   }
 
@@ -1631,64 +1832,80 @@ const AVATAR_DRAW = {
 
   // Starway: electric eel
   starway(g, cx, gy, s) {
-    // Sinuous body (horizontal S-curve sitting on ground)
+    // Sinuous body (upright S-curve, rising from the ground)
     g.lineStyle(8 * s, 0x0077cc, 1);
     g.beginPath();
-    g.moveTo(cx - 12 * s, gy - 6 * s);
-    g.lineTo(cx - 6 * s, gy - 14 * s);
-    g.lineTo(cx, gy - 8 * s);
-    g.lineTo(cx + 6 * s, gy - 16 * s);
-    g.lineTo(cx + 10 * s, gy - 10 * s);
+    g.moveTo(cx - 5 * s, gy - 3 * s);
+    g.lineTo(cx - 8 * s, gy - 10 * s);
+    g.lineTo(cx - 3 * s, gy - 18 * s);
+    g.lineTo(cx + 4 * s, gy - 24 * s);
+    g.lineTo(cx + 2 * s, gy - 32 * s);
     g.strokePath();
+
     // Lighter belly stripe
     g.lineStyle(4 * s, 0x29b6f6, 0.7);
     g.beginPath();
-    g.moveTo(cx - 12 * s, gy - 6 * s);
-    g.lineTo(cx - 6 * s, gy - 14 * s);
-    g.lineTo(cx, gy - 8 * s);
-    g.lineTo(cx + 6 * s, gy - 16 * s);
-    g.lineTo(cx + 10 * s, gy - 10 * s);
+    g.moveTo(cx - 5 * s, gy - 3 * s);
+    g.lineTo(cx - 8 * s, gy - 10 * s);
+    g.lineTo(cx - 3 * s, gy - 18 * s);
+    g.lineTo(cx + 4 * s, gy - 24 * s);
+    g.lineTo(cx + 2 * s, gy - 32 * s);
     g.strokePath();
+
+    // Tail tip near the ground
+    g.fillStyle(0x0077cc, 1);
+    g.fillCircle(cx - 5 * s, gy - 3 * s, 2.4 * s);
+
     // Head
     g.fillStyle(0x0077cc, 1);
-    g.fillCircle(cx + 10 * s, gy - 10 * s, 4 * s);
-    // Eye
+    g.fillCircle(cx + 2 * s, gy - 35 * s, 4.6 * s);
+    // Eye (shifted upward so the eel looks up)
     g.fillStyle(0xffff00, 1);
-    g.fillCircle(cx + 11 * s, gy - 11 * s, 1.5 * s);
+    g.fillCircle(cx + 2.8 * s, gy - 37.1 * s, 1.5 * s);
     g.fillStyle(0x000000, 1);
-    g.fillCircle(cx + 11.5 * s, gy - 11 * s, 0.7 * s);
-    // Electric sparks (yellow zigzag lines)
+    g.fillCircle(cx + 2.9 * s, gy - 37.7 * s, 0.7 * s);
+
+    // Tiny mouth/nose point angled upward
+    g.fillStyle(0x29b6f6, 1);
+    g.fillTriangle(
+      cx + 1.4 * s, gy - 39.3 * s,
+      cx + 3.1 * s, gy - 41.4 * s,
+      cx + 4.2 * s, gy - 38.9 * s,
+    );
+
+    // Electric sparks (yellow zig-zags clustered above/around head)
     g.lineStyle(1.5, 0xffff00, 0.8);
     g.beginPath();
-    g.moveTo(cx - 8 * s, gy - 18 * s);
-    g.lineTo(cx - 5 * s, gy - 16 * s);
-    g.lineTo(cx - 7 * s, gy - 14 * s);
+    g.moveTo(cx - 2 * s, gy - 42 * s);
+    g.lineTo(cx + 1 * s, gy - 44 * s);
+    g.lineTo(cx - 1 * s, gy - 46 * s);
     g.strokePath();
     g.beginPath();
-    g.moveTo(cx + 3 * s, gy - 20 * s);
-    g.lineTo(cx + 6 * s, gy - 18 * s);
-    g.lineTo(cx + 4 * s, gy - 16 * s);
+    g.moveTo(cx + 5 * s, gy - 41 * s);
+    g.lineTo(cx + 8 * s, gy - 43 * s);
+    g.lineTo(cx + 6 * s, gy - 45 * s);
     g.strokePath();
     g.beginPath();
-    g.moveTo(cx + 8 * s, gy - 16 * s);
-    g.lineTo(cx + 11 * s, gy - 14 * s);
-    g.lineTo(cx + 9 * s, gy - 12 * s);
+    g.moveTo(cx - 7 * s, gy - 31 * s);
+    g.lineTo(cx - 4 * s, gy - 33 * s);
+    g.lineTo(cx - 6 * s, gy - 35 * s);
     g.strokePath();
   },
 
   // Daddy: balding guy with beer belly and cane
   daddy(g, cx, gy, s) {
+    const tall = 9.0 * s; // Tallest: Daddy > Mama > Gugu
     // Cane (left hand — drawn first so it's behind the body)
     g.lineStyle(2.5 * s, 0x8b6914, 1);
     g.beginPath();
-    g.moveTo(cx - 9 * s, gy - 16 * s);
+    g.moveTo(cx - 9 * s, gy - (16 * s + tall));
     g.lineTo(cx - 11 * s, gy);
     g.strokePath();
     // Cane handle (curved top)
     g.lineStyle(2.5 * s, 0x8b6914, 1);
     g.beginPath();
-    g.moveTo(cx - 9 * s, gy - 16 * s);
-    g.lineTo(cx - 6 * s, gy - 18 * s);
+    g.moveTo(cx - 9 * s, gy - (16 * s + tall));
+    g.lineTo(cx - 6 * s, gy - (18 * s + tall));
     g.strokePath();
     // Shoes (brown)
     g.fillStyle(0x5d4037, 1);
@@ -1696,66 +1913,180 @@ const AVATAR_DRAW = {
     g.fillEllipse(cx + 3 * s, gy - 1 * s, 5 * s, 3 * s);
     // Legs (khaki pants)
     g.fillStyle(0x8b7355, 1);
-    g.fillRect(cx - 5 * s, gy - 10 * s, 4 * s, 10 * s);
-    g.fillRect(cx + 1 * s, gy - 10 * s, 4 * s, 10 * s);
+    g.fillRect(cx - 5 * s, gy - (10 * s + tall), 4 * s, 10 * s + tall);
+    g.fillRect(cx + 1 * s, gy - (10 * s + tall), 4 * s, 10 * s + tall);
     // Body (button-up collar shirt — slightly wider for the belly)
     g.fillStyle(0x4682b4, 1);
-    g.fillRect(cx - 7 * s, gy - 22 * s, 14 * s, 12 * s);
+    g.fillRect(cx - 7 * s, gy - (22 * s + tall), 14 * s, 12 * s);
     // Beer belly (bulge at the bottom of the shirt)
     g.fillStyle(0x4682b4, 1);
-    g.fillEllipse(cx, gy - 13 * s, 16 * s, 8 * s);
+    g.fillEllipse(cx, gy - (13 * s + tall), 16 * s, 8 * s);
     // Long sleeves (same shirt color)
     g.fillStyle(0x4682b4, 1);
-    g.fillRect(cx - 10 * s, gy - 20 * s, 3 * s, 8 * s);
-    g.fillRect(cx + 7 * s, gy - 20 * s, 3 * s, 8 * s);
+    g.fillRect(cx - 10 * s, gy - (20 * s + tall), 3 * s, 8 * s);
+    g.fillRect(cx + 7 * s, gy - (20 * s + tall), 3 * s, 8 * s);
     // Hands (skin, at end of sleeves)
     g.fillStyle(0xffcc80, 1);
-    g.fillCircle(cx - 8.5 * s, gy - 12 * s, 2 * s);
-    g.fillCircle(cx + 8.5 * s, gy - 12 * s, 2 * s);
+    g.fillCircle(cx - 8.5 * s, gy - (12 * s + tall), 2 * s);
+    g.fillCircle(cx + 8.5 * s, gy - (12 * s + tall), 2 * s);
     // Button-down collar (folded V-shape)
     g.fillStyle(0x3a6d99, 1);
     g.fillTriangle(
-      cx - 4 * s, gy - 22 * s,
-      cx, gy - 19 * s,
-      cx + 4 * s, gy - 22 * s,
+      cx - 4 * s, gy - (22 * s + tall),
+      cx, gy - (19 * s + tall),
+      cx + 4 * s, gy - (22 * s + tall),
     );
     // Collar flaps
     g.fillStyle(0x5a9cc8, 1);
     g.fillTriangle(
-      cx - 5 * s, gy - 23 * s,
-      cx - 2 * s, gy - 22 * s,
-      cx - 4 * s, gy - 20 * s,
+      cx - 5 * s, gy - (23 * s + tall),
+      cx - 2 * s, gy - (22 * s + tall),
+      cx - 4 * s, gy - (20 * s + tall),
     );
     g.fillTriangle(
-      cx + 5 * s, gy - 23 * s,
-      cx + 2 * s, gy - 22 * s,
-      cx + 4 * s, gy - 20 * s,
+      cx + 5 * s, gy - (23 * s + tall),
+      cx + 2 * s, gy - (22 * s + tall),
+      cx + 4 * s, gy - (20 * s + tall),
     );
     // Shirt buttons
     g.fillStyle(0xffffff, 0.6);
-    g.fillCircle(cx, gy - 18 * s, 0.8 * s);
-    g.fillCircle(cx, gy - 15.5 * s, 0.8 * s);
+    g.fillCircle(cx, gy - (18 * s + tall), 0.8 * s);
+    g.fillCircle(cx, gy - (15.5 * s + tall), 0.8 * s);
     // Head (skin tone)
     g.fillStyle(0xffcc80, 1);
-    g.fillCircle(cx, gy - 26 * s, 5.5 * s);
+    g.fillCircle(cx, gy - (26 * s + tall), 5.7 * s);
     // Bald top (skin showing through — just the head circle suffices)
     // Hair on sides only (dark gray/brown)
     g.fillStyle(0x555555, 1);
-    g.fillEllipse(cx - 5 * s, gy - 25 * s, 3 * s, 4 * s);
-    g.fillEllipse(cx + 5 * s, gy - 25 * s, 3 * s, 4 * s);
+    g.fillEllipse(cx - 5 * s, gy - (25 * s + tall), 3 * s, 4 * s);
+    g.fillEllipse(cx + 5 * s, gy - (25 * s + tall), 3 * s, 4 * s);
     // Small tuft at back
-    g.fillEllipse(cx, gy - 22 * s, 6 * s, 2 * s);
+    g.fillEllipse(cx, gy - (22 * s + tall), 6 * s, 2 * s);
     // Eyes
     g.fillStyle(0x000000, 1);
-    g.fillCircle(cx - 2 * s, gy - 27 * s, 1 * s);
-    g.fillCircle(cx + 2 * s, gy - 27 * s, 1 * s);
+    g.fillCircle(cx - 2 * s, gy - (27 * s + tall), 1 * s);
+    g.fillCircle(cx + 2 * s, gy - (27 * s + tall), 1 * s);
     // Friendly smile
     g.lineStyle(1.5, 0x000000, 0.6);
     g.beginPath();
-    g.moveTo(cx - 2 * s, gy - 24 * s);
-    g.lineTo(cx - 1 * s, gy - 23 * s);
-    g.lineTo(cx + 1 * s, gy - 23 * s);
-    g.lineTo(cx + 2 * s, gy - 24 * s);
+    g.moveTo(cx - 2 * s, gy - (24 * s + tall));
+    g.lineTo(cx - 1 * s, gy - (23 * s + tall));
+    g.lineTo(cx + 1 * s, gy - (23 * s + tall));
+    g.lineTo(cx + 2 * s, gy - (24 * s + tall));
+    g.strokePath();
+  },
+
+  // Mama: qipao, shoulder-length hair
+  mama(g, cx, gy, s) {
+    // Shoes
+    g.fillStyle(0x3b3b3b, 1);
+    g.fillEllipse(cx - 3 * s, gy - 1 * s, 5 * s, 3 * s);
+    g.fillEllipse(cx + 3 * s, gy - 1 * s, 5 * s, 3 * s);
+
+    // Legs
+    g.fillStyle(0xffd2b0, 1);
+    g.fillRect(cx - 4 * s, gy - 9 * s, 3 * s, 9 * s);
+    g.fillRect(cx + 1 * s, gy - 9 * s, 3 * s, 9 * s);
+
+    // Qipao body (fitted dress)
+    g.fillStyle(0xd81b60, 1);
+    g.fillRect(cx - 5.5 * s, gy - 24.5 * s, 11 * s, 15.5 * s);
+    // Side slit accents
+    g.fillStyle(0xffd2b0, 0.85);
+    g.fillRect(cx - 5.5 * s, gy - 14 * s, 1.7 * s, 4 * s);
+    g.fillRect(cx + 3.8 * s, gy - 14 * s, 1.7 * s, 4 * s);
+    // Gold trim and frog-button dots
+    g.lineStyle(1.2, 0xffd54f, 0.95);
+    g.strokeRect(cx - 5.5 * s, gy - 26 * s, 11 * s, 16 * s);
+    g.fillStyle(0xffd54f, 1);
+    g.fillCircle(cx - 1.2 * s, gy - 24 * s, 0.7 * s);
+    g.fillCircle(cx + 0.3 * s, gy - 22.8 * s, 0.7 * s);
+    g.fillCircle(cx + 1.6 * s, gy - 21.6 * s, 0.7 * s);
+
+    // Arms
+    g.fillStyle(0xffd2b0, 1);
+    g.fillRect(cx - 10 * s, gy - 20.5 * s, 3 * s, 8 * s);
+    g.fillRect(cx + 7 * s, gy - 20.5 * s, 3 * s, 8 * s);
+
+    // Neck + head
+    g.fillStyle(0xffd2b0, 1);
+    g.fillRect(cx - 1.5 * s, gy - 27.5 * s, 3 * s, 3 * s);
+    g.fillCircle(cx, gy - 31.0 * s, 5.0 * s);
+
+    // Black hair (just below shoulders)
+    g.fillStyle(0x111111, 1);
+    g.fillEllipse(cx, gy - 31.8 * s, 12.4 * s, 9.8 * s);
+    g.fillRect(cx - 6.2 * s, gy - 31.2 * s, 2.6 * s, 9.6 * s);
+    g.fillRect(cx + 3.6 * s, gy - 31.2 * s, 2.6 * s, 9.6 * s);
+
+    // Face redraw on top of hair
+    g.fillStyle(0xffd2b0, 1);
+    g.fillCircle(cx, gy - 31.0 * s, 4.4 * s);
+
+    // Eyes + smile
+    g.fillStyle(0x000000, 1);
+    g.fillCircle(cx - 2 * s, gy - 31.9 * s, 0.9 * s);
+    g.fillCircle(cx + 2 * s, gy - 31.9 * s, 0.9 * s);
+    g.lineStyle(1.2, 0x9c3a3a, 0.9);
+    g.beginPath();
+    g.moveTo(cx - 1.8 * s, gy - 29.0 * s);
+    g.lineTo(cx, gy - 28.0 * s);
+    g.lineTo(cx + 1.8 * s, gy - 29.0 * s);
+    g.strokePath();
+  },
+
+  // Gugu: short brown hair, jeans, and shirt
+  gugu(g, cx, gy, s) {
+    // Shoes
+    g.fillStyle(0x2e2e2e, 1);
+    g.fillEllipse(cx - 3 * s, gy - 1 * s, 5 * s, 3 * s);
+    g.fillEllipse(cx + 3 * s, gy - 1 * s, 5 * s, 3 * s);
+
+    // Jeans
+    g.fillStyle(0x2f5fb3, 1);
+    g.fillRect(cx - 5 * s, gy - 9 * s, 4 * s, 9 * s);
+    g.fillRect(cx + 1 * s, gy - 9 * s, 4 * s, 9 * s);
+
+    // Shirt
+    g.fillStyle(0x66bb6a, 1);
+    g.fillRect(cx - 7 * s, gy - 22.5 * s, 14 * s, 13.5 * s);
+    g.fillStyle(0xffffff, 0.25);
+    g.fillRect(cx - 1 * s, gy - 21.6 * s, 2 * s, 12 * s);
+
+    // Arms
+    g.fillStyle(0xffd2b0, 1);
+    g.fillRect(cx - 10 * s, gy - 20.5 * s, 3 * s, 8 * s);
+    g.fillRect(cx + 7 * s, gy - 20.5 * s, 3 * s, 8 * s);
+
+    // Neck + head
+    g.fillStyle(0xffd2b0, 1);
+    g.fillRect(cx - 1.5 * s, gy - 27.2 * s, 3 * s, 3 * s);
+    g.fillCircle(cx, gy - 30.8 * s, 4.9 * s);
+
+    // Brown hair: a bit shorter with outward fuzzy curls
+    g.fillStyle(0x5d4037, 1);
+    g.fillEllipse(cx, gy - 31.4 * s, 11.8 * s, 8.3 * s);
+    g.fillRect(cx - 5.6 * s, gy - 30.7 * s, 2.2 * s, 5.6 * s);
+    g.fillRect(cx + 3.4 * s, gy - 30.7 * s, 2.2 * s, 5.6 * s);
+    // Curly/fuzzy side puffs
+    g.fillCircle(cx - 6.6 * s, gy - 30.6 * s, 1.3 * s);
+    g.fillCircle(cx - 6.4 * s, gy - 28.6 * s, 1.15 * s);
+    g.fillCircle(cx + 6.6 * s, gy - 30.6 * s, 1.3 * s);
+    g.fillCircle(cx + 6.4 * s, gy - 28.6 * s, 1.15 * s);
+
+    // Face on top
+    g.fillStyle(0xffd2b0, 1);
+    g.fillCircle(cx, gy - 30.8 * s, 4.3 * s);
+
+    // Eyes + smile
+    g.fillStyle(0x000000, 1);
+    g.fillCircle(cx - 2 * s, gy - 31.6 * s, 0.9 * s);
+    g.fillCircle(cx + 2 * s, gy - 31.6 * s, 0.9 * s);
+    g.lineStyle(1.2, 0x8d4b4b, 0.9);
+    g.beginPath();
+    g.moveTo(cx - 1.7 * s, gy - 28.6 * s);
+    g.lineTo(cx, gy - 27.6 * s);
+    g.lineTo(cx + 1.7 * s, gy - 28.6 * s);
     g.strokePath();
   },
 };

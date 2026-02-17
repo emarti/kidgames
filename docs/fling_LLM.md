@@ -4,7 +4,7 @@ Fling is a cooperative projectile game inspired by QBasic Gorilla. Up to 4 playe
 
 ## Theme & Characters
 
-Players choose from 7 story characters:
+Players choose from 10 story characters:
 - **Hunter** — a human hunter with a brown hat and green jacket
 - **Mr. What What** — looks like Tom Baker with curly hair and a long multicolor scarf
 - **Chaihou** — an orange tiger with black stripes
@@ -12,12 +12,15 @@ Players choose from 7 story characters:
 - **Chichi Gonju** — a white rabbit with long pink-lined ears and whiskers
 - **Starway** — a blue electric eel with yellow lightning sparks
 - **Brillan** — a red robot boy with a square head, cyan eyes, and antenna
+- **Daddy** — a balding dad with a blue shirt, cane, and warm expression
+- **Mama** — a beautiful woman in a qipao with black hair just below the shoulders
+- **Gugu** — shortish brown neck-length hair, jeans, and a shirt
 
 **Targets:** Alien fish — blue-gray (`0x2a3a50`) pac-man-shaped fish oriented vertically, head pointing down, tail fin up, dorsal fin to one side. The bottom quarter of the body is a wide-open mouth gap (pac-man cutout, no dark fill). Fish are sunk 25% into the ground (center at `gy - TARGET_RADIUS * 0.5`). Friendly single eye, no teeth or red parts. When hit, a rainbow explosion of 20 radial streaks bursts outward.
 
 **Projectiles:** Rubber ducks — yellow with orange beak, tumble/rotate as they fly. Air resistance varies by planet.
 
-**Landscapes:** Vary by planet — green hills (Earth), red rocky plateaus (Mars), gray craters (Moon), icy cliffs (Enceladus).
+**Landscapes:** Vary by world — green hills (Earth), cave tunnels with ceilings and stalactites (Cave), red rocky plateaus (Mars), gray craters (Moon), icy cliffs (Enceladus), volcanic plains (Io), and a rough bumpy nucleus (Comet).
 
 ## Where things live
 
@@ -46,9 +49,9 @@ Lobby / room messages (common):
 Setup/control:
 - `pause`, `resume`
 - `restart`
-- `select_level { level: number }` (1–9)
+- `select_level { level: number }` (1–16)
 - `next_level`
-- `select_avatar { avatar: string }` — one of: `hunter`, `mrwhatwhat`, `chaihou`, `taolabi`, `chichi`, `starway`, `brillan`
+- `select_avatar { avatar: string }` — one of: `hunter`, `mrwhatwhat`, `chaihou`, `taolabi`, `chichi`, `starway`, `brillan`, `daddy`, `mama`, `gugu`
 - `set_guides { show: boolean }` — toggle trajectory preview dots (global for all players)
 
 Gameplay input:
@@ -65,15 +68,15 @@ See `docs/STATE.md` for shared conventions.
 
 Fling state fields:
 - `w`, `h`: pixel dimensions (800×600)
-- `level`: current level (1–9)
-- `maxLevel`: 9
+- `level`: current level (1–16)
+- `maxLevel`: 16
 - `levelComplete`: boolean
 - `showGuides`: boolean — trajectory preview dots visible for all players (toggled via `set_guides`)
-- `planet`: `"earth"` | `"mars"` | `"moon"` | `"enceladus"` — current planet ID
+- `planet`: `"earth"` | `"cave"` | `"mars"` | `"moon"` | `"enceladus"` | `"io"` | `"comet"` — current planet ID
 - `gravity`: number — px/s², varies by planet
 - `airResistance`: number — drag coefficient, varies by planet
 - `powerToVelocity`: number — power-to-speed multiplier, varies by planet
-- `terrain`: `{ heights: number[], step: number }` — heightmap sampled every 8px
+- `terrain`: `{ heights: number[], step: number, ceilingHeights?: number[] }` — heightmap sampled every 8px; cave levels also include a ceiling profile
 - `targets[]`: `{ id, x, y, hit }` — placed on right-side terrain
 - `projectiles[]`: `{ id, owner, x, y, vx, vy, rotation, rotationSpeed, active, bornAt }`
 - `projectileType`: `"rubber_duck"` (easy to change)
@@ -83,14 +86,17 @@ Fling state fields:
 
 ## Planet system
 
-4 planets, each with calibrated physics so 65% power at 45° covers ~520px (mid-left to mid-right):
+7 worlds with calibrated physics:
 
-| Planet    | Gravity (px/s²) | Air Resistance | Power→Velocity | Levels |
+| World     | Gravity (px/s²) | Air Resistance | Power→Velocity | Levels |
 |-----------|-----------------|----------------|----------------|--------|
 | Earth     | 400             | 0.15           | 7.5            | 1–3    |
-| Mars      | 200             | 0.03           | 5.0            | 4–5    |
-| Moon      | 100             | 0.0            | 3.5            | 6–7    |
-| Enceladus | 50              | 0.0            | 2.5            | 8–9    |
+| Cave      | 320             | 0.05           | 6.2            | 4–5    |
+| Mars      | 200             | 0.03           | 5.0            | 6–7    |
+| Moon      | 100             | 0.0            | 3.5            | 8–9    |
+| Enceladus | 50              | 0.0            | 2.5            | 10–11  |
+| Io        | 120             | 0.0            | 3.8            | 12–13  |
+| Comet     | 35              | 0.0            | 2.0            | 14–16  |
 
 Planet physics are stored in `PLANETS` config in `fling_sim.js` and broadcast as state fields (`state.gravity`, `state.airResistance`, `state.powerToVelocity`).
 
@@ -101,23 +107,25 @@ Planet physics are stored in `PLANETS` config in `fling_sim.js` and broadcast as
 - Ground Y in world coords: `WORLD_H - terrainHeightAt(terrain, x)`
 - Terrain generation varies by planet:
   - **Earth**: 3 layered sine waves with random phases (rolling green hills)
+  - **Cave**: floor heightmap + separate ceiling heightmap with stamped stalactites/stalagmites
   - **Mars**: Sine waves + `abs(sin)` for mesa/plateau features (red rocky terrain)
   - **Moon**: 4 layered sine waves (including high-frequency surface roughness) + stamped parabolic craters with raised rims; bumpiness scales with difficulty via `bumpScale`
   - **Enceladus**: Large sine cliffs + sawtooth ridges + fine ice texture + extra jagged detail; bumpiness scales with difficulty via `bumpScale`
+  - **Comet**: 67P-inspired bilobed rough nucleus with neck dips, pits, scarps/terraces, and very low gravity
 
 ## Level design
 
-9 levels across 4 planets:
+16 levels across 7 worlds:
 
 - **Level 1** (Earth): gentle hills, 1 target
 - **Level 2** (Earth): moderate hills, 2 targets
 - **Level 3** (Earth): steeper hills, 3 targets
-- **Level 4** (Mars): rocky plateaus, 3 targets
-- **Level 5** (Mars): varied terrain, 4 targets
-- **Level 6** (Moon): craters, 3 targets
-- **Level 7** (Moon): more craters, 4 targets
-- **Level 8** (Enceladus): icy cliffs with geysers, 4 targets
-- **Level 9** (Enceladus): extreme icy cliffs, 5 targets
+- **Levels 4–5** (Cave): cave tunnels with a real ceiling and stalactites/stalagmites
+- **Levels 6–7** (Mars): rocky plateaus
+- **Levels 8–9** (Moon): crater-heavy gray terrain
+- **Levels 10–11** (Enceladus): icy cliffs with geysers
+- **Levels 12–13** (Io): volcanic ridges and sulfur-like patches
+- **Levels 14–16** (Comet): very bumpy low-gravity comet-nucleus terrain
 
 Players are placed on the left ~25% of the terrain.
 Targets are placed across the right ~35%.
@@ -127,7 +135,7 @@ Targets are placed across the right ~35%.
 Physics vary by planet (see Planet system table above). Common rules:
 - Power maps to initial speed: `power × powerToVelocity = px/s`
 - Air resistance: `velocity *= (1 - airResistance * dt)` each tick (0 for airless worlds)
-- Projectiles collide with terrain surface (absorbed) and targets (destroyed)
+- Projectiles collide with terrain surface (absorbed), cave ceilings (absorbed), and targets (destroyed)
 - Fire cooldown: 600ms per player
 - Max 3 in-flight projectiles per player
 - Projectiles tumble: rotation field increments by rotationSpeed * dt each tick
@@ -138,15 +146,19 @@ PlayScene renders sky, terrain, and details based on `state.planet`:
 
 **Sky:**
 - Earth: blue gradient, yellow sun, white clouds
+- Cave: dark cave interior with warm glows and dust motes
 - Mars: orange-red dusty gradient, small distant sun, dust particles
 - Moon: black starfield, Earth in distance (upper-left, radius 66) with orthographic-projected continent polygons (`EARTH_CONTINENTS` — 7 continents defined as [lon°, lat°] outlines), random rotation per level, half-sphere phase overlay (alpha 0.3), atmosphere glow; stars
 - Enceladus: dark blue-black starfield, Saturn with rings (upper-right, radius 53) and hexagonal polar storm, geyser plumes
+- Comet: dense starfield with faint bluish comet-tail haze
 
 **Terrain colors:**
 - Earth: green surface, dark green depth, grass tufts
+- Cave: brown rocky floor/depth plus separate rocky cave ceiling
 - Mars: red-brown surface, dark red depth, rocky pebbles
 - Moon: gray surface, darker gray depth, crater rim highlights
 - Enceladus: icy blue-white surface, blue depth, shine highlights
+- Comet: dusty gray-green rough surface with rubble highlights
 
 **Trajectory preview** reads physics from `state.gravity`, `state.airResistance`, `state.powerToVelocity` so it stays in sync with the server. Gated on `state.showGuides` (global toggle).
 
@@ -157,7 +169,7 @@ PlayScene renders sky, terrain, and details based on `state.planet`:
 
 ## Avatar system
 
-- 7 selectable avatars, each with an associated color
+- 10 selectable avatars, each with an associated color
 - Default assignments: P1=brillan, P2=chaihou, P3=mrwhatwhat, P4=chichi
 - Avatar selection via `select_avatar` message, available during pause
 - Each avatar has a distinct drawing function in `PlayScene.js` (`AVATAR_DRAW` object)
@@ -176,12 +188,18 @@ PlayScene renders sky, terrain, and details based on `state.planet`:
 - Aim persists between shots (not reset after firing)
 - Text HUD shows current angle, power, and planet name
 - Trajectory preview drawn as dotted arc (gated on global "Show guides" toggle from state)
+  - Guide length scales with level difficulty (global for all players):
+    - Levels 1-3: full path
+    - Level 4: ~75% of full trajectory
+    - Level 5: ~50% of full trajectory
+    - Level 6: ~25% of full trajectory
+    - Level 7+: capped to 3 dots (and remains this short for any future higher levels)
 
 ## Pause / Setup menu
 
 - Uses the `setupContainer` pattern from maze/snake
 - Two modes:
-  - **Lobby** (`state.paused && state.reasonPaused === 'start'`): shows "GAME SETUP" title, level selector (1–9), avatar selector, Show guides toggle, Start button
+  - **Lobby** (`state.paused && state.reasonPaused === 'start'`): shows "GAME SETUP" title, level selector (1–16), avatar selector, Show guides toggle, Start button
   - **Pause** (`me.paused`): shows "PAUSED" title, avatar/level selectors, guides toggle, Continue button
 - Pause button is large, positioned top-left below the HUD text
 - Fire button is positioned dynamically below the player's character
