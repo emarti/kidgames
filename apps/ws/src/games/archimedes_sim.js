@@ -10,6 +10,8 @@
  */
 
 import * as FerrySim from './archimedes_ferry_sim.js';
+import * as SeesawSim from './archimedes_seesaw_sim.js';
+import * as PulleySim from './archimedes_pulley_sim.js';
 
 // ── Module registry ─────────────────────────────────────────────────────────
 // Each entry maps a moduleType string to its handler module.
@@ -17,8 +19,8 @@ import * as FerrySim from './archimedes_ferry_sim.js';
 
 const MODULES = {
   ferry: { index: 1, name: '🚢 Buoyancy Ferry', handler: FerrySim },
-  // seesaw: { index: 2, name: '⚖️ Seesaw Lab', handler: SeesawSim },
-  // pulley: { index: 3, name: '🔗 Pulley Builder', handler: PulleySim },
+  seesaw: { index: 2, name: '⚖️ Seesaw Lab', handler: SeesawSim },
+  pulley: { index: 3, name: '🔗 Pulley Builder', handler: PulleySim },
   // gears:  { index: 4, name: '⚙️ Gears Playground', handler: GearsSim },
   // sail:   { index: 5, name: '⛵ Points of Sail', handler: SailSim },
   // density:{ index: 6, name: '🛁 Density Bath', handler: DensitySim },

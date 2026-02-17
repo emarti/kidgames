@@ -10,6 +10,7 @@ const PLANET_LABELS = {
   mars: 'Mars',
   moon: 'Moon',
   enceladus: 'Enceladus',
+  io: 'Io',
 };
 
 function hexToInt(hex) {
@@ -34,6 +35,7 @@ const AVATAR_LABELS = {
   chichi: 'Chichi Gonju',
   starway: 'Starway',
   brillan: 'Brillan',
+  daddy: 'Daddy',
 };
 
 // Continent outlines [longitude°, latitude°] for Earth rendering — traced clockwise
@@ -448,21 +450,9 @@ export default class PlayScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.setupContainer.add(this.setupTitle);
 
-    // --- Level selector (9 levels across 4 planets) ---
-    this.setupContainer.add(
-      this.add.text(-300, -160, 'Level:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5)
-    );
-    this.levelButtons = {};
-    for (let lv = 1; lv <= 9; lv++) {
-      this.levelButtons[lv] = this.addSetupButton(
-        -200 + (lv - 1) * 52, -160, `${lv}`,
-        () => this.game.net.send('select_level', { level: lv })
-      );
-    }
-
     // --- Character selector ---
     this.setupContainer.add(
-      this.add.text(-300, -100, 'Character:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5)
+      this.add.text(-300, -160, 'Character:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5)
     );
     const avatarKeys = Object.keys(AVATAR_LABELS);
     this.avatarSetupButtons = {};
@@ -471,7 +461,7 @@ export default class PlayScene extends Phaser.Scene {
       const col = i % cols;
       const row = Math.floor(i / cols);
       const bx = -200 + col * 130;
-      const by = -60 + row * 44;
+      const by = -100 + row * 44;
       this.avatarSetupButtons[av] = this.addSetupButton(
         bx, by, AVATAR_LABELS[av],
         () => this.game.net.send('select_avatar', { avatar: av })
@@ -479,7 +469,7 @@ export default class PlayScene extends Phaser.Scene {
     });
 
     // --- Show guides toggle ---
-    const guidesY = 50;
+    const guidesY = 10;
     this.setupContainer.add(
       this.add.text(-300, guidesY, 'Show guides:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5)
     );
@@ -491,6 +481,25 @@ export default class PlayScene extends Phaser.Scene {
         this.game.net.send('set_guides', { show: false });
       }),
     };
+
+    // --- Level selector (two-digit display with left/right arrows) ---
+    const levelY = 60;
+    this.setupContainer.add(
+      this.add.text(-300, levelY, 'Level:', { fontSize: '18px', color: '#000' }).setOrigin(0, 0.5)
+    );
+    this.levelLeftBtn = this.addSetupButton(-130, levelY, '<', () => {
+      const cur = this.state?.level || 1;
+      if (cur > 1) this.game.net.send('select_level', { level: cur - 1 });
+    });
+    this.levelDisplay = this.add.text(-80, levelY, '01', {
+      fontSize: '22px', color: '#000', fontStyle: 'bold', fontFamily: 'monospace',
+    }).setOrigin(0.5);
+    this.setupContainer.add(this.levelDisplay);
+    this.levelRightBtn = this.addSetupButton(-30, levelY, '>', () => {
+      const cur = this.state?.level || 1;
+      const max = this.state?.maxLevel || 9;
+      if (cur < max) this.game.net.send('select_level', { level: cur + 1 });
+    });
 
     // --- Help text ---
     this.setupHelp = this.add.text(0, 130, '', {
@@ -544,12 +553,8 @@ export default class PlayScene extends Phaser.Scene {
     this.startButton.setVisible(mode === 'start');
     this.continueButton.setVisible(mode !== 'start');
 
-    // Level highlight
-    for (const [lv, btn] of Object.entries(this.levelButtons)) {
-      const selected = Number(lv) === state.level;
-      btn._selected = selected;
-      btn.setBackgroundColor(selected ? UI_BTN_BG_SELECTED : UI_BTN_BG);
-    }
+    // Level display (two-digit)
+    this.levelDisplay.setText(String(state.level).padStart(2, '0'));
 
     // Avatar highlight
     const myAvatar = me?.avatar;
@@ -589,6 +594,8 @@ export default class PlayScene extends Phaser.Scene {
       this.drawSkyMoon(g, cam);
     } else if (planet === 'enceladus') {
       this.drawSkyEnceladus(g, cam);
+    } else if (planet === 'io') {
+      this.drawSkyIo(g, cam);
     }
   }
 
@@ -722,12 +729,21 @@ export default class PlayScene extends Phaser.Scene {
     g.fillStyle(0x060618, 1);
     g.fillRect(0, 0, cam.width, cam.height);
 
-    // Stars
-    g.fillStyle(0xccccff, 0.7);
-    for (let i = 0; i < 50; i++) {
-      const sx = ((i * 173 + 11) % cam.width);
-      const sy = ((i * 67 + 31) % (cam.height * 0.6));
-      g.fillCircle(sx, sy, (i % 4 === 0) ? 1.5 : 0.8);
+    // Stars — seeded hash for natural-looking positions & varied brightness
+    const starCount = 90;
+    for (let i = 0; i < starCount; i++) {
+      // Simple hash to avoid diagonal patterns
+      let h = i * 2654435761 >>> 0;          // Knuth multiplicative hash
+      const sx = (h % (cam.width | 0));
+      h = (h * 48271 + 1) >>> 0;
+      const sy = (h % ((cam.height * 0.6) | 0));
+      h = (h * 48271 + 1) >>> 0;
+      const bright = (h % 100) / 100;        // 0..1
+      const radius = bright > 0.85 ? 2.0 : bright > 0.5 ? 1.2 : 0.7;
+      const alpha = 0.3 + bright * 0.7;      // 0.3 .. 1.0
+      const tint = bright > 0.7 ? 0xeeeeff : bright > 0.4 ? 0xccccff : 0x9999cc;
+      g.fillStyle(tint, alpha);
+      g.fillCircle(sx, sy, radius);
     }
 
     // Saturn (large, with rings) — upper-right
@@ -739,11 +755,17 @@ export default class PlayScene extends Phaser.Scene {
     g.fillCircle(sx, sy, sr);
     g.fillStyle(0xc89940, 0.7);
     g.fillCircle(sx - 8, sy + 3, sr * 0.9);
-    // Rings
-    g.lineStyle(3, 0xeedd99, 0.5);
-    g.strokeEllipse(sx, sy, sr * 3.2, sr * 0.6);
-    g.lineStyle(2, 0xccbb77, 0.35);
-    g.strokeEllipse(sx, sy, sr * 3.8, sr * 0.72);
+    // Rings (edge-on — Enceladus orbits in Saturn's ring plane)
+    g.lineStyle(3, 0xeedd99, 0.4);
+    g.strokeEllipse(sx, sy, sr * 5.0, sr * 0.12);
+    g.lineStyle(5, 0xd4c488, 0.35);
+    g.strokeEllipse(sx, sy, sr * 5.8, sr * 0.14);
+    g.lineStyle(2, 0xc8b06a, 0.25);
+    g.strokeEllipse(sx, sy, sr * 6.4, sr * 0.15);
+    g.lineStyle(4, 0xeeddaa, 0.3);
+    g.strokeEllipse(sx, sy, sr * 7.0, sr * 0.17);
+    g.lineStyle(2, 0xbbaa66, 0.15);
+    g.strokeEllipse(sx, sy, sr * 7.6, sr * 0.18);
     // Polar hexagonal storm (north pole — top of sphere)
     g.fillStyle(0xb8883a, 0.7);
     g.beginPath();
@@ -782,6 +804,72 @@ export default class PlayScene extends Phaser.Scene {
     }
   }
 
+  drawSkyIo(g, cam) {
+    // Dark sky — Io has virtually no atmosphere, black with faint yellow haze near horizon
+    g.fillStyle(0x050505, 1);
+    g.fillRect(0, 0, cam.width, cam.height);
+    // Faint yellow-orange horizon glow (volcanic haze)
+    g.fillStyle(0x332800, 0.6);
+    g.fillRect(0, cam.height * 0.6, cam.width, cam.height * 0.4);
+    g.fillStyle(0x4a3500, 0.3);
+    g.fillRect(0, cam.height * 0.5, cam.width, cam.height * 0.15);
+
+    // Stars
+    const starCount = 70;
+    for (let i = 0; i < starCount; i++) {
+      let h = i * 2654435761 >>> 0;
+      const sx = (h % (cam.width | 0));
+      h = (h * 48271 + 7) >>> 0;
+      const sy = (h % ((cam.height * 0.55) | 0));
+      h = (h * 48271 + 7) >>> 0;
+      const bright = (h % 100) / 100;
+      const radius = bright > 0.85 ? 1.8 : bright > 0.5 ? 1.0 : 0.6;
+      const alpha = 0.3 + bright * 0.7;
+      g.fillStyle(0xccccdd, alpha);
+      g.fillCircle(sx, sy, radius);
+    }
+
+    // Jupiter — massive in Io's sky, upper-left
+    const jx = cam.width * 0.22;
+    const jy = cam.height * 0.18;
+    const jr = 80;
+    // Main body (banded orange-tan)
+    g.fillStyle(0xc8956a, 1);
+    g.fillCircle(jx, jy, jr);
+    // Lighter equatorial zone
+    g.fillStyle(0xe0c8a0, 0.6);
+    g.fillEllipse(jx, jy + jr * 0.05, jr * 2, jr * 0.35);
+    // Dark belts (horizontal bands)
+    g.fillStyle(0x8b5e3c, 0.5);
+    g.fillEllipse(jx, jy - jr * 0.35, jr * 2, jr * 0.18);
+    g.fillStyle(0x9a6844, 0.45);
+    g.fillEllipse(jx, jy + jr * 0.4, jr * 2, jr * 0.2);
+    g.fillStyle(0x7a4e2c, 0.35);
+    g.fillEllipse(jx, jy - jr * 0.65, jr * 1.8, jr * 0.12);
+    // Great Red Spot
+    g.fillStyle(0xcc5533, 0.7);
+    g.fillEllipse(jx + jr * 0.3, jy + jr * 0.3, jr * 0.4, jr * 0.25);
+    g.fillStyle(0xdd7755, 0.4);
+    g.fillEllipse(jx + jr * 0.3, jy + jr * 0.3, jr * 0.25, jr * 0.15);
+    // Limb darkening
+    g.lineStyle(4, 0x000000, 0.2);
+    g.strokeCircle(jx, jy, jr);
+
+    // Volcanic plumes (faint glowing eruptions on the horizon)
+    const plumePositions = [0.6, 0.85];
+    for (const frac of plumePositions) {
+      const px = cam.width * frac;
+      const baseY = cam.height * 0.75;
+      for (let i = 0; i < 10; i++) {
+        const py = baseY - i * cam.height * 0.02;
+        const alpha = 0.2 - i * 0.018;
+        if (alpha <= 0) break;
+        g.fillStyle(0xffcc44, alpha);
+        g.fillCircle(px + ((i * 3) % 5) - 2, py, 4 + i * 0.5);
+      }
+    }
+  }
+
   drawCloud(g, cx, cy, scale) {
     const s = scale * 20;
     g.fillCircle(cx, cy, s * 1.5);
@@ -805,6 +893,7 @@ export default class PlayScene extends Phaser.Scene {
       mars:      { fill: 0xb84c28, depth: 0x8b3a1f, detail: 0x993322 },
       moon:      { fill: 0x888888, depth: 0x666666, detail: 0x777777 },
       enceladus: { fill: 0xc8ddf0, depth: 0x99b8d8, detail: 0xaaccee },
+      io:        { fill: 0xd4b840, depth: 0xb89830, detail: 0xe0a020 },
     };
     const pal = palettes[planet] || palettes.earth;
 
@@ -884,6 +973,28 @@ export default class PlayScene extends Phaser.Scene {
         g.beginPath();
         g.moveTo(sx, sy);
         g.lineTo(sx + 4 * scaleX, sy - 2 * scaleY);
+        g.strokePath();
+      }
+    } else if (planet === 'io') {
+      // Volcanic orange-red patches and sulfur deposits
+      for (let i = 3; i < terrain.heights.length; i += 6) {
+        const sx = (i * terrain.step) * scaleX;
+        const sy = (WORLD_H - terrain.heights[i]) * scaleY;
+        // Orange lava patches
+        g.fillStyle(0xff6600, 0.3);
+        g.fillCircle(sx, sy + 4 * scaleY, 5 * scaleX);
+        // Dark volcanic vents
+        g.fillStyle(0x332200, 0.25);
+        g.fillCircle(sx + 3 * scaleX, sy + 2 * scaleY, 2);
+      }
+      // Sulfur streaks (yellow highlights)
+      g.lineStyle(1.5, 0xeecc00, 0.2);
+      for (let i = 1; i < terrain.heights.length; i += 5) {
+        const sx = (i * terrain.step) * scaleX;
+        const sy = (WORLD_H - terrain.heights[i]) * scaleY;
+        g.beginPath();
+        g.moveTo(sx, sy);
+        g.lineTo(sx + 6 * scaleX, sy + 3 * scaleY);
         g.strokePath();
       }
     }
@@ -1562,6 +1673,89 @@ const AVATAR_DRAW = {
     g.moveTo(cx + 8 * s, gy - 16 * s);
     g.lineTo(cx + 11 * s, gy - 14 * s);
     g.lineTo(cx + 9 * s, gy - 12 * s);
+    g.strokePath();
+  },
+
+  // Daddy: balding guy with beer belly and cane
+  daddy(g, cx, gy, s) {
+    // Cane (left hand — drawn first so it's behind the body)
+    g.lineStyle(2.5 * s, 0x8b6914, 1);
+    g.beginPath();
+    g.moveTo(cx - 9 * s, gy - 16 * s);
+    g.lineTo(cx - 11 * s, gy);
+    g.strokePath();
+    // Cane handle (curved top)
+    g.lineStyle(2.5 * s, 0x8b6914, 1);
+    g.beginPath();
+    g.moveTo(cx - 9 * s, gy - 16 * s);
+    g.lineTo(cx - 6 * s, gy - 18 * s);
+    g.strokePath();
+    // Shoes (brown)
+    g.fillStyle(0x5d4037, 1);
+    g.fillEllipse(cx - 3 * s, gy - 1 * s, 5 * s, 3 * s);
+    g.fillEllipse(cx + 3 * s, gy - 1 * s, 5 * s, 3 * s);
+    // Legs (khaki pants)
+    g.fillStyle(0x8b7355, 1);
+    g.fillRect(cx - 5 * s, gy - 10 * s, 4 * s, 10 * s);
+    g.fillRect(cx + 1 * s, gy - 10 * s, 4 * s, 10 * s);
+    // Body (button-up collar shirt — slightly wider for the belly)
+    g.fillStyle(0x4682b4, 1);
+    g.fillRect(cx - 7 * s, gy - 22 * s, 14 * s, 12 * s);
+    // Beer belly (bulge at the bottom of the shirt)
+    g.fillStyle(0x4682b4, 1);
+    g.fillEllipse(cx, gy - 13 * s, 16 * s, 8 * s);
+    // Long sleeves (same shirt color)
+    g.fillStyle(0x4682b4, 1);
+    g.fillRect(cx - 10 * s, gy - 20 * s, 3 * s, 8 * s);
+    g.fillRect(cx + 7 * s, gy - 20 * s, 3 * s, 8 * s);
+    // Hands (skin, at end of sleeves)
+    g.fillStyle(0xffcc80, 1);
+    g.fillCircle(cx - 8.5 * s, gy - 12 * s, 2 * s);
+    g.fillCircle(cx + 8.5 * s, gy - 12 * s, 2 * s);
+    // Button-down collar (folded V-shape)
+    g.fillStyle(0x3a6d99, 1);
+    g.fillTriangle(
+      cx - 4 * s, gy - 22 * s,
+      cx, gy - 19 * s,
+      cx + 4 * s, gy - 22 * s,
+    );
+    // Collar flaps
+    g.fillStyle(0x5a9cc8, 1);
+    g.fillTriangle(
+      cx - 5 * s, gy - 23 * s,
+      cx - 2 * s, gy - 22 * s,
+      cx - 4 * s, gy - 20 * s,
+    );
+    g.fillTriangle(
+      cx + 5 * s, gy - 23 * s,
+      cx + 2 * s, gy - 22 * s,
+      cx + 4 * s, gy - 20 * s,
+    );
+    // Shirt buttons
+    g.fillStyle(0xffffff, 0.6);
+    g.fillCircle(cx, gy - 18 * s, 0.8 * s);
+    g.fillCircle(cx, gy - 15.5 * s, 0.8 * s);
+    // Head (skin tone)
+    g.fillStyle(0xffcc80, 1);
+    g.fillCircle(cx, gy - 26 * s, 5.5 * s);
+    // Bald top (skin showing through — just the head circle suffices)
+    // Hair on sides only (dark gray/brown)
+    g.fillStyle(0x555555, 1);
+    g.fillEllipse(cx - 5 * s, gy - 25 * s, 3 * s, 4 * s);
+    g.fillEllipse(cx + 5 * s, gy - 25 * s, 3 * s, 4 * s);
+    // Small tuft at back
+    g.fillEllipse(cx, gy - 22 * s, 6 * s, 2 * s);
+    // Eyes
+    g.fillStyle(0x000000, 1);
+    g.fillCircle(cx - 2 * s, gy - 27 * s, 1 * s);
+    g.fillCircle(cx + 2 * s, gy - 27 * s, 1 * s);
+    // Friendly smile
+    g.lineStyle(1.5, 0x000000, 0.6);
+    g.beginPath();
+    g.moveTo(cx - 2 * s, gy - 24 * s);
+    g.lineTo(cx - 1 * s, gy - 23 * s);
+    g.lineTo(cx + 1 * s, gy - 23 * s);
+    g.lineTo(cx + 2 * s, gy - 24 * s);
     g.strokePath();
   },
 };

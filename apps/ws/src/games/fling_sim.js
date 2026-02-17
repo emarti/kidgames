@@ -58,19 +58,27 @@ const PLANETS = {
     airResistance: 0.0,
     powerToVelocity: 2.5,  // 65%→162.5, range ~528px
   },
+  io: {
+    id: 'io',
+    gravity: 120,
+    airResistance: 0.0,
+    powerToVelocity: 3.8,  // 65%→247, range ~510px
+  },
 };
 
 // Level definitions: planet, target count, terrain difficulty
 const LEVELS = [
-  /* 1 */ { planet: 'earth',     targets: 1, difficulty: 1 },
-  /* 2 */ { planet: 'earth',     targets: 2, difficulty: 2 },
-  /* 3 */ { planet: 'earth',     targets: 3, difficulty: 3 },
-  /* 4 */ { planet: 'mars',      targets: 3, difficulty: 2 },
-  /* 5 */ { planet: 'mars',      targets: 4, difficulty: 3 },
-  /* 6 */ { planet: 'moon',      targets: 3, difficulty: 2 },
-  /* 7 */ { planet: 'moon',      targets: 4, difficulty: 3 },
-  /* 8 */ { planet: 'enceladus', targets: 4, difficulty: 3 },
-  /* 9 */ { planet: 'enceladus', targets: 5, difficulty: 4 },
+  /*  1 */ { planet: 'earth',     targets: 2, difficulty: 2 },
+  /*  2 */ { planet: 'earth',     targets: 3, difficulty: 3 },
+  /*  3 */ { planet: 'earth',     targets: 4, difficulty: 3 },
+  /*  4 */ { planet: 'mars',      targets: 3, difficulty: 3 },
+  /*  5 */ { planet: 'mars',      targets: 4, difficulty: 4 },
+  /*  6 */ { planet: 'moon',      targets: 4, difficulty: 3 },
+  /*  7 */ { planet: 'moon',      targets: 5, difficulty: 4 },
+  /*  8 */ { planet: 'enceladus', targets: 5, difficulty: 4 },
+  /*  9 */ { planet: 'enceladus', targets: 6, difficulty: 5 },
+  /* 10 */ { planet: 'io',        targets: 5, difficulty: 4 },
+  /* 11 */ { planet: 'io',        targets: 6, difficulty: 5 },
 ];
 
 function getLevelDef(level) {
@@ -90,6 +98,7 @@ const AVATARS = [
   'chichi',
   'starway',
   'brillan',
+  'daddy',
 ];
 const DEFAULT_AVATARS = ['brillan', 'chaihou', 'mrwhatwhat', 'chichi'];
 
@@ -102,6 +111,7 @@ const AVATAR_COLORS = {
   chichi: '#ff69b4',
   starway: '#00bfff',
   brillan: '#ff4d4d',
+  daddy: '#8b7355',
 };
 
 // ---------------------------------------------------------------------------
@@ -150,7 +160,7 @@ function generateTerrain(level) {
       heights[i] = Math.round(clamp(h, 80, WORLD_H - 140));
     }
   } else if (planet === 'moon') {
-    // Gray terrain with craters — bumpiness scales with difficulty
+    // Gray terrain with craters — bumpy like Earth hills
     const baseH = 90;
     const bumpScale = 0.6 + diff * 0.35; // diff 3 → 1.65
     const p1 = randRange(0, Math.PI * 2);
@@ -160,9 +170,9 @@ function generateTerrain(level) {
     for (let i = 0; i < n; i++) {
       const t = (i * TERRAIN_STEP) / WORLD_W;
       let h = baseH;
-      h += Math.sin(t * Math.PI * 1.5 + p1) * 28 * bumpScale;
-      h += Math.sin(t * Math.PI * 3.2 + p2) * 18 * bumpScale;
-      h += Math.sin(t * Math.PI * 6.5 + p3) * 12 * bumpScale;
+      h += Math.sin(t * Math.PI * 2 + p1) * 40 * bumpScale;
+      h += Math.sin(t * Math.PI * 4.7 + p2) * 22 * bumpScale;
+      h += Math.sin(t * Math.PI * 8.3 + p3) * 12 * bumpScale;
       h += Math.sin(t * Math.PI * 13 + p4) * 5 * bumpScale;
       heights[i] = h;
     }
@@ -197,14 +207,55 @@ function generateTerrain(level) {
       let h = baseH;
       // Large cliff features
       h += Math.sin(t * Math.PI * 2 + p1) * 50 * bumpScale;
-      // Sharp sawtooth-like ridges
-      const saw = ((t * 7 + p2 / Math.PI) % 1) * 2 - 1;
+      // Sawtooth-like ridges, softened with sine blend
+      const rawSaw = ((t * 7 + p2 / Math.PI) % 1) * 2 - 1;
+      const saw = rawSaw * 0.65 + Math.sin(t * Math.PI * 7 + p2) * 0.35;
       h += saw * 30 * bumpScale;
       // Fine ice texture
-      h += Math.sin(t * Math.PI * 14 + p2) * 12 * bumpScale;
-      // Extra jagged detail at high difficulty
-      h += Math.sin(t * Math.PI * 22 + p3) * 6 * bumpScale;
+      h += Math.sin(t * Math.PI * 14 + p2) * 10 * bumpScale;
+      // Extra jagged detail at high difficulty (toned down)
+      h += Math.sin(t * Math.PI * 18 + p3) * 4 * bumpScale;
       heights[i] = Math.round(clamp(h, 80, WORLD_H - 140));
+    }
+  } else if (planet === 'io') {
+    // Volcanic terrain — calderas and lava flows
+    const baseH = 105;
+    const bumpScale = 0.6 + diff * 0.3;
+    const p1 = randRange(0, Math.PI * 2);
+    const p2 = randRange(0, Math.PI * 2);
+    const p3 = randRange(0, Math.PI * 2);
+    for (let i = 0; i < n; i++) {
+      const t = (i * TERRAIN_STEP) / WORLD_W;
+      let h = baseH;
+      // Broad volcanic shields
+      h += Math.sin(t * Math.PI * 2.2 + p1) * 35 * bumpScale;
+      // Mid-frequency ridges
+      h += Math.sin(t * Math.PI * 5.5 + p2) * 20 * bumpScale;
+      // Sharp volcanic peaks (abs for pointed tops)
+      h += Math.abs(Math.sin(t * Math.PI * 11 + p3)) * 15 * bumpScale;
+      // Fine roughness
+      h += Math.sin(t * Math.PI * 16 + p2) * 6 * bumpScale;
+      heights[i] = Math.round(clamp(h, 80, WORLD_H - 140));
+    }
+    // Stamp calderas (volcanic craters — wider and flatter than moon craters)
+    const calderaCount = 2 + diff + Math.floor(Math.random() * 2);
+    for (let c = 0; c < calderaCount; c++) {
+      const cx = Math.floor(randRange(n * 0.1, n * 0.9));
+      const cw = Math.floor(randRange(6, 12 + diff * 2));
+      const cDepth = randRange(15 + diff * 4, 28 + diff * 6);
+      for (let i = -cw; i <= cw; i++) {
+        const idx = cx + i;
+        if (idx < 0 || idx >= n) continue;
+        const f = 1 - (i / cw) ** 2;
+        heights[idx] -= cDepth * f;
+        // Raised rim
+        if (Math.abs(i) >= cw - 2 && Math.abs(i) <= cw) {
+          heights[idx] += cDepth * 0.3;
+        }
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      heights[i] = Math.round(clamp(heights[i], 80, WORLD_H - 140));
     }
   }
 

@@ -1096,11 +1096,16 @@ export function togglePause(state, playerId) {
   if (!playerId) return;
   const p = state.players[playerId];
   if (!p) return;
-  p.paused = !p.paused;
 
   if (state.paused && state.reasonPaused === 'start') {
+    // Leaving lobby — unpause all connected players so everyone starts together
     state.paused = false;
     state.reasonPaused = null;
+    for (const pid of [1, 2, 3, 4]) {
+      if (state.players[pid]?.connected) state.players[pid].paused = false;
+    }
+  } else {
+    p.paused = !p.paused;
   }
 }
 
@@ -1108,11 +1113,16 @@ export function resumeGame(state, playerId) {
   if (!playerId) return;
   const p = state.players[playerId];
   if (!p) return;
-  p.paused = false;
 
   if (state.paused && state.reasonPaused === 'start') {
+    // Leaving lobby — unpause all connected players so everyone starts together
     state.paused = false;
     state.reasonPaused = null;
+    for (const pid of [1, 2, 3, 4]) {
+      if (state.players[pid]?.connected) state.players[pid].paused = false;
+    }
+  } else {
+    p.paused = false;
   }
 }
 
@@ -1234,7 +1244,10 @@ export function startPlay(state, playerId) {
   state.revealed = [];
   updateVisibility(state);
 
-  p.paused = false;
+  // Unpause all connected players so everyone starts together
+  for (const pid of [1, 2, 3, 4]) {
+    if (state.players[pid]?.connected) state.players[pid].paused = false;
+  }
 
   if (state.paused && state.reasonPaused === 'start') {
     state.paused = false;

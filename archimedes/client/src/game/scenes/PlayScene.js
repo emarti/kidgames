@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import * as FerryRenderer from '../renderers/ferry_renderer.js';
+import * as SeesawRenderer from '../renderers/seesaw_renderer.js';
+import * as PulleyRenderer from '../renderers/pulley_renderer.js';
 
 /**
  * PlayScene – Archimedes: Physics Toy Museum
@@ -19,9 +21,8 @@ export default class PlayScene extends Phaser.Scene {
 
   static RENDERERS = {
     ferry: FerryRenderer,
-    // seesaw: SeesawRenderer,
-    // pulley: PulleyRenderer,
-    // …
+    seesaw: SeesawRenderer,
+    pulley: PulleyRenderer,
   };
 
   static MODULE_CATALOG = [
@@ -37,8 +38,28 @@ export default class PlayScene extends Phaser.Scene {
     { type: 'gears', name: '⚙️ Gears', levels: [{ n: 1, label: 'Level 1', clr: '#34495e' }] },
     { type: 'sail', name: '⛵ Sailing', levels: [{ n: 1, label: 'Level 1', clr: '#16a085' }] },
     { type: 'pi', name: '🥧 Pi Jar', levels: [{ n: 1, label: 'Level 1', clr: '#8e44ad' }] },
-    { type: 'seesaw', name: '⚖️ Seesaw', levels: [{ n: 1, label: 'Level 1', clr: '#d35400' }] },
-    { type: 'pulley', name: '🔗 Pulley', levels: [{ n: 1, label: 'Level 1', clr: '#7f8c8d' }] },
+    {
+      type: 'seesaw',
+      name: '⚖️ Seesaw Lab',
+      levels: [
+        { n: 1, label: 'Level 1: First Balance', clr: '#d35400' },
+        { n: 2, label: 'Level 2: Heavy Mix', clr: '#e67e22' },
+        { n: 3, label: 'Level 3: Free Place', clr: '#f39c12' },
+        { n: 4, label: 'Level 4: Moving Pivot', clr: '#e74c3c' },
+        { n: 5, label: 'Level 5: Archimedes\' Lever', clr: '#8e44ad' },
+      ],
+    },
+    {
+      type: 'pulley',
+      name: '🔗 Pulley Builder',
+      levels: [
+        { n: 1, label: 'Level 1: Direct Lift', clr: '#27ae60' },
+        { n: 2, label: 'Level 2: Too Heavy!', clr: '#3498db' },
+        { n: 3, label: 'Level 3: Even Heavier!', clr: '#e67e22' },
+        { n: 4, label: 'Level 4: The Elevator', clr: '#9b59b6' },
+        { n: 5, label: 'Level 5: Busy Elevator', clr: '#e74c3c' },
+      ],
+    },
   ];
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
