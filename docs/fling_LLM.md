@@ -10,17 +10,17 @@ Players choose from 10 story characters:
 - **Chaihou** — an orange tiger with black stripes
 - **Taolabi** — a green woodpecker with a red crest and yellow beak
 - **Chichi Gonju** — a white rabbit with long pink-lined ears and whiskers
-- **Starway** — a blue electric eel with yellow lightning sparks
+- **Starway** — a blue electric eel with yellow lightning sparks; stands upright as a sinuous S-curve rising from the ground, head at top with yellow eye, yellow zigzag sparks above
 - **Brillan** — a red robot boy with a square head, cyan eyes, and antenna
-- **Daddy** — a balding dad with a blue shirt, cane, and warm expression
-- **Mama** — a beautiful woman in a qipao with black hair just below the shoulders
-- **Gugu** — shortish brown neck-length hair, jeans, and a shirt
+- **Daddy** — a taller balding dad with a blue shirt, cane, and warm expression (`tall` offset adds ~9 units of height)
+- **Mama** — a beautiful woman in a pink qipao with gold trim and frog buttons, black shoulder-length hair, skin-tone arms and neck
+- **Gugu** — short brown neck-length hair with fuzzy side puffs, blue jeans, green shirt with a faint white stripe
 
-**Targets:** Alien fish — blue-gray (`0x2a3a50`) pac-man-shaped fish oriented vertically, head pointing down, tail fin up, dorsal fin to one side. The bottom quarter of the body is a wide-open mouth gap (pac-man cutout, no dark fill). Fish are sunk 25% into the ground (center at `gy - TARGET_RADIUS * 0.5`). Friendly single eye, no teeth or red parts. When hit, a rainbow explosion of 20 radial streaks bursts outward.
+**Targets:** Alien fish — blue-gray (`0x2a3a50`) pac-man-shaped fish oriented vertically, head pointing down, tail fin up, dorsal fin to one side. The bottom quarter of the body is a wide-open mouth gap (pac-man cutout, no dark fill). Fish are sunk 25% into the ground (center at `gy - TARGET_RADIUS * 0.5`). In cave levels, target Y is additionally pushed below any ceiling to maintain clearance. Friendly single eye, no teeth or red parts. When hit, a rainbow explosion of 20 radial streaks bursts outward, and a descending sine-wave bloop sound plays (800→300 Hz, 0.15 s).
 
 **Projectiles:** Rubber ducks — yellow with orange beak, tumble/rotate as they fly. Air resistance varies by planet.
 
-**Landscapes:** Vary by world — green hills (Earth), cave tunnels with ceilings and stalactites (Cave), red rocky plateaus (Mars), gray craters (Moon), icy cliffs (Enceladus), volcanic plains (Io), and a rough bumpy nucleus (Comet).
+**Landscapes:** Vary by world — green hills (Earth), dark cave tunnels with rocky ceilings and stalactites (Cave), red rocky plateaus (Mars), gray craters (Moon), icy cliffs (Enceladus), volcanic plains (Io), and a rough bilobed 67P-inspired nucleus (Comet).
 
 ## Where things live
 
@@ -96,7 +96,7 @@ Fling state fields:
 | Moon      | 100             | 0.0            | 3.5            | 8–9    |
 | Enceladus | 50              | 0.0            | 2.5            | 10–11  |
 | Io        | 120             | 0.0            | 3.8            | 12–13  |
-| Comet     | 35              | 0.0            | 2.0            | 14–16  |
+| Comet     | 30              | 0.0            | 1.9            | 14–16  |
 
 Planet physics are stored in `PLANETS` config in `fling_sim.js` and broadcast as state fields (`state.gravity`, `state.airResistance`, `state.powerToVelocity`).
 
@@ -105,27 +105,38 @@ Planet physics are stored in `PLANETS` config in `fling_sim.js` and broadcast as
 - Terrain is a heightmap: `terrain.heights[i]` gives the ground height at x = `i * terrain.step`
 - Height is measured from the bottom of the screen (higher value = taller ground)
 - Ground Y in world coords: `WORLD_H - terrainHeightAt(terrain, x)`
+- Cave levels also carry `terrain.ceilingHeights[i]` — Y coordinate of the cave ceiling (measured from the top of the screen). Projectiles that rise above the ceiling are destroyed. `ceilingYAt(terrain, x)` interpolates like `groundYAt`.
 - Terrain generation varies by planet:
   - **Earth**: 3 layered sine waves with random phases (rolling green hills)
-  - **Cave**: floor heightmap + separate ceiling heightmap with stamped stalactites/stalagmites
+  - **Cave**: floor heightmap + separate `ceilingHeights` array. Ceiling has stamped pointed stalactites (conical spikes). A minimum tunnel gap (`170 - diff*8` px) is enforced between floor and ceiling. Stalactite count scales with difficulty.
   - **Mars**: Sine waves + `abs(sin)` for mesa/plateau features (red rocky terrain)
-  - **Moon**: 4 layered sine waves (including high-frequency surface roughness) + stamped parabolic craters with raised rims; bumpiness scales with difficulty via `bumpScale`
+  - **Moon**: 5 layered sine waves (including high-frequency micro-bumps) + stamped parabolic craters with raised rims; bumpiness `0.85 + diff*0.45` — more pronounced than before; crater count `4 + diff + rand(4)`, deeper and wider
   - **Enceladus**: Large sine cliffs + sawtooth ridges + fine ice texture + extra jagged detail; bumpiness scales with difficulty via `bumpScale`
-  - **Comet**: 67P-inspired bilobed rough nucleus with neck dips, pits, scarps/terraces, and very low gravity
+  - **Comet**: 67P-inspired bilobed nucleus: two Gaussian lobes (`t≈0.28` and `t≈0.72`) minus a neck dip (`t≈0.5`), plus 5 layers of sine roughness, active pits (parabolic pits with crumbled rims), and terraced scarps (linear drop-offs). Very low gravity (30 px/s²).
+- **Solvability guarantee**: `regenerateLevelGeometry()` retries terrain generation (up to 16 attempts, 24 for cave/comet) until `levelIsSolvable()` passes. The solvability check does a coarse grid search (angles 6–85° step 4°, powers 8–100 step 4) from every player spawn to every target, verifying at least one unobstructed trajectory exists.
 
 ## Level design
 
 16 levels across 7 worlds:
 
-- **Level 1** (Earth): gentle hills, 1 target
-- **Level 2** (Earth): moderate hills, 2 targets
-- **Level 3** (Earth): steeper hills, 3 targets
-- **Levels 4–5** (Cave): cave tunnels with a real ceiling and stalactites/stalagmites
-- **Levels 6–7** (Mars): rocky plateaus
-- **Levels 8–9** (Moon): crater-heavy gray terrain
-- **Levels 10–11** (Enceladus): icy cliffs with geysers
-- **Levels 12–13** (Io): volcanic ridges and sulfur-like patches
-- **Levels 14–16** (Comet): very bumpy low-gravity comet-nucleus terrain
+| Level | World     | Targets | Difficulty |
+|-------|-----------|---------|------------|
+| 1     | Earth     | 2       | 2          |
+| 2     | Earth     | 3       | 3          |
+| 3     | Earth     | 4       | 3          |
+| 4     | Cave      | 3       | 3          |
+| 5     | Cave      | 4       | 4          |
+| 6     | Mars      | 4       | 4          |
+| 7     | Mars      | 5       | 5          |
+| 8     | Moon      | 5       | 4          |
+| 9     | Moon      | 6       | 5          |
+| 10    | Enceladus | 6       | 5          |
+| 11    | Enceladus | 7       | 6          |
+| 12    | Io        | 6       | 5          |
+| 13    | Io        | 7       | 6          |
+| 14    | Comet     | 6       | 5          |
+| 15    | Comet     | 7       | 6          |
+| 16    | Comet     | 8       | 7          |
 
 Players are placed on the left ~25% of the terrain.
 Targets are placed across the right ~35%.
@@ -135,7 +146,7 @@ Targets are placed across the right ~35%.
 Physics vary by planet (see Planet system table above). Common rules:
 - Power maps to initial speed: `power × powerToVelocity = px/s`
 - Air resistance: `velocity *= (1 - airResistance * dt)` each tick (0 for airless worlds)
-- Projectiles collide with terrain surface (absorbed), cave ceilings (absorbed), and targets (destroyed)
+- Projectiles collide with terrain surface (absorbed), cave ceilings (absorbed via `projectileHitsCeiling()`), and targets (destroyed)
 - Fire cooldown: 600ms per player
 - Max 3 in-flight projectiles per player
 - Projectiles tumble: rotation field increments by rotationSpeed * dt each tick
@@ -146,24 +157,31 @@ PlayScene renders sky, terrain, and details based on `state.planet`:
 
 **Sky:**
 - Earth: blue gradient, yellow sun, white clouds
-- Cave: dark cave interior with warm glows and dust motes
+- Cave: `drawSkyCave()` — near-black interior (`0x101010`), 45 deterministic warm dust sparkles (`0xffd180`), two warm orange lantern-glow circles in deep background
 - Mars: orange-red dusty gradient, small distant sun, dust particles
 - Moon: black starfield, Earth in distance (upper-left, radius 66) with orthographic-projected continent polygons (`EARTH_CONTINENTS` — 7 continents defined as [lon°, lat°] outlines), random rotation per level, half-sphere phase overlay (alpha 0.3), atmosphere glow; stars
 - Enceladus: dark blue-black starfield, Saturn with rings (upper-right, radius 53) and hexagonal polar storm, geyser plumes
-- Comet: dense starfield with faint bluish comet-tail haze
+- Comet: `drawSkyComet()` — deep-space black-blue (`0x03050f`), 120 deterministic stars (via bitwise hash), distant sun glow (upper-right), faint blue-white coma/tail streaks, small bilobed 67P silhouette in sky upper-left
 
 **Terrain colors:**
-- Earth: green surface, dark green depth, grass tufts
-- Cave: brown rocky floor/depth plus separate rocky cave ceiling
+- Earth: green surface (`0x4caf50`), dark green depth, grass tufts
+- Cave: brown rocky floor (`0x5d5348`), dark depth (`0x3f3830`), rocky ceiling polygon (`0x4b433a`) with auto-detected stalactite lines (peak-detection every 4 samples)
 - Mars: red-brown surface, dark red depth, rocky pebbles
 - Moon: gray surface, darker gray depth, crater rim highlights
 - Enceladus: icy blue-white surface, blue depth, shine highlights
-- Comet: dusty gray-green rough surface with rubble highlights
+- Io: yellow-brown surface, volcanic orange depth
+- Comet: `drawSkyComet()` terrain — dusty gray-green (`0x6f746f`), darker depth (`0x4f544f`); surface details include rubble dots, pit shadow ellipses, scarp band lines (light/dark depending on slope direction), and broad terrace contour strokes
 
-**Trajectory preview** reads physics from `state.gravity`, `state.airResistance`, `state.powerToVelocity` so it stays in sync with the server. Gated on `state.showGuides` (global toggle).
+**Trajectory preview** reads physics from `state.gravity`, `state.airResistance`, `state.powerToVelocity` so it stays in sync with the server. Gated on `state.showGuides` (global toggle). Preview dots respect cave ceilings (stops at ceiling just as projectiles do). Guide length is level-dependent via `getGuidePreviewProfile()`:
+- Levels 1–3: full trajectory
+- Level 4: 75% of dots
+- Level 5: 50% of dots
+- Level 6: 25% of dots
+- Level 7+: capped at 3 dots
 
 **Effects:**
 - Rainbow explosion: 20 radial rainbow-colored streaks burst from each target on hit, fading over 900ms
+- Hit sound: `playHitSound()` — descending sine-wave bloop (800→300 Hz, 0.15 s) via Web Audio API, fires on each fish hit
 - Level complete: synthesized trumpet fanfare (C5-E5-G5 via Web Audio), characters bounce with frequency proportional to `sqrt(gravity)`
 - Fire button is positioned dynamically below the player each frame
 
@@ -174,6 +192,7 @@ PlayScene renders sky, terrain, and details based on `state.planet`:
 - Avatar selection via `select_avatar` message, available during pause
 - Each avatar has a distinct drawing function in `PlayScene.js` (`AVATAR_DRAW` object)
 - Selecting an avatar also updates the player's color to match
+- Avatar setup grid uses 4 columns; layout adjusted to `bx = -165 + col*130`, `by = -118 + row*44` to fit all 10 avatars (3 rows)
 
 ## Aiming
 
@@ -188,12 +207,13 @@ PlayScene renders sky, terrain, and details based on `state.planet`:
 - Aim persists between shots (not reset after firing)
 - Text HUD shows current angle, power, and planet name
 - Trajectory preview drawn as dotted arc (gated on global "Show guides" toggle from state)
-  - Guide length scales with level difficulty (global for all players):
-    - Levels 1-3: full path
-    - Level 4: ~75% of full trajectory
-    - Level 5: ~50% of full trajectory
-    - Level 6: ~25% of full trajectory
-    - Level 7+: capped to 3 dots (and remains this short for any future higher levels)
+  - Preview simulation respects cave ceilings; dots stop when ceiling is hit
+  - Guide length scales with level difficulty via `getGuidePreviewProfile(level)` (global for all players):
+    - Levels 1–3: full path (`ratio: 1.0`)
+    - Level 4: ~75% of dots (`ratio: 0.75`)
+    - Level 5: ~50% of dots (`ratio: 0.5`)
+    - Level 6: ~25% of dots (`ratio: 0.25`)
+    - Level 7+: capped to 3 dots (`capDots: 3`)
 
 ## Pause / Setup menu
 
@@ -213,9 +233,10 @@ PlayScene renders sky, terrain, and details based on `state.planet`:
 - To change projectile type: update `PROJECTILE_TYPE` in sim, update `drawProjectiles()` in PlayScene
 - To change target type: update `TARGET_TYPE` in sim, update `drawTargets()` in PlayScene
 - To adjust terrain difficulty: modify amplitude calculations in `generateTerrain()`
-- To add a new planet: add to `PLANETS` config in sim, add level entries to `LEVELS`, add terrain generation branch in `generateTerrain()`, add sky/terrain rendering in PlayScene (`drawSky*()`, palettes in `drawTerrain()`)
-- To add a new level: add entry to `LEVELS` array in sim (planet + targets + difficulty)
+- To add a new planet: add to `PLANETS` config in sim, add level entries to `LEVELS`, add terrain generation branch in `generateTerrain()`, add sky/terrain rendering in PlayScene (`drawSky*()`, palettes in `drawTerrain()`), add to `PLANET_LABELS`
+- To add a new level: add entry to `LEVELS` array in sim (planet + targets + difficulty); solvability is checked automatically by `regenerateLevelGeometry()`
 - Physics are broadcast in state — trajectory preview in PlayScene reads from state, no hardcoded constants to keep in sync
+- Cave levels need a `ceilingHeights` array in the terrain object; collision and rendering are conditional on its presence (`terrain?.ceilingHeights`)
 
 ## Common pitfalls
 
@@ -224,3 +245,5 @@ PlayScene renders sky, terrain, and details based on `state.planet`:
 - Terrain collision uses world coordinates; rendering uses scaled screen coordinates
 - Physics values (gravity, airResistance, powerToVelocity) vary by planet — always read from state, never hardcode
 - The terrain heightmap is broadcast every tick as part of full state — keep it compact (100 samples)
+- `terrain.ceilingHeights` is measured in screen-Y from the top (not from the bottom like `heights`); `ceilingYAt()` returns raw Y and can return `null` for non-cave levels
+- `levelIsSolvable()` is intentionally a coarse search for speed; it may rarely pass for edge-case unsolvable layouts on very difficult settings — the retry loop mitigates this

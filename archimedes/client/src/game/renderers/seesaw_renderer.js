@@ -7,6 +7,18 @@
  */
 
 import Phaser from 'phaser';
+import {
+  createCommonUI,
+  updateDoorButton,
+  cleanupObjectTexts,
+  drawObjectEmojiCached,
+  destroyCommonUI,
+  updateConfetti,
+  drawConfetti,
+  shouldHandlePointer,
+  FONT_BODY,
+  FONT_MASS,
+} from './renderer_utils.js';
 
 // ── Renderer state (per-scene instance) ──────────────────────────────────────
 
@@ -18,7 +30,7 @@ function getData(scene) {
     d = {
       objectTexts: new Map(),
       uiCreated: false,
-      shoreLabels: null,
+      confettiSeenAt: null,
       // UI elements
       levelTitle: null,
       progressText: null,
@@ -27,7 +39,6 @@ function getData(scene) {
       doorText: null,
       resetBtn: null,
       lvlBtn: null,
-      pivotGlow: null,
       // Drag tracking
       draggingPivot: false,
     };
@@ -40,6 +51,33 @@ function getData(scene) {
 
 function sx(scene, x) { return scene.sx(x); }
 function sy(scene, y) { return scene.sy(y); }
+function beamSpan(beam) {
+  if (!beam) return 500;
+  if (Number.isFinite(beam.span)) return beam.span;
+  if (Number.isFinite(beam.leftArm) && Number.isFinite(beam.rightArm)) {
+    return beam.leftArm + beam.rightArm;
+  }
+  if (Number.isFinite(beam.length)) return beam.length;
+  return 500;
+}
+function beamLeftArm(beam) {
+  if (Number.isFinite(beam?.leftArm)) return beam.leftArm;
+  return beamSpan(beam) * 0.5;
+}
+function beamRightArm(beam) {
+  if (Number.isFinite(beam?.rightArm)) return beam.rightArm;
+  return beamSpan(beam) * 0.5;
+}
+function beamWorldPoint(beam, bp) {
+  const span = beamSpan(beam);
+  const t = bp * span;
+  const c = Math.cos(beam.angle || 0);
+  const s = Math.sin(beam.angle || 0);
+  return {
+    x: (beam.pivotX || 0) + t * c,
+    y: (beam.pivotY || 0) + t * s,
+  };
+}
 
 // ── Create ───────────────────────────────────────────────────────────────────
 
@@ -56,14 +94,7 @@ export function renderState(scene, state) {
   ensureUI(scene, d);
 
   // Clean up stale object text caches
-  const currentIds = new Set(state.objects.map(o => o.id));
-  for (const [id, cached] of d.objectTexts) {
-    if (!currentIds.has(id)) {
-      cached.emoji.destroy();
-      cached.mass.destroy();
-      d.objectTexts.delete(id);
-    }
-  }
+  cleanupObjectTexts(d.objectTexts, state.objects);
 
   const W = scene.scale.width;
   const H = scene.scale.height;
@@ -73,7 +104,7 @@ export function renderState(scene, state) {
   // ── 1. Sky gradient ────────────────────────────────────────────────────
   const groundScreenY = sy(scene, state.groundY);
 
-  // Level 5: parallax sky shift
+  // Finale: parallax sky shift
   const scroll = state.worldScroll || 0;
   const skyBlue = scroll > 0
     ? lerpColor(0x87ceeb, 0x4a90d9, Math.min(1, scroll / 200))
@@ -81,8 +112,8 @@ export function renderState(scene, state) {
   g.fillStyle(skyBlue);
   g.fillRect(0, 0, W, groundScreenY);
 
-  // Level 5: clouds
-  if (state.level === 5 && scroll > 0) {
+  // Finale clouds
+  if (state.level === 6 && scroll > 0) {
     drawClouds(scene, scroll);
   }
 
@@ -93,7 +124,7 @@ export function renderState(scene, state) {
   g.fillRect(0, groundScreenY, W, 6);
 
   // ── 3. Palette area ────────────────────────────────────────────────────
-  const paletteY = sy(scene, 440);
+  const paletteY = sy(scene, (state.groundY || 430) + 10);
   g.fillStyle(0x2c3e50, 0.3);
   g.fillRect(0, paletteY, W, H - paletteY);
   g.lineStyle(1, 0x7f8c8d, 0.5);
@@ -125,6 +156,10 @@ export function renderState(scene, state) {
     g.strokePath();
   }
 
+  if (state.pivotHintTicks > 0 && beam.pivotDraggable) {
+    drawPivotHint(scene, state);
+  }
+
   // ── 5. Beam ────────────────────────────────────────────────────────────
   drawBeam(scene, state);
 
@@ -136,7 +171,7 @@ export function renderState(scene, state) {
   // ── 7. Objects on beam ─────────────────────────────────────────────────
   for (const obj of state.objects) {
     if (obj.onBeam && !obj.claimedBy) {
-      drawObject(scene, d, obj);
+      drawObject(scene, d, obj, beam);
     }
   }
 
@@ -146,21 +181,20 @@ export function renderState(scene, state) {
   }
 
   // ── 9. Confetti ────────────────────────────────────────────────────────
-  if (state.confetti) {
-    drawConfetti(scene, state);
-  }
+  updateConfetti(scene, d, state);
+  drawConfetti(scene, d, state);
 
   // ── 11. Objects in palette / not on beam ────────────────────────────────
   for (const obj of state.objects) {
     if (!obj.onBeam && !obj.claimedBy) {
-      drawObject(scene, d, obj);
+      drawObject(scene, d, obj, beam);
     }
   }
 
   // ── 12. Objects being dragged ──────────────────────────────────────────
   for (const obj of state.objects) {
     if (obj.claimedBy) {
-      drawObject(scene, d, obj);
+      drawObject(scene, d, obj, beam);
     }
   }
 
@@ -175,7 +209,8 @@ function drawBeam(scene, state) {
   const beam = state.beam;
   const pivX = sx(scene, beam.pivotX);
   const pivY = sy(scene, beam.pivotY);
-  const halfLen = beam.length / 2;
+  const leftArm = beamLeftArm(beam);
+  const rightArm = beamRightArm(beam);
   const scaleX = sx(scene, 1) - sx(scene, 0) || 1;
 
   g.save();
@@ -184,15 +219,16 @@ function drawBeam(scene, state) {
 
   // Wood-brown beam rectangle
   const beamH = 12;
-  const beamW = halfLen * 2 * scaleX;
+  const beamW = (leftArm + rightArm) * scaleX;
+  const leftPx = -leftArm * scaleX;
   g.fillStyle(0xa0522d);
-  g.fillRect(-beamW / 2, -beamH / 2, beamW, beamH);
+  g.fillRect(leftPx, -beamH / 2, beamW, beamH);
   g.lineStyle(2, 0x5d4037);
-  g.strokeRect(-beamW / 2, -beamH / 2, beamW, beamH);
+  g.strokeRect(leftPx, -beamH / 2, beamW, beamH);
 
   // Tick marks every 50px
   g.lineStyle(1, 0x5d4037, 0.6);
-  for (let t = -halfLen; t <= halfLen; t += 50) {
+  for (let t = -leftArm; t <= rightArm; t += 50) {
     const tx = t * scaleX;
     g.lineBetween(tx, -beamH / 2, tx, beamH / 2);
   }
@@ -204,46 +240,122 @@ function drawBeam(scene, state) {
   g.restore();
 }
 
+function drawPivotHint(scene, state) {
+  const g = scene.graphics;
+  const beam = state.beam;
+  if (!beam) return;
+
+  const pivX = sx(scene, beam.pivotX);
+  const pivY = sy(scene, beam.pivotY);
+  const bob = Math.sin((scene.time?.now || Date.now()) / 180) * 6;
+  const topY = pivY - 136 + bob;
+  const shaftBottom = pivY - 46;
+
+  g.lineStyle(6, 0xf1c40f, 0.95);
+  g.lineBetween(pivX, topY, pivX, shaftBottom);
+
+  g.fillStyle(0xf1c40f, 0.95);
+  g.beginPath();
+  g.moveTo(pivX, pivY - 28);
+  g.lineTo(pivX - 22, shaftBottom);
+  g.lineTo(pivX + 22, shaftBottom);
+  g.closePath();
+  g.fillPath();
+
+  g.fillStyle(0xffffff, 0.95);
+  g.fillCircle(pivX, topY - 18, 16);
+  g.lineStyle(2, 0xf39c12, 0.95);
+  g.strokeCircle(pivX, topY - 18, 16);
+}
+
 // ── Basket drawing ───────────────────────────────────────────────────────────
 
 function drawBaskets(scene, state) {
   const g = scene.graphics;
   const beam = state.beam;
+  const yScale = Math.abs(sy(scene, 1) - sy(scene, 0)) || 1;
+  const hangerPx = Math.max(20, 36 * yScale);
+  const basketHPx = Math.max(34, 44 * yScale);
 
-  const positions = [
-    { pos: state.baskets.left.pos, label: 'L' },
-    { pos: state.baskets.right.pos, label: 'R' },
-  ];
+  // Build basket position list — support multiple left slots or single left basket
+  const positions = [];
+  if (state.baskets.leftSlots) {
+    state.baskets.leftSlots.forEach((slot, i) => {
+      positions.push({ side: `slot${i}`, pos: slot.pos, slotIndex: i });
+    });
+  } else if (state.baskets.left) {
+    positions.push({ side: 'left', pos: state.baskets.left.pos, label: 'L' });
+  }
+  positions.push({ side: 'right', pos: state.baskets.right.pos, label: 'R' });
+
+  const basketCounts = {};
+  for (const p of positions) basketCounts[p.side] = 0;
+  for (const obj of state.objects || []) {
+    if (obj.onBeam && obj.inBasket && basketCounts[obj.inBasket] !== undefined) {
+      basketCounts[obj.inBasket]++;
+    }
+  }
+
+  // Must match drawBeam's beamH / 2 (beam is 12px tall in screen space).
+  const BEAM_HALF_H = 6;
+  const angle = beam.angle || 0;
+  const scaleX = (sx(scene, 1) - sx(scene, 0)) || 1;
+  const pivX = sx(scene, beam.pivotX);
+  const pivY = sy(scene, beam.pivotY);
 
   for (const basket of positions) {
-    const worldX = beam.pivotX + basket.pos * beam.length;
-    const dx = worldX - beam.pivotX;
-    const worldY = beam.pivotY + Math.sin(beam.angle) * dx;
+    // Screen-space beam transform — matches drawBeam's rotateCanvas approach
+    const beamT = basket.pos * beamSpan(beam) * scaleX;
+    const axisX = pivX + beamT * Math.cos(angle);
+    const axisY = pivY + beamT * Math.sin(angle);
 
-    const bx = sx(scene, worldX);
-    const by = sy(scene, worldY);
-    const bw = 40;
-    const bh = 35;
+    // Offset to the bottom surface of the beam: perpendicular "below" the
+    // tilted beam is the direction (-sin θ, +cos θ) in screen coordinates.
+    const hangerX = axisX - BEAM_HALF_H * Math.sin(angle);
+    const hangerY = axisY + BEAM_HALF_H * Math.cos(angle);
 
-    // Rotate basket with beam
-    g.save();
-    g.translateCanvas(bx, by);
-    g.rotateCanvas(beam.angle);
+    const basketTopY = hangerY + hangerPx;
+    const bw = Math.max(66, 56 + (basketCounts[basket.side] || 0) * 18);
+    const left = hangerX - bw / 2;
+    const right = hangerX + bw / 2;
+    const bottom = basketTopY + basketHPx;
 
-    // U-shape basket
-    g.lineStyle(3, 0x8b4513);
+    // Slot baskets: distinct tint (blue gradient by distance)
+    const isSlot = basket.side.startsWith('slot');
+    const slotColors = [0x3498db, 0x27ae60, 0xe67e22]; // near→far: blue, green, orange
+    const basketStroke = isSlot ? slotColors[basket.slotIndex % slotColors.length] : 0x8b4513;
+    const basketFill = isSlot ? slotColors[basket.slotIndex % slotColors.length] : 0xd2b48c;
+
+    // Hanger from beam bottom surface.
+    g.lineStyle(3, 0x5d4037, 0.9);
+    g.lineBetween(hangerX, hangerY, hangerX, basketTopY);
+    g.fillStyle(0x5d4037, 0.95);
+    g.fillCircle(hangerX, hangerY, 3);
+
+    // Upright U-shape basket.
+    g.lineStyle(3, basketStroke);
     g.beginPath();
-    g.moveTo(-bw / 2, -5);
-    g.lineTo(-bw / 2, bh);
-    g.lineTo(bw / 2, bh);
-    g.lineTo(bw / 2, -5);
+    g.moveTo(left, basketTopY);
+    g.lineTo(left, bottom);
+    g.lineTo(right, bottom);
+    g.lineTo(right, basketTopY);
     g.strokePath();
 
-    // Semi-transparent fill
-    g.fillStyle(0xd2b48c, 0.3);
-    g.fillRect(-bw / 2, -5, bw, bh + 5);
+    // Semi-transparent basket body.
+    g.fillStyle(basketFill, isSlot ? 0.15 : 0.3);
+    g.fillRect(left, basketTopY, bw, basketHPx);
 
-    g.restore();
+    // Pip dots below basket: 1 pip = nearest, 3 pips = farthest from pivot
+    if (isSlot) {
+      const pips = basket.slotIndex + 1;
+      const pipR = 5;
+      const pipSpacing = 13;
+      const totalW = (pips - 1) * pipSpacing;
+      g.fillStyle(basketStroke, 0.9);
+      for (let pi = 0; pi < pips; pi++) {
+        g.fillCircle(hangerX - totalW / 2 + pi * pipSpacing, bottom + 14, pipR);
+      }
+    }
   }
 }
 
@@ -253,10 +365,9 @@ function drawArchimedes(scene, d, state) {
   const g = scene.graphics;
   const arch = state.archimedes;
   const beam = state.beam;
-
-  const worldX = beam.pivotX + arch.beamPosition * beam.length;
-  const dx = worldX - beam.pivotX;
-  const worldY = beam.pivotY + Math.sin(beam.angle) * dx - arch.size * 0.5;
+  const p = beamWorldPoint(beam, arch.beamPosition);
+  const worldX = p.x;
+  const worldY = p.y - arch.size * 0.5;
 
   const ax = sx(scene, worldX);
   const ay = sy(scene, worldY);
@@ -275,10 +386,10 @@ function drawArchimedes(scene, d, state) {
     const emoji = scene.add.text(ax, ay, '👴', {
       fontSize: `${Math.floor(r * 1.6)}px`,
     }).setOrigin(0.5).setDepth(120);
-    const mass = scene.add.text(ax, ay + r + 10, `${arch.mass}`, {
-      fontSize: '13px', color: '#fff', fontStyle: 'bold',
+    const mass = scene.add.text(ax, ay + r + 12, `${arch.mass}`, {
+      fontSize: FONT_MASS, color: '#fff', fontStyle: 'bold',
       backgroundColor: 'rgba(0,0,0,0.6)',
-      padding: { x: 4, y: 2 },
+      padding: { x: 5, y: 3 },
     }).setOrigin(0.5).setDepth(121);
     cached = { emoji, mass };
     d.objectTexts.set(key, cached);
@@ -290,11 +401,37 @@ function drawArchimedes(scene, d, state) {
 
 // ── Object drawing ───────────────────────────────────────────────────────────
 
-function drawObject(scene, d, obj) {
+function drawObject(scene, d, obj, beam) {
   const g = scene.graphics;
-  const x = sx(scene, obj.x);
-  const y = sy(scene, obj.y);
+  const isEarth = obj.type === 'earth';
+  const isArchimedes = obj.type === 'archimedes';
   const r = obj.size * 0.4 * (scene.scale.width / 800);
+
+  let x = sx(scene, obj.x);
+  let y = sy(scene, obj.y);
+
+  // For earth/archimedes on the beam, use the same beam-space transform as drawBeam
+  // so they stay glued to the lever regardless of scaleX vs scaleY differences.
+  if (beam && obj.onBeam && (isEarth || isArchimedes)) {
+    const scaleX = (sx(scene, 1) - sx(scene, 0)) || 1;
+    const pivX = sx(scene, beam.pivotX);
+    const pivY = sy(scene, beam.pivotY);
+    const angle = beam.angle || 0;
+    const beamT = obj.beamPosition * beamSpan(beam) * scaleX;
+    const bx = pivX + beamT * Math.cos(angle);
+    const by = pivY + beamT * Math.sin(angle);
+    // Sit on beam top surface: perpendicular offset above the beam
+    const BEAM_HALF_H = 6;
+    const seatOffset = BEAM_HALF_H + r * 0.5;
+    x = bx - seatOffset * Math.sin(angle);
+    y = by - seatOffset * Math.cos(angle);
+  }
+
+  // Fixed objects are visually locked.
+  if (obj.fixed && !isEarth && !isArchimedes) {
+    g.lineStyle(3, 0x2c3e50, 0.8);
+    g.strokeCircle(x, y, r + 7);
+  }
 
   // Claim highlight
   if (obj.claimedBy) {
@@ -302,59 +439,55 @@ function drawObject(scene, d, obj) {
     g.strokeCircle(x, y, r + 5);
   }
 
-  const color = Phaser.Display.Color.HexStringToColor(obj.color).color;
-  g.fillStyle(color, 0.85);
-  g.fillCircle(x, y, r);
-  g.lineStyle(2, 0x333333, 0.5);
-  g.strokeCircle(x, y, r);
+  if (isArchimedes) {
+    // Draw legs straddling the beam, oriented along beam direction
+    const beamAngle = beam?.angle || 0;
+    const legLen = r * 0.35;
+    const legDy = r * 0.42;
+    const legBaseX = x + legDy * Math.sin(beamAngle);
+    const legBaseY = y + legDy * Math.cos(beamAngle);
+    g.lineStyle(3, 0x5d4037, 0.95);
+    g.lineBetween(
+      legBaseX - legLen * Math.cos(beamAngle),
+      legBaseY - legLen * Math.sin(beamAngle),
+      legBaseX + legLen * Math.cos(beamAngle),
+      legBaseY + legLen * Math.sin(beamAngle),
+    );
+  } else if (!isEarth) {
+    const color = Phaser.Display.Color.HexStringToColor(obj.color).color;
+    g.fillStyle(color, 0.85);
+    g.fillCircle(x, y, r);
+    g.lineStyle(2, 0x333333, 0.5);
+    g.strokeCircle(x, y, r);
+  }
 
+  // Regular objects: shared emoji + mass caching
+  if (!isEarth && !isArchimedes) {
+    drawObjectEmojiCached(scene, d.objectTexts, obj, x, y, r);
+    return;
+  }
+
+  // Earth and Archimedes: custom text rendering (left in-place per plan)
   let cached = d.objectTexts.get(obj.id);
   if (!cached) {
-    const fontSize = Math.max(16, Math.floor(r * 1.5));
+    const fontSize = isEarth
+      ? Math.max(34, Math.floor(r * 2.2))
+      : Math.max(30, Math.floor(r * 1.9));
     const emoji = scene.add.text(x, y, obj.emoji, {
       fontSize: `${fontSize}px`,
     }).setOrigin(0.5).setDepth(120);
-    const mass = scene.add.text(x, y + r + 8, `${obj.mass}`, {
-      fontSize: '13px', color: '#fff', fontStyle: 'bold',
-      backgroundColor: 'rgba(0,0,0,0.6)',
-      padding: { x: 4, y: 2 },
-    }).setOrigin(0.5).setDepth(121);
-    cached = { emoji, mass };
+    cached = { emoji, mass: null };
     d.objectTexts.set(obj.id, cached);
   }
-  cached.emoji.setPosition(x, y);
-  cached.mass.setPosition(x, y + r + 10);
-  cached.mass.setText(`${obj.mass}`);
+  if (cached.emoji) {
+    const ey = isArchimedes ? (y - r * 0.18) : y;
+    cached.emoji.setPosition(x, ey);
+  }
 }
 
 // ── Confetti ─────────────────────────────────────────────────────────────────
 
-function drawConfetti(scene, state) {
-  const g = scene.graphics;
-  const c = state.confetti;
-  const now = scene.time?.now || Date.now();
-  const elapsed = now - c.startTime;
-  if (elapsed > 2000) return;
-
-  const progress = elapsed / 2000;
-  const cx = sx(scene, c.x);
-  const cy = sy(scene, c.y);
-  const colors = [0xe74c3c, 0xf1c40f, 0x2ecc71, 0x3498db, 0x9b59b6, 0xe67e22];
-
-  for (let i = 0; i < 24; i++) {
-    const angle = (i / 24) * Math.PI * 2 + progress * 3;
-    const dist = progress * 120 + (i % 3) * 20;
-    const px = cx + Math.cos(angle) * dist;
-    const py = cy + Math.sin(angle) * dist - (1 - progress) * 40 + progress * 60;
-    const alpha = Math.max(0, 1 - progress);
-    const size = 4 + (i % 3) * 2;
-
-    g.fillStyle(colors[i % colors.length], alpha);
-    g.fillRect(px - size / 2, py - size / 2, size, size);
-  }
-}
-
-// ── Clouds (level 5) ─────────────────────────────────────────────────────────
+// ── Clouds (level 6 finale) ──────────────────────────────────────────────────
 
 function drawClouds(scene, scroll) {
   const g = scene.graphics;
@@ -387,44 +520,17 @@ function ensureUI(scene, d) {
   if (d.uiCreated) return;
   d.uiCreated = true;
 
-  const W = scene.scale.width;
-  const H = scene.scale.height;
+  // Common chrome: levelTitle, msgText, doorText, resetBtn, lvlBtn
+  Object.assign(d, createCommonUI(scene));
 
-  d.levelTitle = scene.add.text(12, 10, '', {
-    fontSize: '18px', color: '#1a5276', fontStyle: 'bold',
+  // Seesaw-specific extras
+  d.progressText = scene.add.text(12, 50, '', {
+    fontSize: FONT_BODY, color: '#555',
   }).setDepth(200);
 
-  d.progressText = scene.add.text(12, 34, '', {
-    fontSize: '13px', color: '#555',
+  d.loadText = scene.add.text(12, 76, '', {
+    fontSize: FONT_BODY, color: '#555',
   }).setDepth(200);
-
-  d.loadText = scene.add.text(12, 52, '', {
-    fontSize: '13px', color: '#555',
-  }).setDepth(200);
-
-  d.msgText = scene.add.text(W / 2, 14, '', {
-    fontSize: '16px', color: '#2c3e50', backgroundColor: '#ecf0f1',
-    padding: { x: 10, y: 4 },
-  }).setOrigin(0.5, 0).setDepth(200).setVisible(false);
-
-  d.doorText = scene.add.text(W - 16, 10, '🚪', {
-    fontSize: '48px',
-  }).setOrigin(1, 0).setDepth(200).setInteractive({ useHandCursor: true });
-  d.doorText.on('pointerdown', () => scene.game.net.sendInput('door_click'));
-
-  const btnY = H - 32;
-
-  d.resetBtn = scene.add.text(W - 50, btnY, '🔄', {
-    fontSize: '26px', color: '#fff', backgroundColor: '#e74c3c',
-    padding: { x: 12, y: 8 },
-  }).setOrigin(0.5).setDepth(200).setInteractive({ useHandCursor: true });
-  d.resetBtn.on('pointerdown', () => scene.game.net.sendInput('reset'));
-
-  d.lvlBtn = scene.add.text(16, btnY, '📋', {
-    fontSize: '22px', color: '#fff', backgroundColor: '#9b59b6',
-    padding: { x: 10, y: 6 },
-  }).setOrigin(0, 0.5).setDepth(200).setInteractive({ useHandCursor: true });
-  d.lvlBtn.on('pointerdown', () => scene.game.net.sendInput('toggle_level_select'));
 }
 
 function updateUI(scene, d, state) {
@@ -436,7 +542,7 @@ function updateUI(scene, d, state) {
   const doorProg = state.doorProgress || 0;
 
   d.progressText.setText(
-    `Room: ${scene.game.net.roomId || '----'}  |  Balance: ${doorProg}/${target}`
+    `Room: ${scene.game.net.roomId || '----'}  |  Balances: ${doorProg}/${target}`
   );
 
   // Show angle info
@@ -455,16 +561,13 @@ function updateUI(scene, d, state) {
     d.msgText.setVisible(false);
   }
 
-  d.doorText.setText(state.doorOpen ? '🚪✨' : '🚪');
-  d.doorText.setColor(state.doorOpen ? '#27ae60' : '#888');
-  d.doorText.setFontSize(state.doorOpen ? '56px' : '48px');
+  updateDoorButton(d.doorText, state.doorOpen);
 }
 
 // ── Input handlers ───────────────────────────────────────────────────────────
 
 export function onPointerDown(scene, pointer, state) {
-  if (!state || state.gamePaused || state.showLevelSelect) return;
-  if (state.paused) return;
+  if (!shouldHandlePointer(state)) return;
 
   const gx = scene.ux(pointer.x);
   const gy = scene.uy(pointer.y);
@@ -520,15 +623,12 @@ export function destroy(scene) {
   if (!d) return;
 
   for (const [, cached] of d.objectTexts) {
-    cached.emoji.destroy();
-    cached.mass.destroy();
+    if (cached.emoji) cached.emoji.destroy();
+    if (cached.mass) cached.mass.destroy();
   }
   d.objectTexts.clear();
 
-  const uiKeys = ['levelTitle', 'progressText', 'loadText', 'msgText', 'doorText', 'resetBtn', 'lvlBtn'];
-  for (const key of uiKeys) {
-    if (d[key]) { d[key].destroy(); d[key] = null; }
-  }
+  destroyCommonUI(d, ['progressText', 'loadText']);
 
   sceneData.delete(scene);
 }

@@ -387,6 +387,7 @@ export default class PlayScene extends Phaser.Scene {
     for (const t of this.state.targets) {
       if (t.hit && !this.prevTargetHits[t.id]) {
         this.spawnRainbowExplosion(t.x * scaleX, t.y * scaleY);
+        this.playHitSound();
       }
       this.prevTargetHits[t.id] = t.hit;
     }
@@ -1448,6 +1449,25 @@ export default class PlayScene extends Phaser.Scene {
       }
     }
     this.fireworks = alive;
+  }
+
+  // -----------------------------------------------------------------------
+  // Hit sound — descending pop/bloop when a fish is hit
+  // -----------------------------------------------------------------------
+  playHitSound() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.2);
+    } catch (_) { /* Web Audio not available */ }
   }
 
   // -----------------------------------------------------------------------

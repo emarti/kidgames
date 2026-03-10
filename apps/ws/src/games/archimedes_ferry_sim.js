@@ -13,6 +13,14 @@
  */
 
 import { clamp } from './maze_utils.js';
+import {
+  createIdCounter,
+  claimObject,
+  releaseObject,
+  expireStaleClaimsOnObjects,
+  applyCursorMove,
+  initModuleBase,
+} from './archimedes_utils.js';
 
 // ── Boat constants ──────────────────────────────────────────────────────────
 
@@ -89,8 +97,7 @@ export const LEVEL_LIST = Object.entries(LEVELS).map(([num, cfg]) => ({
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-let _idCounter = 0;
-function nextId() { return 'obj_' + (++_idCounter); }
+const nextId = createIdCounter('obj');
 
 function createObject(type, x, y) {
   const def = OBJECT_TYPES[type];
@@ -257,14 +264,10 @@ export function initModule(state, subLevel) {
   const cfg = LEVELS[lvl];
   if (!cfg) return;
 
-  state.level = lvl;
-  state.levelId = cfg.id;
-  state.levelName = cfg.name;
+  initModuleBase(state, { _level: lvl, ...cfg });
   state.objects = [];
   state.deliveredCount = 0;
   state.tripsCompleted = 0;
-  state.doorOpen = false;
-  state.showLevelSelect = false;
   state.cargoMass = 0;
 
   // Layout (ferry-specific)
@@ -298,12 +301,6 @@ export function initModule(state, subLevel) {
     if (obj) state.objects.push(obj);
   }
 
-  // Release all player holds
-  for (const pid of [1, 2, 3, 4]) {
-    const p = state.players[pid];
-    if (p) p.heldObjectId = null;
-  }
-
   state.message = `${cfg.name}: ${cfg.desc}`;
 }
 
@@ -311,15 +308,8 @@ export function initModule(state, subLevel) {
  * Ferry simulation step. Called each tick by the dispatcher.
  */
 export function stepModule(state, now) {
-  // Expire stale claims (3s)
-  for (const obj of state.objects) {
-    if (obj.claimedBy && obj.claimTime && now - obj.claimTime > 3000) {
-      const p = state.players[obj.claimedBy];
-      if (p) p.heldObjectId = null;
-      obj.claimedBy = null;
-      obj.claimTime = null;
-    }
-  }
+  // Expire stale claims
+  expireStaleClaimsOnObjects(state.objects, state, now);
 
   // Physics
   const physics = computeBoatPhysics(state);
@@ -389,8 +379,7 @@ export function applyModuleInput(state, playerId, input, now) {
 
   switch (input.action) {
     case 'cursor_move': {
-      player.cursorX = clamp(input.x || 0, 0, state.sceneWidth);
-      player.cursorY = clamp(input.y || 0, 0, state.sceneHeight);
+      applyCursorMove(player, input, state.sceneWidth, state.sceneHeight);
 
       if (player.heldObjectId) {
         const obj = state.objects.find(o => o.id === player.heldObjectId);
@@ -412,9 +401,7 @@ export function applyModuleInput(state, playerId, input, now) {
         (obj.onShore === 'right' && state.boat.atDock === 'right');
 
       if (canGrab) {
-        obj.claimedBy = playerId;
-        obj.claimTime = now;
-        player.heldObjectId = obj.id;
+        claimObject(obj, player, now);
         obj.onShore = null;
         obj.onBoat = false;
       }
@@ -426,9 +413,7 @@ export function applyModuleInput(state, playerId, input, now) {
       const obj = state.objects.find(o => o.id === player.heldObjectId);
       if (!obj) { player.heldObjectId = null; return true; }
 
-      obj.claimedBy = null;
-      obj.claimTime = null;
-      player.heldObjectId = null;
+      releaseObject(obj, player);
 
       const deckY = state.boat.deckY ?? (state.waterY - EMPTY_FREEBOARD);
       const boatLeft  = state.boat.x - HULL_WIDTH / 2 - 30;

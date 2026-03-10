@@ -42,22 +42,24 @@ export default class PlayScene extends Phaser.Scene {
       type: 'seesaw',
       name: '⚖️ Seesaw Lab',
       levels: [
-        { n: 1, label: 'Level 1: First Balance', clr: '#d35400' },
-        { n: 2, label: 'Level 2: Heavy Mix', clr: '#e67e22' },
-        { n: 3, label: 'Level 3: Free Place', clr: '#f39c12' },
-        { n: 4, label: 'Level 4: Moving Pivot', clr: '#e74c3c' },
-        { n: 5, label: 'Level 5: Archimedes\' Lever', clr: '#8e44ad' },
+        { n: 1, label: 'Level 1: Fixed Four', clr: '#d35400' },
+        { n: 2, label: 'Level 2: Heavy Basket', clr: '#e67e22' },
+        { n: 3, label: 'Level 3: Short Right Arm', clr: '#f39c12' },
+        { n: 4, label: 'Level 4: Sliding Fulcrum', clr: '#e74c3c' },
+        { n: 5, label: 'Level 5: Multi Placement', clr: '#8e44ad' },
+        { n: 6, label: 'Level 6: Archimedes & Earth', clr: '#2c3e50' },
       ],
     },
     {
       type: 'pulley',
       name: '🔗 Pulley Builder',
       levels: [
-        { n: 1, label: 'Level 1: Direct Lift', clr: '#27ae60' },
-        { n: 2, label: 'Level 2: Too Heavy!', clr: '#3498db' },
-        { n: 3, label: 'Level 3: Even Heavier!', clr: '#e67e22' },
-        { n: 4, label: 'Level 4: The Elevator', clr: '#9b59b6' },
-        { n: 5, label: 'Level 5: Busy Elevator', clr: '#e74c3c' },
+        { n: 1, label: 'Level 1: Hoist the Lantern', clr: '#ff8f00' },
+        { n: 2, label: 'Level 2: Raise the Column', clr: '#b0bec5' },
+        { n: 3, label: 'Level 3: Lift the Statue', clr: '#90a4ae' },
+        { n: 4, label: 'Level 4: Quarry Hoist', clr: '#78909c' },
+        { n: 5, label: 'Level 5: Zoo Lift', clr: '#66bb6a' },
+        { n: 6, label: 'Level 6: Temple Engine', clr: '#6d4c41' },
       ],
     },
   ];
@@ -168,35 +170,35 @@ export default class PlayScene extends Phaser.Scene {
 
     this.startContainer = this.add.container(cx, cy).setDepth(500).setVisible(false);
 
-    const bg = this.add.rectangle(0, 0, 400, 300, 0x000000, 0.85).setOrigin(0.5);
+    const bg = this.add.rectangle(0, 0, 460, 360, 0x000000, 0.85).setOrigin(0.5);
     this.startContainer.add(bg);
 
-    this.overlayTitle = this.add.text(0, -110, 'ARCHIMEDES', {
-      fontSize: '30px', color: '#fff', fontStyle: 'bold',
+    this.overlayTitle = this.add.text(0, -150, 'ARCHIMEDES', {
+      fontSize: '42px', color: '#fff', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.startContainer.add(this.overlayTitle);
 
-    this.overlayLevel = this.add.text(0, -75, '', {
-      fontSize: '18px', color: '#3498db',
+    this.overlayLevel = this.add.text(0, -103, '', {
+      fontSize: '26px', color: '#3498db',
     }).setOrigin(0.5);
     this.startContainer.add(this.overlayLevel);
 
-    this.overlayRoom = this.add.text(0, -45, '', {
-      fontSize: '14px', color: '#aaa',
+    this.overlayRoom = this.add.text(0, -68, '', {
+      fontSize: '20px', color: '#aaa',
     }).setOrigin(0.5);
     this.startContainer.add(this.overlayRoom);
 
-    const instructions = this.add.text(0, 10,
+    const instructions = this.add.text(0, -5,
       'Drag items onto the boat\n' +
       'Press GO to sail across\n' +
       'Don\'t overload or it sinks!', {
-      fontSize: '15px', color: '#ccc', align: 'center', lineSpacing: 4,
+      fontSize: '22px', color: '#ccc', align: 'center', lineSpacing: 8,
     }).setOrigin(0.5);
     this.startContainer.add(instructions);
 
-    const btn = this.add.text(0, 95, 'START', {
-      fontSize: '24px', color: '#fff', backgroundColor: '#27ae60',
-      padding: { x: 30, y: 12 },
+    const btn = this.add.text(0, 130, 'START', {
+      fontSize: '34px', color: '#fff', backgroundColor: '#27ae60',
+      padding: { x: 36, y: 14 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
     btn.on('pointerdown', () => this.game.net.send('resume'));
     btn.on('pointerover', () => btn.setBackgroundColor('#2ecc71'));
@@ -210,26 +212,26 @@ export default class PlayScene extends Phaser.Scene {
 
     this.levelContainer = this.add.container(cx, cy).setDepth(400).setVisible(false);
 
-    const bg = this.add.rectangle(0, 0, 360, 380, 0x1a1a2e, 0.95).setOrigin(0.5);
+    const bg = this.add.rectangle(0, 0, 400, 640, 0x1a1a2e, 0.95).setOrigin(0.5);
     this.levelContainer.add(bg);
 
-    this._levelSelectTitle = this.add.text(0, -165, 'SELECT MODULE + LEVEL', {
-      fontSize: '20px', color: '#fff', fontStyle: 'bold',
+    this._levelSelectTitle = this.add.text(0, -298, 'SELECT MODULE + LEVEL', {
+      fontSize: '26px', color: '#fff', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.levelContainer.add(this._levelSelectTitle);
 
-    this._levelSelectSubtitle = this.add.text(0, -140, '', {
-      fontSize: '13px', color: '#c7c7d1',
+    this._levelSelectSubtitle = this.add.text(0, -260, '', {
+      fontSize: '17px', color: '#c7c7d1',
     }).setOrigin(0.5);
     this.levelContainer.add(this._levelSelectSubtitle);
 
-    this._levelSelectSectionModules = this.add.text(-160, -115, 'MODULES', {
-      fontSize: '12px', color: '#c7c7d1', fontStyle: 'bold',
+    this._levelSelectSectionModules = this.add.text(-180, -228, 'MODULES', {
+      fontSize: '16px', color: '#c7c7d1', fontStyle: 'bold',
     }).setOrigin(0, 0.5);
     this.levelContainer.add(this._levelSelectSectionModules);
 
-    this._levelSelectSectionLevels = this.add.text(-160, 30, 'LEVELS', {
-      fontSize: '12px', color: '#c7c7d1', fontStyle: 'bold',
+    this._levelSelectSectionLevels = this.add.text(-180, -58, 'LEVELS', {
+      fontSize: '16px', color: '#c7c7d1', fontStyle: 'bold',
     }).setOrigin(0, 0.5);
     this.levelContainer.add(this._levelSelectSectionLevels);
 
@@ -237,12 +239,11 @@ export default class PlayScene extends Phaser.Scene {
     this._levelSelectButtons = [];
     this._levelSelectButtonMeta = [];
 
-    const close = this.add.text(0, 130, 'CLOSE', {
-      fontSize: '16px', color: '#fff', backgroundColor: '#e74c3c',
-      padding: { x: 16, y: 6 },
+    const close = this.add.text(0, 295, 'CLOSE', {
+      fontSize: '22px', color: '#fff', backgroundColor: '#e74c3c',
+      padding: { x: 20, y: 10 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
     close.on('pointerdown', () => this.game.net.sendInput('toggle_level_select'));
-    close.setPosition(0, 160);
     this.levelContainer.add(close);
   }
 
@@ -265,10 +266,10 @@ export default class PlayScene extends Phaser.Scene {
     const modules = PlayScene.MODULE_CATALOG;
 
     // Modules grid (2 columns)
-    const x0 = -85;
-    const y0 = -85;
-    const dx = 170;
-    const dy = 40;
+    const x0 = -90;
+    const y0 = -195;
+    const dx = 180;
+    const dy = 46;
     for (let i = 0; i < modules.length; i++) {
       const m = modules[i];
       const col = i % 2;
@@ -280,8 +281,8 @@ export default class PlayScene extends Phaser.Scene {
       const alpha = enabled ? 1 : 0.35;
 
       const btn = this.add.text(x0 + col * dx, y0 + row * dy, m.name, {
-        fontSize: '14px', color: '#fff', backgroundColor: bg,
-        padding: { x: 10, y: 7 },
+        fontSize: '18px', color: '#fff', backgroundColor: bg,
+        padding: { x: 12, y: 9 },
       }).setOrigin(0.5).setAlpha(alpha);
 
       if (enabled) {
@@ -304,9 +305,9 @@ export default class PlayScene extends Phaser.Scene {
       const alpha = enabledLevels ? 1 : 0.35;
       const bg = isSelected ? '#1abc9c' : (l.clr || '#2ecc71');
 
-      const btn = this.add.text(0, 65 + i * 45, l.label, {
-        fontSize: '16px', color: '#fff', backgroundColor: bg,
-        padding: { x: 18, y: 8 },
+      const btn = this.add.text(0, -18 + i * 52, l.label, {
+        fontSize: '20px', color: '#fff', backgroundColor: bg,
+        padding: { x: 20, y: 10 },
       }).setOrigin(0.5).setAlpha(alpha);
 
       if (enabledLevels) {

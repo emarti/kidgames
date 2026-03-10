@@ -10,6 +10,18 @@
  */
 
 import Phaser from 'phaser';
+import {
+  createCommonUI,
+  updateDoorButton,
+  cleanupObjectTexts,
+  drawObjectEmojiCached,
+  destroyCommonUI,
+  shouldHandlePointer,
+  FONT_BODY,
+  FONT_SMALL,
+  FONT_BTN_LG,
+  PAD_BTN_LG,
+} from './renderer_utils.js';
 
 // ── Constants (match server) ────────────────────────────────────────────────
 
@@ -66,14 +78,7 @@ export function renderState(scene, state) {
   ensureUI(scene, d);
 
   // Clean up stale object text caches (e.g. after level change)
-  const currentIds = new Set(state.objects.map(o => o.id));
-  for (const [id, cached] of d.objectTexts) {
-    if (!currentIds.has(id)) {
-      cached.emoji.destroy();
-      cached.mass.destroy();
-      d.objectTexts.delete(id);
-    }
-  }
+  cleanupObjectTexts(d.objectTexts, state.objects);
 
   const W = scene.scale.width;
   const H = scene.scale.height;
@@ -107,11 +112,11 @@ export function renderState(scene, state) {
   if (!d.shoreLabels) {
     d.shoreLabels = true;
     scene.add.text(leftX / 2, waterScreenY + 20, 'START', {
-      fontSize: '16px', color: '#fff', fontStyle: 'bold',
+      fontSize: FONT_SMALL, color: '#fff', fontStyle: 'bold',
       stroke: '#2d5016', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(150);
     scene.add.text(rightX + (W - rightX) / 2, waterScreenY + 20, 'GOAL', {
-      fontSize: '16px', color: '#fff', fontStyle: 'bold',
+      fontSize: FONT_SMALL, color: '#fff', fontStyle: 'bold',
       stroke: '#2d5016', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(150);
   }
@@ -296,23 +301,7 @@ function drawObject(scene, d, state, obj) {
   g.lineStyle(2, 0x333333, 0.5);
   g.strokeCircle(x, y, r);
 
-  let cached = d.objectTexts.get(obj.id);
-  if (!cached) {
-    const fontSize = Math.max(16, Math.floor(r * 1.5));
-    const emoji = scene.add.text(x, y, obj.emoji, {
-      fontSize: `${fontSize}px`,
-    }).setOrigin(0.5).setDepth(120);
-    const mass = scene.add.text(x, y + r + 8, `${obj.mass}`, {
-      fontSize: '13px', color: '#fff', fontStyle: 'bold',
-      backgroundColor: 'rgba(0,0,0,0.6)',
-      padding: { x: 4, y: 2 },
-    }).setOrigin(0.5).setDepth(121);
-    cached = { emoji, mass };
-    d.objectTexts.set(obj.id, cached);
-  }
-  cached.emoji.setPosition(x, y);
-  cached.mass.setPosition(x, y + r + 10);
-  cached.mass.setText(`${obj.mass}`);
+  drawObjectEmojiCached(scene, d.objectTexts, obj, x, y, r);
 }
 
 // ── UI ──────────────────────────────────────────────────────────────────────
@@ -323,50 +312,27 @@ function ensureUI(scene, d) {
 
   const W = scene.scale.width;
   const H = scene.scale.height;
+  const btnY = H - 44;
 
-  d.levelTitle = scene.add.text(12, 10, '', {
-    fontSize: '18px', color: '#1a5276', fontStyle: 'bold',
+  // Common chrome: levelTitle, msgText, doorText, resetBtn, lvlBtn
+  Object.assign(d, createCommonUI(scene));
+
+  // Ferry-specific extras
+  d.progressText = scene.add.text(12, 50, '', {
+    fontSize: FONT_BODY, color: '#555',
   }).setDepth(200);
 
-  d.progressText = scene.add.text(12, 34, '', {
-    fontSize: '13px', color: '#555',
+  d.loadText = scene.add.text(12, 76, '', {
+    fontSize: FONT_BODY, color: '#555',
   }).setDepth(200);
 
-  d.loadText = scene.add.text(12, 52, '', {
-    fontSize: '13px', color: '#555',
-  }).setDepth(200);
-
-  d.msgText = scene.add.text(W / 2, 14, '', {
-    fontSize: '16px', color: '#2c3e50', backgroundColor: '#ecf0f1',
-    padding: { x: 10, y: 4 },
-  }).setOrigin(0.5, 0).setDepth(200).setVisible(false);
-
-  d.doorText = scene.add.text(W - 16, 10, '🚪', {
-    fontSize: '48px',
-  }).setOrigin(1, 0).setDepth(200).setInteractive({ useHandCursor: true });
-  d.doorText.on('pointerdown', () => scene.game.net.sendInput('door_click'));
-
-  const btnY = H - 32;
-
-  d.goBtn = scene.add.text(W - 140, btnY, 'GO', {
-    fontSize: '28px', color: '#fff', backgroundColor: '#27ae60',
-    padding: { x: 24, y: 10 }, fontStyle: 'bold',
+  d.goBtn = scene.add.text(W - 160, btnY, 'GO', {
+    fontSize: FONT_BTN_LG, color: '#fff', backgroundColor: '#27ae60',
+    padding: PAD_BTN_LG, fontStyle: 'bold',
   }).setOrigin(0.5).setDepth(200).setInteractive({ useHandCursor: true });
   d.goBtn.on('pointerdown', () => scene.game.net.sendInput('go'));
   d.goBtn.on('pointerover', () => d.goBtn.setBackgroundColor('#2ecc71'));
   d.goBtn.on('pointerout',  () => d.goBtn.setBackgroundColor('#27ae60'));
-
-  d.resetBtn = scene.add.text(W - 50, btnY, '🔄', {
-    fontSize: '26px', color: '#fff', backgroundColor: '#e74c3c',
-    padding: { x: 12, y: 8 },
-  }).setOrigin(0.5).setDepth(200).setInteractive({ useHandCursor: true });
-  d.resetBtn.on('pointerdown', () => scene.game.net.sendInput('reset'));
-
-  d.lvlBtn = scene.add.text(16, btnY, '📋', {
-    fontSize: '22px', color: '#fff', backgroundColor: '#9b59b6',
-    padding: { x: 10, y: 6 },
-  }).setOrigin(0, 0.5).setDepth(200).setInteractive({ useHandCursor: true });
-  d.lvlBtn.on('pointerdown', () => scene.game.net.sendInput('toggle_level_select'));
 }
 
 function updateUI(scene, d, state) {
@@ -387,9 +353,7 @@ function updateUI(scene, d, state) {
     d.msgText.setVisible(false);
   }
 
-  d.doorText.setText(state.doorOpen ? '🚪✨' : '🚪');
-  d.doorText.setColor(state.doorOpen ? '#27ae60' : '#888');
-  d.doorText.setFontSize(state.doorOpen ? '56px' : '48px');
+  updateDoorButton(d.doorText, state.doorOpen);
 
   const canGo = !state.boat.sailing && !state.boat.capsized && !state.gamePaused;
   d.goBtn.setAlpha(canGo ? 1 : 0.4);
@@ -398,8 +362,7 @@ function updateUI(scene, d, state) {
 // ── Input handlers ──────────────────────────────────────────────────────────
 
 export function onPointerDown(scene, pointer, state) {
-  if (!state || state.gamePaused || state.showLevelSelect) return;
-  if (state.paused) return;
+  if (!shouldHandlePointer(state)) return;
 
   const gx = scene.ux(pointer.x);
   const gy = scene.uy(pointer.y);
@@ -434,16 +397,12 @@ export function destroy(scene) {
   if (!d) return;
 
   for (const [, cached] of d.objectTexts) {
-    cached.emoji.destroy();
-    cached.mass.destroy();
+    if (cached.emoji) cached.emoji.destroy();
+    if (cached.mass)  cached.mass.destroy();
   }
   d.objectTexts.clear();
 
-  // Destroy UI elements
-  const uiKeys = ['levelTitle', 'progressText', 'loadText', 'msgText', 'doorText', 'goBtn', 'resetBtn', 'lvlBtn'];
-  for (const key of uiKeys) {
-    if (d[key]) { d[key].destroy(); d[key] = null; }
-  }
+  destroyCommonUI(d, ['progressText', 'loadText', 'goBtn']);
 
   sceneData.delete(scene);
 }

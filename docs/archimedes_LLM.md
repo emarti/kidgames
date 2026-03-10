@@ -4,8 +4,8 @@ Archimedes is a cooperative, touch-first **2D physics "toy museum"** for kids (~
 
 ## Current implementation status
 
-- **Implemented:** Module 1 (Buoyancy Ferry) with 3 sub-levels (River Ferry, Heavy Load, Boulder Run).
-- **Planned:** Modules 2–7 + bonus Pi module (see roadmap below).
+- **Implemented:** Module 1 (Buoyancy Ferry), Module 2 (Seesaw Lab), Module 3 (Pulley Builder).
+- **Planned:** Modules 4–7 + bonus Pi module (see roadmap below).
 
 Each "module" is a self-contained physics toy (previously called a "level"). Within a module there can be sub-levels that share the same physics engine.
 
@@ -24,15 +24,19 @@ This file describes **how the current repo works** (protocol + authority) and ca
 Server:
 - `apps/ws/src/games/archimedes.js` — WebSocket room host + routing (generic, no module-specific logic)
 - `apps/ws/src/games/archimedes_sim.js` — top-level dispatcher: `step()`, `applyInput()`, `initModule()` route to the active module's handler
-- `apps/ws/src/games/archimedes_ferry_sim.js` — Module 1 (Buoyancy Ferry) simulation: boat physics, sailing, capsize, object types, sub-levels
-- *(future module sims go here as `archimedes_<module>_sim.js`)*
+- `apps/ws/src/games/archimedes_utils.js` — **shared utilities** for all module sims: claim/release, cursor movement, `initModuleBase`, tick constants
+- `apps/ws/src/games/archimedes_ferry_sim.js` — Module 1 (Buoyancy Ferry): boat physics, sailing, capsize, object types, sub-levels
+- `apps/ws/src/games/archimedes_seesaw_sim.js` — Module 2 (Seesaw Lab): torque-driven beam, baskets, pivot drag, 6 sub-levels
+- `apps/ws/src/games/archimedes_pulley_sim.js` — Module 3 (Pulley Builder): mechanical advantage, rope segments, counterweight, elevator, 6 sub-levels
 
 Client:
 - `archimedes/client/src/net.js` (includes `sendInput(action, data)` helper)
 - `archimedes/client/src/game/scenes/MenuScene.js`
 - `archimedes/client/src/game/scenes/PlayScene.js` — top-level scene: dispatches rendering + input to the active module's renderer
-- `archimedes/client/src/game/renderers/ferry_renderer.js` — Module 1 (Buoyancy Ferry) renderer: boat hull, mainsail, shores, water, ferry objects
-- *(future module renderers go here as `<module>_renderer.js`)*
+- `archimedes/client/src/game/renderers/renderer_utils.js` — **shared utilities** for all renderers: common UI chrome, confetti, emoji caching, door button
+- `archimedes/client/src/game/renderers/ferry_renderer.js` — Module 1 renderer: boat hull, mainsail, shores, water, ferry objects
+- `archimedes/client/src/game/renderers/seesaw_renderer.js` — Module 2 renderer: beam, baskets, pivot triangle, earth/archimedes characters
+- `archimedes/client/src/game/renderers/pulley_renderer.js` — Module 3 renderer: pulleys, rope, load, counterweight, elevator
 
 ## Core loop
 
@@ -179,9 +183,149 @@ PlayScene draws in this order for correct waterline visibility:
 
 ---
 
+## Module 2: Seesaw Lab — implementation details
+
+### Physics model
+
+Constants:
+```
+PHYSICS_SCALE = 10     // angular acceleration scale
+BEAM_MASS = 1          // normalized beam inertia
+DAMPING = 0.6065       // = exp(−0.5); critically damped unloaded beam
+RESTORE_FACTOR = 32    // spring toward horizontal
+MAX_ANGLE = π/6        // ±30°
+BALANCE_TORQUE_TOL = 0.3
+BALANCE_VEL_TOL = 0.02
+BALANCE_TICKS = 20     // 1 second of sustained balance required
+BASKET_HANGER_LEN = 36 // world px from beam to basket top
+BASKET_ITEM_Y = 24     // world px from basket top to item center
+```
+
+Computed each tick:
+1. `netTorque = Σ(mass × beamPosition × PHYSICS_SCALE) − beam.angle × RESTORE_FACTOR`
+2. `I = BEAM_MASS + Σ(mass × beamPosition²)`
+3. `angularAccel = netTorque / I`
+4. `angularVelocity = angularVelocity × DAMPING + angularAccel × TICK_DT`
+5. `angle += angularVelocity × TICK_DT`
+6. Clamped by `beamGroundY` (separate from visual `groundY` so baskets don't clip ground)
+
+Balance is detected when `|massTorque| < 0.3 AND |angularVelocity| < 0.02` for 20 consecutive ticks AND at least one non-fixed object is on the beam.
+
+### Ground separation
+
+Two Y values are tracked:
+- `state.groundY = 465` — visual ground line (sky/grass boundary)
+- `state.beamGroundY = 400` (with baskets) or `465` (no baskets) — physics stop for beam ends; keeps basket bottoms above visual ground
+
+### beamPosition conventions
+
+`beamPosition` is a normalized value in `[leftLimit, rightLimit]` where:
+- `leftLimit = -leftArm / span`, `rightLimit = rightArm / span`
+- `beamPosition × span` = arm distance in world px from pivot
+- For `pinWorldX` objects (earth, archimedes): `beamPosition = physArm / span` where `physArm = pinWorldX − pivotX`. The object rotates **with** the beam (no cos-division). This matches how `drawBeam` draws with `rotateCanvas`.
+
+### Sub-levels
+
+| # | Id | Key mechanic |
+|---|-----|-------------|
+| 1 | `fixed_four` | Right basket fixed at 4. Build 4 on left. |
+| 2 | `fixed_six` | Right basket fixed at 6. Too many weights — find the combo. |
+| 3 | `half_arm_basket` | Right arm is half-length. Balance with half the weight. |
+| 4 | `single_slider` | Fixed basket endpoints; drag the pivot to balance. |
+| 5 | `torque_arms` | Three left slots at different distances; `doorTarget: 2` (balance twice). |
+| 6 | `earth_and_archimedes` | Archimedes (mass 12) sits on left end; Earth (mass 112) on right. Slide fulcrum to the limit. `baskets: false`, `fixedBeamEndpoints: true`. |
+
+### Basket system
+
+- `state.baskets.left` / `.right` — single basket positions (`pos` in beam-position units)
+- `state.baskets.leftSlots` — array of `{pos}` for multi-basket levels
+- Objects in baskets track `inBasket`, `basketIndex`, `basketCount` for side-offset stacking
+- `reindexBasket(state, objects, name)` recomputes indices after any add/remove
+
+### Rendering coordinate transform
+
+The beam is drawn via `rotateCanvas(beam.angle)` with `scaleX = sx(1) − sx(0)` applied to all offsets. This means `scaleX` is used for both X and Y displacements in beam-local space. All beam-space features (baskets, earth, archimedes) must use this same transform:
+```js
+const scaleX = (sx(scene, 1) - sx(scene, 0)) || 1;
+const pivX = sx(scene, beam.pivotX);
+const pivY = sy(scene, beam.pivotY);
+const beamT = obj.beamPosition * beamSpan(beam) * scaleX;
+const screenX = pivX + beamT * Math.cos(angle);
+const screenY = pivY + beamT * Math.sin(angle);
+```
+Using `sy(obj.y)` for on-beam objects introduces drift on non-square aspect ratios.
+
+### Level 6 special rendering
+
+Earth and Archimedes sit on the beam top surface (perpendicular offset):
+```js
+const seatOffset = BEAM_HALF_H + r * 0.5;  // BEAM_HALF_H = 6
+x = bx - seatOffset * Math.sin(angle);
+y = by - seatOffset * Math.cos(angle);
+```
+Archimedes' leg line runs along the beam direction (`cos(angle)`, `sin(angle)`) so it looks like he's straddling the lever.
+
+---
+
+## Module 3: Pulley Builder — implementation details
+
+### Physics model (position-based rope with ratchet)
+
+```
+MAX_EFFORT       = 15    // max force a player can exert
+ANCHOR_Y         = 60    // Y of ceiling pulley axle
+FLOOR_Y          = 445   // Y of floor
+CW_OVERLOAD_RISE = 3     // px/tick load rises when CW too heavy
+CW_RESET_TICKS   = 40    // ticks before auto-reset (~2 s)
+CRANK_SCALE      = 25    // rope-px per radian of crank rotation
+```
+
+Core state variable: `ropeConsumed` — total rope pulled through the system.
+- `loadY = loadStartY − ropeConsumed / MA`
+- `effortRequired = max(0, loadMass − cwMass) / MA`
+- Pull speed scales with surplus effort: `speedMult = clamp((MAX_EFFORT − effortReq) / 5, 0.15, 1.0)`
+- If `effortRequired > MAX_EFFORT`: handle won't move (struggle animation)
+- On release: **ratchet** — handle springs back to ceiling, `ropeConsumed` stays, load stays at current height
+- CW overload (`cwMass > loadMass + 3`): load auto-rises, then auto-resets after 2 s
+
+### Sub-levels (6 levels)
+
+| # | Id | Load (mass) | MA | Key mechanic |
+|---|-----|------------|-----|-------------|
+| 1 | `fixed_pulley` | Lantern 🏮 (8) | 1 | Fixed pulley — pull down to lift up |
+| 2 | `movable_pulley` | Column 🏛️ (20) | 1→2 | Drag movable pulley from palette (MA doubles) |
+| 3 | `compound_pulleys` | Statue 🗿 (45) | 1/2/4 | Select between 3 rig configs; count supporting segments |
+| 4 | `counterweight` | Quarry Block ⛏️ (30) | 2 (pre-rigged) | 4 CW stones (5/15/25/40); too heavy CW causes auto-reset |
+| 5 | `elevator_elephant` | Elevator 🛗 (15→50) | 1→4 | Baby elephant 🐘 steps on at 60% progress; reconfigure MA + CW |
+| 6 | `differential_windlass` | Temple Stone 🪨 (200) | 20 | Crank-driven concentric drums; MA=20 |
+
+### Rope model (ratchet pull)
+
+- Player grabs handle, drags down → `ropeConsumed` increases → load rises
+- On release: handle springs to ceiling (ratchet), `ropeConsumed` persists, load stays
+- L1 (MA=1) fits in one pull; higher MA levels need multiple pulls (teaching force-distance trade-off)
+- Supporting segments highlighted green with count badge
+- Rope stripe animation: dash offset tracks `ropeConsumed`
+- Level 6 uses a rotary crank instead of the linear handle
+
+### Hint system
+
+- Auto-triggered hints after idle/struggle delays (5–10 s)
+- Hints point toward actions ("try the palette", "count the ropes") but never name the solution
+- Tracked via `pulley.hint` string and `pulley.hintTimer` tick counter
+
+### Counterweight system
+
+- CW palette: `cw_5(5)`, `cw_15(15)`, `cw_25(25)`, `cw_40(40)`
+- One CW at a time in bucket (swaps on new drop)
+- Drop zone: `x∈[130,290], y<320`; outside → returns to home
+- Balance gauge (semicircular, red/green/orange) rendered in L4/L5
+
+---
+
 ## Roadmap: All modules (implement in order)
 
-### Module 1: Buoyancy Ferry ✅ (implemented)
+### Module 1: Buoyancy Ferry ✅ (implemented — see implementation details above)
 
 **Theme:** Float/sink and stability while ferrying objects across a lake.
 
@@ -250,7 +394,7 @@ Simplified stable toy model:
 
 ---
 
-### Module 2: Seesaw Lab (Levers)
+### Module 2: Seesaw Lab (Levers) ✅ (implemented — see implementation details above)
 
 **Theme:** Balance and torque with a seesaw.
 
@@ -280,7 +424,7 @@ Simplified stable toy model:
 
 ---
 
-### Module 3: Pulley Builder
+### Module 3: Pulley Builder ✅ (implemented — see implementation details above)
 
 **Theme:** Mechanical advantage — lots of rope pull → little lift.
 

@@ -3,124 +3,217 @@
  * Server-side simulation for the Seesaw/Lever module.
  *
  * Physics model: torque-driven beam on a pivot.
- *   - Objects placed on the beam exert torque = mass × beamPosition × length × g
+ *   - Objects on the beam exert torque = mass × armDistance
  *   - Beam swings with damping until balanced or clamped at ground
+ *   - Levels can use asymmetric lever arms for mechanical-advantage puzzles
  *
  * Exports the module interface expected by archimedes_sim.js dispatcher:
  *   { initModule, stepModule, applyModuleInput, numLevels, LEVEL_LIST }
  */
 
 import { clamp } from './maze_utils.js';
+import {
+  CLAIM_TIMEOUT,
+  TICK_DT,
+  CONFETTI_DURATION,
+  createIdCounter,
+  claimObject,
+  releaseObject,
+  expireStaleClaimsOnObjects,
+  applyCursorMove,
+  initModuleBase,
+} from './archimedes_utils.js';
 
 // ── Physics constants ────────────────────────────────────────────────────────
 
-const GRAVITY = 9.8;
-const DAMPING = 0.85;                // ~1/e in 300ms (6 ticks at 50ms)
+const PHYSICS_SCALE = 10;      // angular acceleration scale factor
+const BEAM_MASS = 1;           // normalized beam inertia
+const DAMPING = 0.6065;        // = exp(−0.5); critically damped unloaded beam
+const RESTORE_FACTOR = 32;     // spring constant; overdamped when loaded (ζ > 1)
 const MAX_ANGLE = Math.PI / 6;       // ±30°
-const TICK_DT = 0.05;                // 50ms per tick
-const BALANCE_ANGLE_TOL = 0.03;      // rad
-const BALANCE_VEL_TOL = 0.005;       // rad/s
-const BALANCE_TICKS = 40;
-const BEAM_MASS = 10;                // virtual beam mass for inertia
-const CLAIM_TIMEOUT = 3000;          // ms
-const BEAM_HIT_DIST = 40;            // px tolerance for snapping to beam
-const CONFETTI_DURATION = 2000;       // ms
+const BALANCE_TORQUE_TOL = 0.3;      // mass*arm units
+const BALANCE_VEL_TOL = 0.02;       // rad/s
+const BALANCE_TICKS = 20;           // 1 second of sustained balance
+const BEAM_HIT_DIST = 42;            // px tolerance for snapping to beam
+const BASKET_HANGER_LEN = 36;        // world px from beam to basket
+const BASKET_ITEM_Y = 24;            // world px from basket top to item center
+const BASKET_DROP_DIST = 95;         // world px tolerance for basket drop
 
 // ── Object types ─────────────────────────────────────────────────────────────
 
 const OBJECT_TYPES = {
-  feather: { mass: 1,  size: 28, emoji: '🪶', color: '#E8D5B7', label: 'Feather' },
-  apple:   { mass: 3,  size: 32, emoji: '🍎', color: '#E74C3C', label: 'Apple' },
-  brick:   { mass: 5,  size: 36, emoji: '🧱', color: '#D35400', label: 'Brick' },
-  rock:    { mass: 10, size: 40, emoji: '🪨', color: '#7F8C8D', label: 'Rock' },
-  anvil:   { mass: 15, size: 44, emoji: '⚒️', color: '#2C3E50', label: 'Anvil' },
+  feather:     { mass: 1,  size: 28, emoji: '🪶', color: '#E8D5B7', label: 'Feather (1)' },
+  pebble:      { mass: 2,  size: 30, emoji: '🥔', color: '#C39A6B', label: 'Pebble (2)' },
+  tomato:      { mass: 3,  size: 32, emoji: '🍅', color: '#E74C3C', label: 'Tomato (3)' },
+  melon:       { mass: 4,  size: 36, emoji: '🍉', color: '#2ECC71', label: 'Melon (4)' },
+  heavy_rock:  { mass: 6,  size: 40, emoji: '🪨', color: '#7F8C8D', label: 'Heavy Rock (6)' },
+  earth:       { mass: 200, size: 112, emoji: '🌍', color: '#4B77BE', label: 'Earth (200)' },
+  archimedes:  { mass: 12, size: 44, emoji: '👴', color: '#8E44AD', label: 'Archimedes (12)' },
 };
 
 // ── Sub-levels ───────────────────────────────────────────────────────────────
 
+const LEVEL2_LEFT_SET = [
+  { type: 'feather' },
+  { type: 'pebble' },
+  { type: 'tomato' },
+];
+
 const LEVELS = {
   1: {
-    id: 'first_balance',
-    name: '⚖️ First Balance',
-    desc: 'Balance the beam!',
-    beamLength: 500,
+    id: 'fixed_four',
+    name: '⚖️ Fixed Four',
+    desc: 'Right basket is fixed at 4. Build 4 on the left.',
+    beamLength: 520,
     pivotX: 400,
+    leftArm: 260,
+    rightArm: 260,
     baskets: true,
     pivotDraggable: false,
     pivotMinX: 400,
     pivotMaxX: 400,
+    leftBasketPos: -0.43,
+    rightBasketPos: 0.43,
+    leftPlacementOnly: true,
+    leftPlacementMin: -0.48,
+    leftPlacementMax: -0.08,
     doorTarget: 1,
     palette: [
-      { type: 'feather' }, { type: 'feather' },
-      { type: 'apple' }, { type: 'apple', startOnBeam: 0.45, startBasket: 'right' },
+      { type: 'feather' },
+      { type: 'feather' },
+      { type: 'pebble' },
+      { type: 'pebble' },
+      { type: 'tomato' },
+      { type: 'melon', startOnBeam: 0.43, startBasket: 'right', fixed: true, fixedSide: 'right' },
     ],
   },
   2: {
-    id: 'heavy_mix',
-    name: '⚖️ Heavy Mix',
-    desc: 'Mix different weights!',
-    beamLength: 500,
+    id: 'fixed_six',
+    name: '⚖️ Heavy Basket',
+    desc: 'Right basket is fixed at 6. You have too many weights — find the right combination!',
+    beamLength: 520,
     pivotX: 400,
+    leftArm: 260,
+    rightArm: 260,
     baskets: true,
     pivotDraggable: false,
     pivotMinX: 400,
     pivotMaxX: 400,
+    leftBasketPos: -0.43,
+    rightBasketPos: 0.43,
+    leftPlacementOnly: true,
+    leftPlacementMin: -0.48,
+    leftPlacementMax: -0.08,
     doorTarget: 1,
     palette: [
-      { type: 'feather' }, { type: 'apple' },
-      { type: 'brick' }, { type: 'rock', startOnBeam: 0.45, startBasket: 'right' },
+      ...LEVEL2_LEFT_SET,
+      { type: 'melon' },
+      { type: 'heavy_rock', startOnBeam: 0.43, startBasket: 'right', fixed: true, fixedSide: 'right' },
     ],
   },
   3: {
-    id: 'free_place',
-    name: '📏 Free Place',
-    desc: 'Distance matters! Balance 2 times.',
-    beamLength: 500,
+    id: 'half_arm_basket',
+    name: '🪨 Short Right Arm',
+    desc: 'Right arm is half-length. Can you balance with half the weight?',
+    beamLength: 600,
     pivotX: 400,
-    baskets: false,
+    leftArm: 400,
+    rightArm: 200,
+    baskets: true,
+    pivotDraggable: false,
+    pivotMinX: 400,
+    pivotMaxX: 400,
+    leftBasketPos: -0.6,
+    rightBasketPos: 0.3,
+    leftPlacementOnly: true,
+    leftPlacementMin: -0.65,
+    leftPlacementMax: -0.08,
+    doorTarget: 1,
+    palette: [
+      ...LEVEL2_LEFT_SET,
+      { type: 'heavy_rock', startOnBeam: 0.3, startBasket: 'right', fixed: true, fixedSide: 'right' },
+    ],
+  },
+  4: {
+    id: 'single_slider',
+    name: '🎯 Sliding Fulcrum',
+    desc: 'The baskets stay on the lever. Drag the pivot to balance.',
+    beamLength: 600,
+    pivotX: 400,
+    leftArm: 400,
+    rightArm: 200,
+    fixedBeamEndpoints: true,
+    leftEndX: 120,
+    rightEndX: 680,
+    baskets: true,
+    basketAtEnds: true,
+    basketInset: 28,
+    pivotDraggable: true,
+    pivotMinX: 340,
+    pivotMaxX: 500,
+    showPivotHint: true,
+    leftPlacementOnly: true,
+    leftPlacementMin: -0.65,
+    leftPlacementMax: -0.08,
+    doorTarget: 1,
+    palette: [
+      { type: 'tomato', startOnBeam: -0.58, startBasket: 'left' },
+      { type: 'heavy_rock', startOnBeam: 0.58, startBasket: 'right', fixed: true, fixedSide: 'right' },
+    ],
+  },
+  5: {
+    id: 'torque_arms',
+    name: '📏 Torque Arms',
+    desc: 'Left side is empty. Place weights in different baskets — does position matter?',
+    beamLength: 600,
+    pivotX: 400,
+    leftArm: 400,
+    rightArm: 200,
+    baskets: true,
+    multiLeftBaskets: true,
+    leftBasketSlots: [
+      { pos: -0.15 },
+      { pos: -0.40 },
+      { pos: -0.60 },
+    ],
+    rightBasketPos: 0.30,
     pivotDraggable: false,
     pivotMinX: 400,
     pivotMaxX: 400,
     doorTarget: 2,
     palette: [
-      { type: 'feather' }, { type: 'feather' },
-      { type: 'apple' }, { type: 'brick' },
-      { type: 'rock', startOnBeam: 0.3 },
+      { type: 'feather' },
+      { type: 'feather' },
+      { type: 'pebble' },
+      { type: 'tomato' },
+      { type: 'melon', startOnBeam: 0.30, startBasket: 'right', fixed: true, fixedSide: 'right' },
     ],
   },
-  4: {
-    id: 'moving_pivot',
-    name: '🔀 Moving Pivot',
-    desc: 'Move the pivot! Balance at 3 positions.',
-    beamLength: 500,
-    pivotX: 400,
-    baskets: false,
+  6: {
+    id: 'earth_and_archimedes',
+    name: '🌍 Archimedes & Earth',
+    desc: 'Slide the fulcrum toward Earth. The answer is at the limit.',
+    beamLength: 560,
+    leftArm: 280,
+    rightArm: 280,
+    fixedBeamEndpoints: true,
+    leftEndX: 130,
+    rightEndX: 690,
+    pivotX: 380,
     pivotDraggable: true,
-    pivotMinX: 200,
-    pivotMaxX: 600,
-    doorTarget: 3,
-    palette: [
-      { type: 'apple' }, { type: 'brick' },
-      { type: 'rock' }, { type: 'anvil', startOnBeam: 0.35 },
-    ],
-  },
-  5: {
-    id: 'archimedes_lever',
-    name: '🌍 Archimedes\' Lever',
-    desc: 'Give me a lever long enough…',
-    beamLength: 700,
-    pivotX: 500,
+    pivotMinX: 360,
+    pivotMaxX: 658, // solution limit near Earth; cannot move beyond it
+    minArm: 18,
     baskets: false,
-    pivotDraggable: true,
-    pivotMinX: 150,
-    pivotMaxX: 700,
+    showPivotHint: true,
+    leftPlacementOnly: true,
+    leftPlacementMin: -1,
+    leftPlacementMax: -0.02,
     doorTarget: 1,
     palette: [
-      { type: 'brick', startOnBeam: -0.35 }, { type: 'brick' },
-      { type: 'rock' }, { type: 'rock' },
-      { type: 'anvil' }, { type: 'anvil' },
+      { type: 'archimedes', pinWorldX: 130, fixed: true, fixedSide: 'left' },
+      { type: 'earth', pinWorldX: 690, fixed: true, fixedSide: 'right' },
     ],
-    archimedes: true,
   },
 };
 
@@ -135,10 +228,9 @@ export const LEVEL_LIST = Object.entries(LEVELS).map(([num, cfg]) => ({
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-let _idCounter = 0;
-function nextId() { return 'sw_' + (++_idCounter); }
+const nextId = createIdCounter('sw');
 
-function createObject(type, x, y) {
+function createObject(type, x, y, spec = {}) {
   const def = OBJECT_TYPES[type];
   if (!def) return null;
   return {
@@ -151,56 +243,249 @@ function createObject(type, x, y) {
     color: def.color,
     label: def.label,
     onBeam: false,
-    beamPosition: null,   // normalized -0.5..0.5 from pivot
+    beamPosition: 0,
     inBasket: null,       // 'left'|'right'|null
+    basketIndex: 0,
+    basketCount: 1,
+    fixed: !!spec.fixed,
+    fixedSide: spec.fixedSide || null,
+    pinWorldX: Number.isFinite(spec.pinWorldX) ? spec.pinWorldX : null,
+    minBeamPos: Number.isFinite(spec.minBeamPos) ? spec.minBeamPos : null,
+    maxBeamPos: Number.isFinite(spec.maxBeamPos) ? spec.maxBeamPos : null,
+    homeX: x,
+    homeY: y,
     claimedBy: null,
     claimTime: null,
   };
 }
 
-function spawnPalette(cfg) {
-  const objects = [];
-  const count = cfg.palette.length;
-  for (let i = 0; i < count; i++) {
-    const px = 150 + (i / Math.max(count - 1, 1)) * 500;
-    const py = 460;
-    const obj = createObject(cfg.palette[i].type, px, py);
-    if (obj) objects.push(obj);
+function recomputeBeamGeometry(beam) {
+  if (!beam) return;
+  const minArm = Math.max(1, Number.isFinite(beam.minArm) ? beam.minArm : 40);
+
+  if (beam.fixedEndpoints) {
+    beam.pivotX = clamp(beam.pivotX, beam.leftEndX + minArm, beam.rightEndX - minArm);
+    beam.leftArm = Math.max(minArm, beam.pivotX - beam.leftEndX);
+    beam.rightArm = Math.max(minArm, beam.rightEndX - beam.pivotX);
+  } else {
+    beam.leftEndX = beam.pivotX - beam.leftArm;
+    beam.rightEndX = beam.pivotX + beam.rightArm;
   }
+
+  beam.span = Math.max(beam.leftArm + beam.rightArm, 1);
+  beam.leftLimit = -beam.leftArm / beam.span;
+  beam.rightLimit = beam.rightArm / beam.span;
+}
+
+function updateDynamicBaskets(state) {
+  const beam = state.beam;
+  const baskets = state.baskets;
+  if (!beam || !baskets || !baskets.enabled) return;
+  if (!baskets.atEnds) return;
+
+  const inset = Math.max(0, baskets.inset || 0);
+  const leftX = beam.leftEndX + inset;
+  const rightX = beam.rightEndX - inset;
+  baskets.left.pos = clamp(
+    xToBeamPos(beam, leftX),
+    beam.leftLimit + 0.01,
+    beam.rightLimit - 0.01
+  );
+  baskets.right.pos = clamp(
+    xToBeamPos(beam, rightX),
+    beam.leftLimit + 0.01,
+    beam.rightLimit - 0.01
+  );
+}
+
+function getBasketPos(state, basketId) {
+  const baskets = state.baskets;
+  if (!baskets || !baskets.enabled) return null;
+  if (basketId === 'left') return baskets.left?.pos ?? null;
+  if (basketId === 'right') return baskets.right?.pos ?? null;
+  if (basketId?.startsWith('slot') && baskets.leftSlots) {
+    const idx = parseInt(basketId.slice(4), 10);
+    return Number.isFinite(idx) ? (baskets.leftSlots[idx]?.pos ?? null) : null;
+  }
+  return null;
+}
+
+function spawnPalette(state, cfg) {
+  const objects = [];
+  const specs = cfg.palette || [];
+  const count = specs.length;
+
+  for (let i = 0; i < count; i++) {
+    const spec = specs[i];
+    const px = Number.isFinite(spec.spawnX) ? spec.spawnX : (150 + (i / Math.max(count - 1, 1)) * 500);
+    const py = Number.isFinite(spec.spawnY) ? spec.spawnY : 480;
+    const obj = createObject(spec.type, px, py, spec);
+    if (!obj) continue;
+
+    if (spec.startOnBeam != null || Number.isFinite(spec.pinWorldX)) {
+      obj.onBeam = true;
+      obj.inBasket = spec.startBasket || null;
+      if (obj.inBasket) {
+        const basketPos = getBasketPos(state, obj.inBasket);
+        obj.beamPosition = clamp(
+          basketPos != null ? basketPos : (Number(spec.startOnBeam) || 0),
+          state.beam.leftLimit,
+          state.beam.rightLimit
+        );
+      } else if (Number.isFinite(spec.startOnBeam)) {
+        obj.beamPosition = clamp(spec.startOnBeam, state.beam.leftLimit, state.beam.rightLimit);
+      } else {
+        obj.beamPosition = clamp(xToBeamPos(state.beam, obj.pinWorldX), state.beam.leftLimit, state.beam.rightLimit);
+      }
+      updateObjectFromBeam(obj, state.beam);
+    }
+
+    objects.push(obj);
+  }
+
+  reindexBasket(state, objects, 'left');
+  reindexBasket(state, objects, 'right');
+
   return objects;
 }
 
 /** Get the Y position on the beam at a given X, accounting for angle. */
 function beamYAtX(beam, x) {
   const dx = x - beam.pivotX;
-  return beam.pivotY + Math.sin(beam.angle) * dx;
+  return beam.pivotY + Math.tan(beam.angle) * dx;
 }
 
-/** Get the X extent of the beam ends. */
-function beamExtents(beam) {
-  const halfLen = beam.length / 2;
-  return {
-    leftX: beam.pivotX - halfLen * Math.cos(beam.angle),
-    rightX: beam.pivotX + halfLen * Math.cos(beam.angle),
-  };
-}
-
-/** Convert beamPosition (-0.5..0.5) to world X. */
+/** Convert beamPosition (leftLimit..rightLimit) to world X. */
 function beamPosToX(beam, bp) {
-  return beam.pivotX + bp * beam.length;
+  const t = bp * beam.span;
+  return beam.pivotX + t * Math.cos(beam.angle);
 }
 
 /** Convert world X to beamPosition. */
 function xToBeamPos(beam, x) {
-  return (x - beam.pivotX) / beam.length;
+  const c = Math.cos(beam.angle);
+  const safeC = Math.abs(c) < 1e-4 ? (c < 0 ? -1e-4 : 1e-4) : c;
+  return (x - beam.pivotX) / (beam.span * safeC);
+}
+
+function pointToBeamPos(beam, x, y) {
+  const c = Math.cos(beam.angle);
+  const s = Math.sin(beam.angle);
+  const dx = x - beam.pivotX;
+  const dy = y - beam.pivotY;
+  const t = dx * c + dy * s;
+  return t / beam.span;
+}
+
+function pointToBeamPerpDist(beam, x, y) {
+  const c = Math.cos(beam.angle);
+  const s = Math.sin(beam.angle);
+  const dx = x - beam.pivotX;
+  const dy = y - beam.pivotY;
+  return Math.abs(-dx * s + dy * c);
+}
+
+function beamPosToWorld(beam, bp) {
+  const c = Math.cos(beam.angle);
+  const s = Math.sin(beam.angle);
+  const t = bp * beam.span;
+  return {
+    x: beam.pivotX + t * c,
+    y: beam.pivotY + t * s,
+  };
 }
 
 /** Update an object's world position from its beamPosition. */
 function updateObjectFromBeam(obj, beam) {
-  const worldX = beamPosToX(beam, obj.beamPosition);
-  const dx = worldX - beam.pivotX;
+  let worldX;
+  let worldY;
+  let rawPos;
+  if (Number.isFinite(obj.pinWorldX)) {
+    const physArm = obj.pinWorldX - beam.pivotX;
+    worldX = beam.pivotX + physArm * Math.cos(beam.angle);
+    worldY = beam.pivotY + physArm * Math.sin(beam.angle);
+    rawPos = physArm / beam.span;
+  } else {
+    const p = beamPosToWorld(beam, obj.beamPosition);
+    worldX = p.x;
+    worldY = p.y;
+    rawPos = obj.beamPosition;
+  }
+
+  const clampedPos = clamp(rawPos, beam.leftLimit, beam.rightLimit);
+  obj.beamPosition = clampedPos;
+
+  if (obj.inBasket) {
+    const count = Math.max(1, obj.basketCount || 1);
+    const idx = clamp(obj.basketIndex || 0, 0, count - 1);
+    const spread = count > 1 ? Math.min(36, 94 / (count - 1)) : 0;
+    const sideOffset = (idx - (count - 1) / 2) * spread;
+    obj.x = worldX + sideOffset;
+    obj.y = worldY + BASKET_HANGER_LEN + BASKET_ITEM_Y;
+    return;
+  }
+
   obj.x = worldX;
-  obj.y = beam.pivotY + Math.sin(beam.angle) * dx - obj.size * 0.5;
+  if (obj.type === 'archimedes') {
+    obj.y = worldY - obj.size * 0.26;
+  } else {
+    obj.y = worldY - obj.size * 0.5;
+  }
+}
+
+function getObjectBeamPos(obj, beam) {
+  if (Number.isFinite(obj.pinWorldX)) {
+    return clamp(xToBeamPos(beam, obj.pinWorldX), beam.leftLimit, beam.rightLimit);
+  }
+  return clamp(obj.beamPosition ?? 0, beam.leftLimit, beam.rightLimit);
+}
+
+function resetObjectToHome(obj) {
+  obj.onBeam = false;
+  obj.beamPosition = 0;
+  obj.inBasket = null;
+  obj.basketIndex = 0;
+  obj.basketCount = 1;
+  obj.x = obj.homeX;
+  obj.y = obj.homeY;
+}
+
+function reindexBasket(state, objects, basketName) {
+  const src = objects || state.objects;
+  const items = src
+    .filter(o => o.onBeam && o.inBasket === basketName)
+    .sort((a, b) => {
+      if (a.fixed !== b.fixed) return a.fixed ? -1 : 1;
+      return a.id.localeCompare(b.id);
+    });
+
+  items.forEach((obj, idx) => {
+    const basketPos = getBasketPos(state, basketName);
+    if (basketPos != null) {
+      obj.beamPosition = basketPos;
+    }
+    obj.basketIndex = idx;
+    obj.basketCount = items.length;
+    updateObjectFromBeam(obj, state.beam);
+  });
+}
+
+function getPlacementBounds(state, obj) {
+  const beam = state.beam;
+  const rules = state.seesawRules || {};
+
+  let minBp = beam.leftLimit + 0.02;
+  let maxBp = beam.rightLimit - 0.02;
+
+  if (rules.leftPlacementOnly && !obj.fixed) {
+    maxBp = Math.min(maxBp, Number.isFinite(rules.leftPlacementMax) ? rules.leftPlacementMax : -0.02);
+    minBp = Math.max(minBp, Number.isFinite(rules.leftPlacementMin) ? rules.leftPlacementMin : beam.leftLimit + 0.02);
+  }
+
+  if (Number.isFinite(obj.minBeamPos)) minBp = Math.max(minBp, obj.minBeamPos);
+  if (Number.isFinite(obj.maxBeamPos)) maxBp = Math.min(maxBp, obj.maxBeamPos);
+
+  return { minBp, maxBp };
 }
 
 // ── Module interface ─────────────────────────────────────────────────────────
@@ -210,30 +495,48 @@ export function initModule(state, subLevel) {
   const cfg = LEVELS[lvl];
   if (!cfg) return;
 
-  state.level = lvl;
-  state.levelId = cfg.id;
-  state.levelName = cfg.name;
-  state.doorOpen = false;
-  state.showLevelSelect = false;
-  state.message = '';
+  initModuleBase(state, { _level: lvl, ...cfg });
 
   // Beam
+  const half = (cfg.beamLength || 520) * 0.5;
+  const leftArm = Number.isFinite(cfg.leftArm) ? cfg.leftArm : half;
+  const rightArm = Number.isFinite(cfg.rightArm) ? cfg.rightArm : half;
+
   state.beam = {
     pivotX: cfg.pivotX,
-    pivotY: 320,
-    length: cfg.beamLength,
+    pivotY: 270,
+    leftArm,
+    rightArm,
+    leftEndX: Number.isFinite(cfg.leftEndX) ? cfg.leftEndX : (cfg.pivotX - leftArm),
+    rightEndX: Number.isFinite(cfg.rightEndX) ? cfg.rightEndX : (cfg.pivotX + rightArm),
+    fixedEndpoints: !!cfg.fixedBeamEndpoints,
+    minArm: Number.isFinite(cfg.minArm) ? cfg.minArm : 40,
     angle: 0,
     angularVelocity: 0,
     pivotDraggable: cfg.pivotDraggable,
     pivotMinX: cfg.pivotMinX,
     pivotMaxX: cfg.pivotMaxX,
   };
+  recomputeBeamGeometry(state.beam);
 
   // Baskets
   state.baskets = {
     enabled: cfg.baskets,
-    left: { pos: -0.45 },
-    right: { pos: 0.45 },
+    allowRightPlacement: !!cfg.allowRightPlacement,
+    atEnds: !!cfg.basketAtEnds,
+    inset: Number.isFinite(cfg.basketInset) ? cfg.basketInset : 24,
+    left: cfg.multiLeftBaskets ? null : { pos: Number.isFinite(cfg.leftBasketPos) ? cfg.leftBasketPos : state.beam.leftLimit * 0.9 },
+    right: { pos: Number.isFinite(cfg.rightBasketPos) ? cfg.rightBasketPos : state.beam.rightLimit * 0.9 },
+    leftSlots: cfg.multiLeftBaskets && Array.isArray(cfg.leftBasketSlots)
+      ? cfg.leftBasketSlots.map(s => ({ pos: s.pos }))
+      : null,
+  };
+  updateDynamicBaskets(state);
+
+  state.seesawRules = {
+    leftPlacementOnly: cfg.leftPlacementOnly !== false,
+    leftPlacementMin: Number.isFinite(cfg.leftPlacementMin) ? cfg.leftPlacementMin : null,
+    leftPlacementMax: Number.isFinite(cfg.leftPlacementMax) ? cfg.leftPlacementMax : null,
   };
 
   // Balance tracking
@@ -241,56 +544,27 @@ export function initModule(state, subLevel) {
     balancedTicks: 0,
     balancedThreshold: BALANCE_TICKS,
     totalBalances: 0,
-    balancedPivotPositions: [],
     wasUnbalanced: true,
   };
-
-  // Archimedes character (level 5)
-  state.archimedes = null;
-  if (cfg.archimedes) {
-    state.archimedes = {
-      mass: 50,
-      beamPosition: 0.48,
-      size: 52,
-      emoji: '👴',
-      color: '#8E44AD',
-      label: 'Archimedes',
-    };
-  }
 
   state.worldScroll = 0;
   state.confetti = null;
   state.pivotDraggedBy = null;
+  state.pivotHintTicks = cfg.showPivotHint ? 180 : 0;
   state.doorTarget = cfg.doorTarget;
   state.doorProgress = 0;
-  state.groundY = 430;
+  state.groundY = 465;
+  state.beamGroundY = state.baskets.enabled ? 400 : 465;
 
   // Spawn palette objects
-  state.objects = spawnPalette(cfg);
-
-  // Place starting objects on beam
-  for (let i = 0; i < cfg.palette.length; i++) {
-    const spec = cfg.palette[i];
-    if (spec.startOnBeam != null && state.objects[i]) {
-      const obj = state.objects[i];
-      obj.onBeam = true;
-      obj.beamPosition = spec.startOnBeam;
-      obj.inBasket = spec.startBasket || null;
-      updateObjectFromBeam(obj, state.beam);
-    }
-  }
+  state.objects = spawnPalette(state, cfg);
 
   // Clear ferry-specific fields
   state.deliveredCount = 0;
   state.tripsCompleted = 0;
   state.cargoMass = 0;
   state.boat = null;
-
-  // Release all player holds
-  for (const pid of [1, 2, 3, 4]) {
-    const p = state.players[pid];
-    if (p) p.heldObjectId = null;
-  }
+  state.archimedes = null;
 
   state.message = `${cfg.name}: ${cfg.desc}`;
 }
@@ -301,46 +575,39 @@ export function initModule(state, subLevel) {
 export function stepModule(state, now) {
   const beam = state.beam;
   if (!beam) return;
+  recomputeBeamGeometry(beam);
+  updateDynamicBaskets(state);
 
-  // 1. Expire stale claims
-  for (const obj of state.objects) {
-    if (obj.claimedBy && obj.claimTime && now - obj.claimTime > CLAIM_TIMEOUT) {
-      const p = state.players[obj.claimedBy];
-      if (p) p.heldObjectId = null;
-      obj.claimedBy = null;
-      obj.claimTime = null;
-    }
+  if (state.pivotHintTicks > 0) {
+    state.pivotHintTicks--;
   }
 
-  // Gather objects on beam (not being held)
-  const onBeam = state.objects.filter(o => o.onBeam && !o.claimedBy);
+  // 1. Expire stale claims
+  expireStaleClaimsOnObjects(state.objects, state, now);
+
+  // Gather objects on beam.
+  // Held objects stay "committed" at their previous placement until release.
+  const onBeam = state.objects.filter(o => o.onBeam);
 
   // 2. Compute net torque
   let netTorque = 0;
   for (const obj of onBeam) {
-    // torque = mass * beamPosition * length * gravity (beamPosition is -0.5..0.5)
-    netTorque += obj.mass * obj.beamPosition * beam.length * GRAVITY;
+    const arm = getObjectBeamPos(obj, beam);
+    netTorque += obj.mass * arm * PHYSICS_SCALE;
   }
 
-  // Include Archimedes character torque (level 5)
-  if (state.archimedes) {
-    netTorque += state.archimedes.mass * state.archimedes.beamPosition * beam.length * GRAVITY;
-  }
+  // Restoring spring toward horizontal (keeps beam from drifting when balanced)
+  netTorque += -beam.angle * RESTORE_FACTOR;
 
-  // 3. Moment of inertia: I = beam_mass*(L/2)^2/3 + Σ(mass * d^2)
-  const halfLen = beam.length / 2;
-  let I = BEAM_MASS * (halfLen * halfLen) / 3;
+  // 3. Moment of inertia
+  let I = BEAM_MASS;
   for (const obj of onBeam) {
-    const d = obj.beamPosition * beam.length;
-    I += obj.mass * d * d;
-  }
-  if (state.archimedes) {
-    const d = state.archimedes.beamPosition * beam.length;
-    I += state.archimedes.mass * d * d;
+    const arm = getObjectBeamPos(obj, beam);
+    I += obj.mass * arm * arm;
   }
 
   // 4-6. Angular acceleration, velocity, angle
-  const angularAccel = netTorque / Math.max(I, 1);
+  const angularAccel = netTorque / Math.max(I, 0.01);
   beam.angularVelocity += angularAccel * TICK_DT;
   beam.angularVelocity *= DAMPING;
   beam.angle += beam.angularVelocity * TICK_DT;
@@ -351,33 +618,44 @@ export function stepModule(state, now) {
     beam.angularVelocity *= -0.3; // bounce
   }
 
-  // Check if beam end hits groundY
-  const leftEndY = beam.pivotY + Math.sin(beam.angle) * (-halfLen);
-  const rightEndY = beam.pivotY + Math.sin(beam.angle) * halfLen;
-  if (leftEndY > state.groundY || rightEndY > state.groundY) {
+  // Check if beam ends hit groundY
+  const leftEndY = beam.pivotY + Math.sin(beam.angle) * (-beam.leftArm);
+  const rightEndY = beam.pivotY + Math.sin(beam.angle) * beam.rightArm;
+  if (leftEndY > state.beamGroundY || rightEndY > state.beamGroundY) {
     beam.angularVelocity *= -0.3;
-    // Push angle back so end is at groundY
-    const maxSin = (state.groundY - beam.pivotY) / halfLen;
-    if (leftEndY > state.groundY) {
-      beam.angle = Math.max(beam.angle, -Math.asin(clamp(maxSin, -1, 1)));
+
+    if (leftEndY > state.beamGroundY) {
+      const maxSinLeft = (state.beamGroundY - beam.pivotY) / Math.max(beam.leftArm, 1);
+      beam.angle = Math.max(beam.angle, -Math.asin(clamp(maxSinLeft, -1, 1)));
     }
-    if (rightEndY > state.groundY) {
-      beam.angle = Math.min(beam.angle, Math.asin(clamp(maxSin, -1, 1)));
+    if (rightEndY > state.beamGroundY) {
+      const maxSinRight = (state.beamGroundY - beam.pivotY) / Math.max(beam.rightArm, 1);
+      beam.angle = Math.min(beam.angle, Math.asin(clamp(maxSinRight, -1, 1)));
     }
   }
 
   // 8. Update all onBeam object positions
   for (const obj of state.objects) {
     if (obj.onBeam && !obj.claimedBy) {
+      if (obj.inBasket) {
+        const basketPos = getBasketPos(state, obj.inBasket);
+        if (basketPos != null) obj.beamPosition = basketPos;
+      }
       updateObjectFromBeam(obj, beam);
     }
   }
 
-  // 9. Balance check
+  // 9. Balance check — use pure mass torque (no spring restore term).
+  let massTorque = 0;
+  for (const obj of onBeam) {
+    const arm = getObjectBeamPos(obj, beam);
+    massTorque += obj.mass * arm;
+  }
+
   const bal = state.balance;
-  const isBalanced = Math.abs(beam.angle) < BALANCE_ANGLE_TOL &&
+  const isBalanced = Math.abs(massTorque) < BALANCE_TORQUE_TOL &&
                      Math.abs(beam.angularVelocity) < BALANCE_VEL_TOL &&
-                     onBeam.length > 0;
+                     onBeam.some(o => !o.fixed);
 
   if (isBalanced) {
     bal.balancedTicks++;
@@ -385,15 +663,6 @@ export function stepModule(state, now) {
       // Celebration!
       bal.totalBalances++;
       bal.wasUnbalanced = false;
-
-      // Track pivot position for level 4
-      const pivotPos = Math.round(beam.pivotX);
-      const isDifferentPosition = bal.balancedPivotPositions.every(
-        p => Math.abs(p - pivotPos) > 30
-      );
-      if (isDifferentPosition) {
-        bal.balancedPivotPositions.push(pivotPos);
-      }
 
       state.doorProgress = computeDoorProgress(state);
 
@@ -423,18 +692,14 @@ export function stepModule(state, now) {
     state.confetti = null;
   }
 
-  // 10. Level 5: world scroll when balanced
-  if (state.level === 5 && isBalanced && bal.balancedTicks >= bal.balancedThreshold) {
+  // 10. Finale scroll cue
+  if (state.level === 6 && isBalanced && bal.balancedTicks >= bal.balancedThreshold) {
     state.worldScroll = Math.min(200, state.worldScroll + 0.5);
   }
 }
 
 function computeDoorProgress(state) {
-  if (state.level === 4) {
-    // Level 4: count distinct pivot positions
-    return state.balance.balancedPivotPositions.length;
-  }
-  // Other levels: total balances
+  // One success per puzzle by default.
   return state.balance.totalBalances;
 }
 
@@ -447,10 +712,11 @@ export function applyModuleInput(state, playerId, input, now) {
 
   switch (input.action) {
     case 'cursor_move': {
-      player.cursorX = clamp(input.x || 0, 0, state.sceneWidth);
-      player.cursorY = clamp(input.y || 0, 0, state.sceneHeight);
+      applyCursorMove(player, input, state.sceneWidth, state.sceneHeight);
 
-      // Move held object
+      // Move held object preview.
+      // Physics contribution remains from its previous committed beam position
+      // until release.
       if (player.heldObjectId) {
         const obj = state.objects.find(o => o.id === player.heldObjectId);
         if (obj) {
@@ -466,6 +732,9 @@ export function applyModuleInput(state, playerId, input, now) {
           state.beam.pivotMinX,
           state.beam.pivotMaxX
         );
+        recomputeBeamGeometry(state.beam);
+        updateDynamicBaskets(state);
+        state.pivotHintTicks = 0;
         // Recalculate positions of objects on beam
         for (const obj of state.objects) {
           if (obj.onBeam && !obj.claimedBy) {
@@ -479,17 +748,12 @@ export function applyModuleInput(state, playerId, input, now) {
     case 'grab': {
       const obj = state.objects.find(o => o.id === input.objectId);
       if (!obj || obj.claimedBy) return true;
-
-      obj.claimedBy = playerId;
-      obj.claimTime = now;
-      player.heldObjectId = obj.id;
-
-      // Remove from beam
-      if (obj.onBeam) {
-        obj.onBeam = false;
-        obj.beamPosition = null;
-        obj.inBasket = null;
+      if (obj.fixed) {
+        state.message = 'That side is fixed. Change the left side.';
+        return true;
       }
+
+      claimObject(obj, player, now);
       return true;
     }
 
@@ -497,63 +761,96 @@ export function applyModuleInput(state, playerId, input, now) {
       if (!player.heldObjectId) return true;
       const obj = state.objects.find(o => o.id === player.heldObjectId);
       if (!obj) { player.heldObjectId = null; return true; }
+      const previousBasket = obj.inBasket;
 
-      obj.claimedBy = null;
-      obj.claimTime = null;
-      player.heldObjectId = null;
+      releaseObject(obj, player);
 
       // Hit-test: can we place on beam?
       const beam = state.beam;
-      const bp = xToBeamPos(beam, obj.x);
-      const beamSurfaceY = beamYAtX(beam, obj.x);
-      const withinBeamX = Math.abs(bp) <= 0.5;
-      const nearBeamY = Math.abs(obj.y - beamSurfaceY) < BEAM_HIT_DIST;
+      const bp = pointToBeamPos(beam, obj.x, obj.y);
+      const withinBeamX = bp >= beam.leftLimit && bp <= beam.rightLimit;
+      const nearBeamY = pointToBeamPerpDist(beam, obj.x, obj.y) < BEAM_HIT_DIST;
+      let nearBasket = false;
+      if (state.baskets.enabled) {
+        const rightP = beamPosToWorld(beam, state.baskets.right.pos);
+        const distToRight = Math.hypot(obj.x - rightP.x, obj.y - (rightP.y + BASKET_HANGER_LEN + BASKET_ITEM_Y));
+        let minLeftDist = Infinity;
+        if (state.baskets.leftSlots) {
+          for (const slot of state.baskets.leftSlots) {
+            const p = beamPosToWorld(beam, slot.pos);
+            const d = Math.hypot(obj.x - p.x, obj.y - (p.y + BASKET_HANGER_LEN + BASKET_ITEM_Y));
+            if (d < minLeftDist) minLeftDist = d;
+          }
+        } else if (state.baskets.left) {
+          const leftP = beamPosToWorld(beam, state.baskets.left.pos);
+          minLeftDist = Math.hypot(obj.x - leftP.x, obj.y - (leftP.y + BASKET_HANGER_LEN + BASKET_ITEM_Y));
+        }
+        nearBasket = Math.min(minLeftDist, distToRight) <= BASKET_DROP_DIST;
+      }
 
-      if (withinBeamX && nearBeamY) {
+      if (withinBeamX && (nearBeamY || nearBasket)) {
         // Check baskets first
         if (state.baskets.enabled) {
-          if (bp < -0.35) {
-            obj.onBeam = true;
-            obj.beamPosition = state.baskets.left.pos;
-            obj.inBasket = 'left';
-            updateObjectFromBeam(obj, beam);
-            // Reset balance tracking for new arrangement
-            state.balance.wasUnbalanced = true;
-            return true;
-          } else if (bp > 0.35) {
-            obj.onBeam = true;
-            obj.beamPosition = state.baskets.right.pos;
-            obj.inBasket = 'right';
-            updateObjectFromBeam(obj, beam);
-            state.balance.wasUnbalanced = true;
+          let targetBasket = 'left';
+          if (obj.fixedSide === 'right') {
+            targetBasket = 'right';
+          } else if (state.baskets.leftSlots) {
+            // Route to nearest left slot
+            let best = 'slot0';
+            let bestDist = Infinity;
+            for (let i = 0; i < state.baskets.leftSlots.length; i++) {
+              const p = beamPosToWorld(beam, state.baskets.leftSlots[i].pos);
+              const d = Math.hypot(obj.x - p.x, obj.y - (p.y + BASKET_HANGER_LEN + BASKET_ITEM_Y));
+              if (d < bestDist) { bestDist = d; best = `slot${i}`; }
+            }
+            targetBasket = best;
+          } else if (state.baskets.allowRightPlacement && bp > 0) {
+            targetBasket = 'right';
+          }
+          const targetPos = getBasketPos(state, targetBasket);
+
+          if (targetPos == null) {
+            resetObjectToHome(obj);
+            if (previousBasket) reindexBasket(state, null, previousBasket);
             return true;
           }
-          // If baskets enabled but dropped in middle, snap to nearest basket
-          const nearestBasket = bp < 0 ? 'left' : 'right';
+
           obj.onBeam = true;
-          obj.beamPosition = nearestBasket === 'left'
-            ? state.baskets.left.pos : state.baskets.right.pos;
-          obj.inBasket = nearestBasket;
+          obj.beamPosition = targetPos;
+          obj.inBasket = targetBasket;
+          obj.basketIndex = 0;
+          obj.basketCount = 1;
           updateObjectFromBeam(obj, beam);
+          if (previousBasket && previousBasket !== targetBasket) {
+            reindexBasket(state, null, previousBasket);
+          }
+          reindexBasket(state, null, targetBasket);
           state.balance.wasUnbalanced = true;
           return true;
         }
 
         // Free placement on beam
+        const { minBp, maxBp } = getPlacementBounds(state, obj);
+        if (bp > maxBp + 0.01) {
+          resetObjectToHome(obj);
+          if (previousBasket) reindexBasket(state, null, previousBasket);
+          state.message = 'Only the left side can be changed.';
+          return true;
+        }
         obj.onBeam = true;
-        obj.beamPosition = clamp(bp, -0.48, 0.48);
+        obj.beamPosition = clamp(bp, minBp, maxBp);
         obj.inBasket = null;
+        obj.basketIndex = 0;
+        obj.basketCount = 1;
         updateObjectFromBeam(obj, beam);
+        if (previousBasket) reindexBasket(state, null, previousBasket);
         state.balance.wasUnbalanced = true;
         return true;
       }
 
       // Missed beam → return to palette area
-      obj.onBeam = false;
-      obj.beamPosition = null;
-      obj.inBasket = null;
-      obj.y = 460;
-      obj.x = clamp(obj.x, 80, 720);
+      resetObjectToHome(obj);
+      if (previousBasket) reindexBasket(state, null, previousBasket);
       return true;
     }
 
@@ -568,6 +865,7 @@ export function applyModuleInput(state, playerId, input, now) {
       );
       if (dist < 50) {
         state.pivotDraggedBy = playerId;
+        state.pivotHintTicks = 0;
       }
       return true;
     }
@@ -580,37 +878,7 @@ export function applyModuleInput(state, playerId, input, now) {
     }
 
     case 'reset': {
-      // Clear beam, re-spawn palette, reset angle
-      const cfg = LEVELS[state.level];
-      if (!cfg) return true;
-
-      state.beam.angle = 0;
-      state.beam.angularVelocity = 0;
-      state.beam.pivotX = cfg.pivotX;
-      state.objects = spawnPalette(cfg);
-
-      // Place starting objects on beam
-      for (let i = 0; i < cfg.palette.length; i++) {
-        const spec = cfg.palette[i];
-        if (spec.startOnBeam != null && state.objects[i]) {
-          const obj = state.objects[i];
-          obj.onBeam = true;
-          obj.beamPosition = spec.startOnBeam;
-          obj.inBasket = spec.startBasket || null;
-          updateObjectFromBeam(obj, state.beam);
-        }
-      }
-
-      state.balance.balancedTicks = 0;
-      state.balance.wasUnbalanced = true;
-      state.confetti = null;
-      state.pivotDraggedBy = null;
-      state.message = '';
-
-      for (const pid of [1, 2, 3, 4]) {
-        const p = state.players[pid];
-        if (p) p.heldObjectId = null;
-      }
+      initModule(state, state.level);
       return true;
     }
 

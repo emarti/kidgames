@@ -1,787 +1,534 @@
 /**
- * Archimedes — Module 3: Pulley Builder
- * Server-side simulation for the Pulley module.
+ * Archimedes — Module 3: Pulley Builder  (complete rewrite)
  *
- * Physics model: mechanical advantage via pulleys.
- *   - MA = number of rope segments supporting the load
- *   - effortRequired = max(0, loadWeight - counterweightWeight) / MA
- *   - Player pulls rope down, load goes up; speed proportional to surplus effort
+ * Rope model
+ * ----------
+ * The rope has a single state variable: `ropeConsumed` — total rope pulled
+ * through the system.  Load position is derived:
  *
- * Exports the module interface expected by archimedes_sim.js dispatcher:
- *   { initModule, stepModule, applyModuleInput, numLevels, LEVEL_LIST }
+ *     liftAmount = ropeConsumed / MA
+ *     loadY      = loadStartY − liftAmount
+ *
+ * Pulling: the player grabs a handle and drags it downward.  Each pixel the
+ * handle descends adds one pixel to ropeConsumed (if the config allows it).
+ * Releasing the handle triggers a ratchet — the handle springs back to the
+ * ceiling while ropeConsumed stays, so the load stays at its current height.
+ * For L1 (MA = 1) the full lift fits in one pull; higher MA levels need
+ * 2–4 pulls, teaching the force-distance trade-off.
+ *
+ * "Too heavy": if  (loadMass − cwMass) / MA  >  MAX_EFFORT  the handle won't
+ * move — the player sees a struggle animation and a hint to add equipment.
+ *
+ * CW overload: if cwMass > loadMass + 3 the load rises automatically
+ * (uncontrolled) and auto-resets after 2 s.
+ *
+ * Windlass (L6): Instead of a linear pull the player turns a crank.
+ * Clockwise rotation feeds rope through the system.
+ *
+ * Exports  { initModule, stepModule, applyModuleInput, numLevels, LEVEL_LIST }
  */
 
 import { clamp } from './maze_utils.js';
+import {
+  createIdCounter,
+  claimObject,
+  releaseObject,
+  expireStaleClaimsOnObjects,
+  applyCursorMove,
+  initModuleBase,
+} from './archimedes_utils.js';
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// ── constants ────────────────────────────────────────────────────────────────
 
-const TICK_DT = 0.05;           // 50ms per tick
-const CLAIM_TIMEOUT = 3000;     // ms
-const CONFETTI_DURATION = 2000; // ms
-const MAX_EFFORT = 15;          // player's maximum pull strength
-const GRAVITY_SINK = 0.3;       // px/tick load sinks when not pulling
-const LIFT_SPEED_FACTOR = 1.5;  // px per unit of surplus effort per tick
-const STRAIN_BUDGE = 2.5;       // px the load budges when straining
-const STRAIN_SINK = 0.15;       // px/tick sink-back when straining
-const SNAP_DIST = 40;           // px for snapping pulleys to anchors/load
-const LIFTED_HOLD_TICKS = 30;   // ticks load must stay at target to win
-const ROPE_STRIPE_SPEED = 3;    // stripe offset per px of pull
+const MAX_EFFORT       = 15;   // max force a player can exert
+const ANCHOR_Y         = 60;   // Y of the ceiling pulley axle
+const FLOOR_Y          = 445;  // Y of the floor (hand / load bottom limit)
+const CW_OVERLOAD_RISE = 3;    // px/tick the load rises when CW too heavy
+const CW_RESET_TICKS   = 40;   // ticks before auto-reset after overload (~2 s)
+const CRANK_SCALE      = 25;   // rope-px per radian of crank rotation
 
-// ── Levels ───────────────────────────────────────────────────────────────────
+// ── load catalogue ───────────────────────────────────────────────────────────
+
+const LOADS = {
+  lantern:      { mass: 8,   emoji: '🏮', label: 'Lantern' },
+  column:       { mass: 20,  emoji: '🏛️', label: 'Column' },
+  statue:       { mass: 45,  emoji: '🗿', label: 'Statue' },
+  quarry_block: { mass: 30,  emoji: '⛏️', label: 'Block' },
+  elevator:     { mass: 15,  emoji: '🛗', label: 'Elevator' },  // 8 platform + 7 cargo
+  temple_stone: { mass: 200, emoji: '🪨', label: 'Stone' },
+};
+
+// ── CW catalogue ─────────────────────────────────────────────────────────────
+
+const CW_DEFS = {
+  cw_5:  { mass: 5,  emoji: '🪨', label: '5 kg',  color: '#CFD8DC' },
+  cw_15: { mass: 15, emoji: '🪨', label: '15 kg', color: '#90A4AE' },
+  cw_25: { mass: 25, emoji: '🪨', label: '25 kg', color: '#607D8B' },
+  cw_40: { mass: 40, emoji: '🪨', label: '40 kg', color: '#455A64' },
+};
+
+// ── level definitions ────────────────────────────────────────────────────────
 
 const LEVELS = {
   1: {
-    id: 'direct_lift',
-    name: '🔗 Direct Lift',
-    desc: 'Pull the rope to lift the crate!',
-    load: { weight: 5, emoji: '📦', label: 'Crate', width: 50, height: 40 },
-    anchors: [
-      { id: 'a1', x: 400, y: 60, type: 'fixed' },
-    ],
-    startPulleys: [
-      { type: 'fixed', anchorId: 'a1' },
-    ],
-    palette: [],
-    counterweight: null,
-    elevator: null,
-    doorTarget: 1,
+    id: 'fixed_pulley',
+    name: '🏮 Hoist the Lantern',
+    desc: 'Grab the orange handle and pull DOWN to lift the lantern UP!',
+    loadType: 'lantern',
+    loadStartY: 400,
     targetY: 100,
-    ceilingY: 50,
-    floorY: 400,
+    baseMA: 1,
+    allowMovable: false,
+    maxMovable: 0,
+    hasCounterweight: false,
+    cwPalette: [],
+    allowRigs: false,
+    isWindlass: false,
+    scriptedEvent: null,
   },
   2: {
-    id: 'too_heavy',
-    name: '🔗 Too Heavy!',
-    desc: 'Too heavy! Add a movable pulley.',
-    load: { weight: 20, emoji: '📦', label: 'Heavy Crate', width: 55, height: 45 },
-    anchors: [
-      { id: 'a1', x: 400, y: 60, type: 'fixed' },
-      { id: 'a2', x: 300, y: 60, type: 'fixed' },
-    ],
-    startPulleys: [
-      { type: 'fixed', anchorId: 'a1' },
-    ],
-    palette: [
-      { type: 'movable' },
-    ],
-    counterweight: null,
-    elevator: null,
-    doorTarget: 1,
-    targetY: 120,
-    ceilingY: 50,
-    floorY: 400,
+    id: 'movable_pulley',
+    name: '🏛️ Raise the Column',
+    desc: 'Too heavy! Drag the ⚙️ movable pulley onto the load to double your strength.',
+    loadType: 'column',
+    loadStartY: 400,
+    targetY: 140,
+    baseMA: 1,
+    allowMovable: true,
+    maxMovable: 1,
+    hasCounterweight: false,
+    cwPalette: [],
+    allowRigs: false,
+    isWindlass: false,
+    scriptedEvent: null,
   },
   3: {
-    id: 'even_heavier',
-    name: '🔗 Even Heavier!',
-    desc: 'A boulder! You\'ll need lots of pulleys.',
-    load: { weight: 45, emoji: '🪨', label: 'Boulder', width: 60, height: 55 },
-    anchors: [
-      { id: 'a1', x: 400, y: 60, type: 'fixed' },
-      { id: 'a2', x: 300, y: 60, type: 'fixed' },
-      { id: 'a3', x: 500, y: 60, type: 'fixed' },
-    ],
-    startPulleys: [
-      { type: 'fixed', anchorId: 'a1' },
-    ],
-    palette: [
-      { type: 'movable' },
-      { type: 'movable' },
-      { type: 'fixed' },
-    ],
-    counterweight: null,
-    elevator: null,
-    doorTarget: 1,
-    targetY: 130,
-    ceilingY: 50,
-    floorY: 400,
+    id: 'compound_pulleys',
+    name: '🗿 Lift the Statue',
+    desc: 'Pick the rig with enough ropes to lift a heavy statue!',
+    loadType: 'statue',
+    loadStartY: 400,
+    targetY: 170,
+    baseMA: 1,
+    allowMovable: false,
+    maxMovable: 0,
+    hasCounterweight: false,
+    cwPalette: [],
+    allowRigs: true,   // player picks RIG_1 / RIG_2 / RIG_4
+    isWindlass: false,
+    scriptedEvent: null,
   },
   4: {
-    id: 'the_elevator',
-    name: '🛗 The Elevator',
-    desc: 'Build an elevator!',
-    load: { weight: 8, emoji: '🛗', label: 'Elevator', width: 70, height: 50 },
-    anchors: [
-      { id: 'a1', x: 350, y: 60, type: 'fixed' },
-      { id: 'a2', x: 250, y: 60, type: 'fixed' },
-      { id: 'a3', x: 450, y: 60, type: 'fixed' },
-    ],
-    startPulleys: [
-      { type: 'fixed', anchorId: 'a1' },
-    ],
-    palette: [
-      { type: 'movable' },
-      { type: 'fixed' },
-    ],
-    counterweight: { maxWeight: 40, items: [] },
-    elevator: {
-      waves: [
-        { people: [], totalMass: 0 },                                         // wave 0: empty
-        { people: [{ emoji: '🧒', mass: 8 }, { emoji: '🧒', mass: 8 }], totalMass: 16 }, // wave 1
-      ],
-    },
-    doorTarget: 2,
-    targetY: 100,
-    ceilingY: 50,
-    floorY: 400,
+    id: 'counterweight',
+    name: '⛏️ The Quarry Hoist',
+    desc: 'Drag a counterweight stone into the bucket to ease the lift!',
+    loadType: 'quarry_block',
+    loadStartY: 400,
+    targetY: 140,
+    baseMA: 2,         // pre-rigged with a movable pulley
+    allowMovable: false,
+    maxMovable: 0,
+    hasCounterweight: true,
+    cwPalette: ['cw_5', 'cw_15', 'cw_25', 'cw_40'],
+    allowRigs: false,
+    isWindlass: false,
+    scriptedEvent: null,
   },
   5: {
-    id: 'busy_elevator',
-    name: '🛗 Busy Elevator',
-    desc: 'Handle all the passengers!',
-    load: { weight: 8, emoji: '🛗', label: 'Elevator', width: 70, height: 50 },
-    anchors: [
-      { id: 'a1', x: 350, y: 60, type: 'fixed' },
-      { id: 'a2', x: 250, y: 60, type: 'fixed' },
-      { id: 'a3', x: 450, y: 60, type: 'fixed' },
-      { id: 'a4', x: 550, y: 60, type: 'fixed' },
-    ],
-    startPulleys: [
-      { type: 'fixed', anchorId: 'a1' },
-    ],
-    palette: [
-      { type: 'movable' },
-      { type: 'movable' },
-      { type: 'fixed' },
-    ],
-    counterweight: { maxWeight: 60, items: [] },
-    elevator: {
-      waves: [
-        { people: [], totalMass: 0 },                                                         // wave 0: empty
-        { people: [{ emoji: '🧒', mass: 8 }], totalMass: 8 },                                // wave 1
-        { people: [{ emoji: '🧒', mass: 8 }, { emoji: '🧒', mass: 8 }, { emoji: '👨', mass: 15 }], totalMass: 31 }, // wave 2
-      ],
-    },
-    doorTarget: 3,
+    id: 'elevator_elephant',
+    name: '🐘 The Zoo Lift',
+    desc: 'Build the elevator rig — but watch for surprises!',
+    loadType: 'elevator',
+    loadStartY: 400,
     targetY: 100,
-    ceilingY: 50,
-    floorY: 400,
+    baseMA: 1,
+    allowMovable: true,
+    maxMovable: 2,     // up to MA = 4
+    hasCounterweight: true,
+    cwPalette: ['cw_15', 'cw_25', 'cw_40'],
+    allowRigs: false,
+    isWindlass: false,
+    scriptedEvent: 'elephant',
+    elephantMass: 35,
+    elephantTrigger: 0.6, // 60 % of lift range
+  },
+  6: {
+    id: 'differential_windlass',
+    name: "⚙️ Archimedes' Temple Engine",
+    desc: 'Grab the crank and turn clockwise to raise the temple stone!',
+    loadType: 'temple_stone',
+    loadStartY: 400,
+    targetY: 230,
+    baseMA: 1,
+    allowMovable: false,
+    maxMovable: 0,
+    hasCounterweight: false,
+    cwPalette: [],
+    allowRigs: false,
+    isWindlass: true,
+    windlassMA: 20,
+    scriptedEvent: null,
   },
 };
 
 const NUM_LEVELS = Object.keys(LEVELS).length;
 
-/** Sub-level list exported for the module-select UI. */
-export const LEVEL_LIST = Object.entries(LEVELS).map(([num, cfg]) => ({
-  number: Number(num),
-  id: cfg.id,
-  name: cfg.name,
+export const LEVEL_LIST = Object.entries(LEVELS).map(([n, cfg]) => ({
+  number: Number(n), id: cfg.id, name: cfg.name,
 }));
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── helpers ──────────────────────────────────────────────────────────────────
 
-let _idCounter = 0;
-function nextId() { return 'pu_' + (++_idCounter); }
+const nextId = createIdCounter('pu');
 
-/** Compute mechanical advantage: count rope segments supporting the load. */
-function computeMA(pulleys) {
-  // MA = 1 (fixed only, rope redirects) + 1 per movable pulley in the system
-  // More precisely: each movable pulley doubles the segments on the load side.
-  // Simple model: MA = number of rope segments touching the load block.
-  // With only fixed pulleys: MA = 1
-  // Each movable pulley added: MA += 1 (it adds one supporting segment)
-  const placed = pulleys.filter(p => p.placed);
-  const movableCount = placed.filter(p => p.type === 'movable').length;
-  // Base MA is 1 (the free end going to player). Each movable pulley adds 1 segment.
-  // If there are fixed pulleys redirecting, the MA doesn't change from fixed alone.
-  // MA = 1 + movableCount (standard compound pulley)
-  return 1 + movableCount;
+function makeCWObj(type, homeX, homeY) {
+  const d = CW_DEFS[type];
+  if (!d) return null;
+  return {
+    id: nextId(), type, x: homeX, y: homeY,
+    mass: d.mass, emoji: d.emoji, label: d.label, color: d.color,
+    size: 28, homeX, homeY,
+    claimedBy: null, claimTime: null, inSlot: false,
+  };
 }
 
-/** Build rope waypoints from placed pulleys (top-down zigzag). */
-function buildRopeWaypoints(state) {
-  const pulleys = state.pulley.pulleys.filter(p => p.placed);
-  const load = state.pulley.load;
-  const waypoints = [];
-
-  // Sort pulleys: fixed ones at ceiling, movable ones at load
-  const fixed = pulleys.filter(p => p.type === 'fixed').sort((a, b) => a.x - b.x);
-  const movable = pulleys.filter(p => p.type === 'movable').sort((a, b) => a.x - b.x);
-
-  // Build zigzag: rope starts at anchor point, goes down to load/movable, back up to fixed, etc.
-  // Simple model: rope goes from anchor → down to load zone → up to next fixed → down → ...
-  // Then free end hangs down for player to pull.
-
-  if (fixed.length === 0) {
-    // No pulleys at all - rope straight from ceiling to load
-    waypoints.push({ x: load.x, y: state.pulley.ceilingY });
-    waypoints.push({ x: load.x, y: load.y });
-    state.pulley.rope.waypoints = waypoints;
-    return;
+function computeMA(sys, cfg) {
+  if (cfg.isWindlass) return cfg.windlassMA;
+  if (cfg.allowRigs) return sys.selectedRig || 1;
+  let ma = cfg.baseMA;
+  if (cfg.allowMovable && sys.movableCount > 0) {
+    ma = cfg.baseMA * Math.pow(2, sys.movableCount);
   }
-
-  // First fixed pulley: rope attached at top
-  const loadCenterX = load.x;
-  const loadTopY = load.y - load.height / 2;
-
-  // Interleave: fixed[0] → movable[0] → fixed[1] → movable[1] → ...
-  // Start with attachment point on load
-  waypoints.push({ x: loadCenterX, y: loadTopY, type: 'load' });
-
-  let fi = 0, mi = 0;
-  let goingUp = true;
-  while (fi < fixed.length || mi < movable.length) {
-    if (goingUp && fi < fixed.length) {
-      waypoints.push({ x: fixed[fi].x, y: fixed[fi].y, type: 'fixed', id: fixed[fi].id });
-      fi++;
-      goingUp = false;
-    } else if (!goingUp && mi < movable.length) {
-      // Movable pulley is at load level
-      waypoints.push({ x: movable[mi].x, y: loadTopY, type: 'movable', id: movable[mi].id });
-      mi++;
-      goingUp = true;
-    } else if (fi < fixed.length) {
-      waypoints.push({ x: fixed[fi].x, y: fixed[fi].y, type: 'fixed', id: fixed[fi].id });
-      fi++;
-      goingUp = false;
-    } else {
-      break;
-    }
-  }
-
-  // Free end: comes down from last waypoint
-  const last = waypoints[waypoints.length - 1];
-  const freeEndX = last.x + 30;
-  const freeEndY = state.pulley.floorY - 20;
-  waypoints.push({ x: freeEndX, y: freeEndY, type: 'free' });
-
-  state.pulley.rope.waypoints = waypoints;
-  state.pulley.rope.freeEndX = freeEndX;
-  state.pulley.rope.freeEndY = freeEndY;
+  return ma;
 }
 
-function computeEffortEmoji(ratio) {
-  // ratio = effortRequired / maxEffort
-  if (ratio <= 0.3) return '😊';
-  if (ratio <= 0.6) return '😤';
-  if (ratio <= 1.0) return '😰';
-  return '😫';
+function effortNeeded(sys) {
+  return Math.max(0, sys.loadMass - sys.cwMass) / sys.ma;
 }
 
-/** Counterweight palette items for levels 4-5 */
-const CW_BLOCKS = [
-  { type: 'cw_small', weight: 5, emoji: '🧱', label: '5kg' },
-  { type: 'cw_medium', weight: 10, emoji: '🪨', label: '10kg' },
-  { type: 'cw_large', weight: 15, emoji: '⚒️', label: '15kg' },
-];
-
-// ── Module interface ─────────────────────────────────────────────────────────
+// ── module interface ─────────────────────────────────────────────────────────
 
 export function initModule(state, subLevel) {
   const lvl = clamp(subLevel || 1, 1, NUM_LEVELS);
   const cfg = LEVELS[lvl];
   if (!cfg) return;
 
-  state.level = lvl;
-  state.levelId = cfg.id;
-  state.levelName = cfg.name;
-  state.doorOpen = false;
-  state.showLevelSelect = false;
-  state.message = '';
-  state.confetti = null;
-  state.doorTarget = cfg.doorTarget;
-  state.doorProgress = 0;
+  initModuleBase(state, { _level: lvl, ...cfg });
 
-  // Clear seesaw/ferry fields
-  state.beam = null;
-  state.boat = null;
-  state.deliveredCount = 0;
-  state.tripsCompleted = 0;
-  state.cargoMass = 0;
+  const loadDef = LOADS[cfg.loadType];
 
-  const loadX = 400;
+  // build CW palette objects
+  state.objects = [];
+  const spacing = 80;
+  const startX = 400 - ((cfg.cwPalette.length - 1) * spacing) / 2;
+  cfg.cwPalette.forEach((type, i) => {
+    const obj = makeCWObj(type, startX + i * spacing, FLOOR_Y + 20);
+    if (obj) state.objects.push(obj);
+  });
 
   state.pulley = {
-    ceilingY: cfg.ceilingY,
-    floorY: cfg.floorY,
-    targetY: cfg.targetY,
+    // layout
+    anchorY:     ANCHOR_Y,
+    floorY:      FLOOR_Y,
+    loadStartY:  cfg.loadStartY,
+    targetY:     cfg.targetY,
 
-    load: {
-      weight: cfg.load.weight,
-      baseWeight: cfg.load.weight,
-      y: cfg.floorY - cfg.load.height / 2,
-      x: loadX,
-      emoji: cfg.load.emoji,
-      label: cfg.load.label,
-      width: cfg.load.width,
-      height: cfg.load.height,
-    },
+    // core rope state
+    handY:         ANCHOR_Y,   // handle starts at the ceiling (no pull yet)
+    ropeConsumed:  0,          // cumulative rope fed through (persists across pulls)
+    loadY:         cfg.loadStartY,
 
-    anchors: cfg.anchors.map(a => ({ ...a })),
+    // physics
+    loadMass: loadDef.mass,
+    baseLoadMass: loadDef.mass,
+    ma:        cfg.baseMA,
+    cwMass:    0,
+    struggling: false,
 
-    pulleys: [],
-    palette: [],
+    // config state
+    movableCount:  0,
+    maxMovable:    cfg.maxMovable || 0,
+    selectedRig:   cfg.allowRigs ? 1 : 0,
 
-    rope: {
-      waypoints: [],
-      freeEndX: loadX + 30,
-      freeEndY: cfg.floorY - 20,
-      pulledAmount: 0,
-      stripeOffset: 0,
-    },
+    // events
+    won:       false,
+    eventFired: false,
+    cwOverload: false,
+    cwOverloadCountdown: 0,
+    screenShake: 0,
 
-    ma: 1,
-    effortRequired: cfg.load.weight,
+    // windlass
+    crankAngle: 0,
 
-    pull: {
-      playerId: null,
-      active: false,
-      dragStartY: 0,
-      currentY: 0,
-      effort: 0,
-      maxEffort: MAX_EFFORT,
-    },
-
-    effortMeter: {
-      value: 0,
-      emoji: '😊',
-    },
-
-    liftProgress: 0,
-    lifted: false,
-    liftedTicks: 0,
-
-    counterweight: null,
-    elevator: null,
+    // hints
+    hint: null,
+    hintTimer: 0,
   };
 
-  // Place starting pulleys
-  let pulleyIndex = 0;
-  for (const sp of cfg.startPulleys) {
-    const anchor = cfg.anchors.find(a => a.id === sp.anchorId);
-    const pulley = {
-      id: nextId(),
-      type: sp.type,
-      x: anchor ? anchor.x : loadX,
-      y: anchor ? anchor.y : cfg.ceilingY,
-      anchorId: sp.anchorId || null,
-      radius: 15,
-      placed: true,
-      claimedBy: null,
-      claimTime: null,
-    };
-    state.pulley.pulleys.push(pulley);
-    pulleyIndex++;
-  }
-
-  // Create palette items (pulleys to place)
-  const paletteStartX = 150;
-  const paletteSpacing = 80;
-  for (let i = 0; i < cfg.palette.length; i++) {
-    const pp = cfg.palette[i];
-    const pulley = {
-      id: nextId(),
-      type: pp.type,
-      x: paletteStartX + i * paletteSpacing,
-      y: cfg.floorY + 40,
-      anchorId: null,
-      radius: 15,
-      placed: false,
-      claimedBy: null,
-      claimTime: null,
-    };
-    state.pulley.pulleys.push(pulley);
-    state.pulley.palette.push(pulley.id);
-  }
-
-  // Counterweight setup
-  if (cfg.counterweight) {
-    state.pulley.counterweight = {
-      weight: 0,
-      y: cfg.ceilingY + 30,
-      maxWeight: cfg.counterweight.maxWeight,
-      items: [],
-      // CW palette
-      cwPalette: CW_BLOCKS.map((b, i) => ({
-        id: nextId(),
-        ...b,
-        x: 650 + i * 50,
-        y: cfg.floorY + 40,
-        placed: false,
-        claimedBy: null,
-        claimTime: null,
-      })),
-    };
-  }
-
-  // Elevator setup
-  if (cfg.elevator) {
-    state.pulley.elevator = {
-      people: [],
-      peopleWaveIndex: 0,
-      totalMass: 0,
-      waves: cfg.elevator.waves,
-      waveCompleted: false,
-    };
-  }
-
-  // Compute initial state
-  state.pulley.ma = computeMA(state.pulley.pulleys);
-  updateEffort(state);
-  buildRopeWaypoints(state);
-
-  // Release all player holds
-  for (const pid of [1, 2, 3, 4]) {
-    const p = state.players[pid];
-    if (p) p.heldObjectId = null;
-  }
-
-  state.objects = []; // pulley module doesn't use shared objects array
-  state.message = `${cfg.name}: ${cfg.desc}`;
+  state.message = cfg.desc;
 }
 
-function updateEffort(state) {
-  const pu = state.pulley;
-  const totalLoadWeight = pu.load.weight + (pu.elevator ? pu.elevator.totalMass : 0);
-  const cwWeight = pu.counterweight ? pu.counterweight.weight : 0;
-  const netWeight = Math.max(0, totalLoadWeight - cwWeight);
-  pu.effortRequired = netWeight / pu.ma;
-  pu.effortMeter.value = pu.effortRequired;
-  pu.effortMeter.emoji = computeEffortEmoji(pu.effortRequired / pu.pull.maxEffort);
-}
-
-/**
- * Pulley simulation step. Called each tick by the dispatcher.
- */
 export function stepModule(state, now) {
-  const pu = state.pulley;
-  if (!pu) return;
+  expireStaleClaimsOnObjects(state.objects, state, now);
+  const sys = state.pulley;
+  if (!sys) return;
+  const cfg = LEVELS[state.level];
+  if (!cfg) return;
 
-  // 1. Expire stale claims on pulleys
-  for (const p of pu.pulleys) {
-    if (p.claimedBy && p.claimTime && now - p.claimTime > CLAIM_TIMEOUT) {
-      const player = state.players[p.claimedBy];
-      if (player) player.heldObjectId = null;
-      p.claimedBy = null;
-      p.claimTime = null;
+  // ── recompute MA ──────────────────────────────────────────────────────
+  sys.ma = computeMA(sys, cfg);
+
+  // ── recompute CW ──────────────────────────────────────────────────────
+  sys.cwMass = 0;
+  for (const o of state.objects) { if (o.inSlot) sys.cwMass += o.mass; }
+
+  // ── CW overload ───────────────────────────────────────────────────────
+  if (sys.cwMass > sys.loadMass + 3 && !sys.cwOverload) {
+    sys.cwOverload = true;
+    sys.cwOverloadCountdown = CW_RESET_TICKS;
+    state.message = '⚠️ Too much counterweight — it shot up!';
+    sys.screenShake = 15;
+  }
+  if (sys.cwOverload) {
+    sys.ropeConsumed += CW_OVERLOAD_RISE * sys.ma;
+    sys.cwOverloadCountdown--;
+    if (sys.cwOverloadCountdown <= 0) {
+      // auto-reset
+      resetLevel(state);
+      state.message = cfg.name + ': Try a different counterweight!';
+      return;
     }
   }
 
-  // Expire stale CW claims
-  if (pu.counterweight) {
-    for (const item of pu.counterweight.cwPalette) {
-      if (item.claimedBy && item.claimTime && now - item.claimTime > CLAIM_TIMEOUT) {
-        const player = state.players[item.claimedBy];
-        if (player) player.heldObjectId = null;
-        item.claimedBy = null;
-        item.claimTime = null;
-      }
+  // ── scripted event: elephant ───────────────────────────────────────────
+  if (cfg.scriptedEvent === 'elephant' && !sys.eventFired) {
+    const range = sys.loadStartY - sys.targetY;
+    const lift  = sys.loadStartY - sys.loadY;
+    if (lift >= range * (cfg.elephantTrigger || 0.6)) {
+      sys.eventFired = true;
+      sys.loadMass += cfg.elephantMass || 35;
+      sys.ropeConsumed = 0;           // drop back to floor
+      sys.handY = ANCHOR_Y;
+      sys.screenShake = 12;
+      state.message = '🐘 A baby elephant hopped on! Reconfigure!';
     }
   }
 
-  // 2. Update effort
-  updateEffort(state);
+  // ── load position from ropeConsumed ───────────────────────────────────
+  const liftAmt = sys.ropeConsumed / sys.ma;
+  sys.loadY = clamp(sys.loadStartY - liftAmt, sys.targetY, sys.loadStartY);
 
-  // 3. Handle pull physics
-  const pull = pu.pull;
-  const load = pu.load;
-  const maxY = pu.floorY - load.height / 2;  // bottom position
-  const minY = pu.targetY;                     // target position (top)
+  // screen shake decay
+  if (sys.screenShake > 0) sys.screenShake--;
 
-  if (pull.active && pull.playerId) {
-    const dragDist = pull.dragStartY < pull.currentY
-      ? pull.currentY - pull.dragStartY : 0;
-    // effort proportional to drag distance, capped at maxEffort
-    pull.effort = clamp(dragDist / 15, 0, pull.maxEffort);
-
-    if (pull.effort > pu.effortRequired) {
-      // Lifting! Speed proportional to surplus
-      const surplus = pull.effort - pu.effortRequired;
-      const liftSpeed = surplus * LIFT_SPEED_FACTOR / pu.ma;
-      load.y = Math.max(minY, load.y - liftSpeed);
-      pu.rope.pulledAmount += liftSpeed * pu.ma;
-      pu.rope.stripeOffset += liftSpeed * ROPE_STRIPE_SPEED;
-    } else if (pull.effort > pu.effortRequired * 0.5) {
-      // Straining: budge up slightly then sink back
-      const budge = STRAIN_BUDGE * (pull.effort / pu.effortRequired - 0.5);
-      load.y = Math.max(minY, load.y - budge * 0.1);
-      // But also slowly sinking
-      load.y = Math.min(maxY, load.y + STRAIN_SINK);
-    }
-  } else {
-    // Not pulling: gravity sinks load slowly
-    if (load.y < maxY) {
-      load.y = Math.min(maxY, load.y + GRAVITY_SINK);
-      pu.rope.stripeOffset -= GRAVITY_SINK * ROPE_STRIPE_SPEED * 0.5;
-    }
-    pull.effort = 0;
-  }
-
-  // Update movable pulley Y positions to track load
-  for (const p of pu.pulleys) {
-    if (p.type === 'movable' && p.placed) {
-      p.y = load.y - load.height / 2;
-    }
-  }
-
-  // Update counterweight position (inversely to load)
-  if (pu.counterweight) {
-    const loadRange = maxY - minY;
-    const loadProgress = (maxY - load.y) / loadRange;
-    pu.counterweight.y = pu.ceilingY + 30 + loadProgress * (pu.floorY - pu.ceilingY - 80);
-  }
-
-  // Update rope waypoints
-  buildRopeWaypoints(state);
-
-  // 4. Lift progress and completion check
-  const loadRange = maxY - minY;
-  pu.liftProgress = loadRange > 0 ? (maxY - load.y) / loadRange : 0;
-
-  if (load.y <= minY + 5) {
-    pu.liftedTicks++;
-    if (pu.liftedTicks >= LIFTED_HOLD_TICKS && !pu.lifted) {
-      pu.lifted = true;
-      handleLiftComplete(state, now);
-    }
-  } else {
-    pu.liftedTicks = 0;
-  }
-
-  // 5. Clear confetti
-  if (state.confetti && now - state.confetti.startTime > CONFETTI_DURATION) {
-    state.confetti = null;
-  }
-}
-
-function handleLiftComplete(state, now) {
-  const pu = state.pulley;
-
-  state.doorProgress++;
-  state.confetti = { startTime: now, x: pu.load.x, y: pu.targetY - 30 };
-
-  // Check elevator wave progression
-  if (pu.elevator) {
-    const nextWave = pu.elevator.peopleWaveIndex + 1;
-    if (nextWave < pu.elevator.waves.length) {
-      // Lower elevator back, add next wave of people
-      pu.elevator.waveCompleted = true;
-
-      // Schedule next wave after brief pause (handled in next few ticks)
-      setTimeout(() => {
-        if (!pu.elevator) return;
-        pu.load.y = pu.floorY - pu.load.height / 2;
-        pu.lifted = false;
-        pu.liftedTicks = 0;
-        pu.liftProgress = 0;
-
-        pu.elevator.peopleWaveIndex = nextWave;
-        const wave = pu.elevator.waves[nextWave];
-        pu.elevator.people = wave.people.map(p => ({ ...p }));
-        pu.elevator.totalMass = wave.totalMass;
-        pu.elevator.waveCompleted = false;
-
-        updateEffort(state);
-        buildRopeWaypoints(state);
-
-        if (nextWave > 0) {
-          state.message = `${wave.people.length} passenger${wave.people.length !== 1 ? 's' : ''} boarding! (${wave.totalMass}kg added)`;
-        }
-      }, 1500);
-
-      state.message = `Lift complete! More passengers incoming...`;
-    } else {
-      state.message = 'All passengers delivered!';
-    }
-  }
-
-  if (state.doorProgress >= state.doorTarget && !state.doorOpen) {
+  // ── win check ─────────────────────────────────────────────────────────
+  if (sys.loadY <= sys.targetY && !sys.won && !sys.cwOverload) {
+    sys.won = true;
     state.doorOpen = true;
-    state.message = 'Lifted! Door opened!';
-  } else if (!state.doorOpen) {
-    const remaining = state.doorTarget - state.doorProgress;
-    state.message = remaining > 0
-      ? `Lifted! ${remaining} more lift${remaining !== 1 ? 's' : ''} to go.`
-      : 'Lifted!';
+    state.message = '🎉 Success! The door is open!';
+  }
+
+  // ── auto-hints ────────────────────────────────────────────────────────
+  if (!sys.won) {
+    sys.hintTimer++;
+    // L1: idle for 5 s (100 ticks)
+    if (cfg.id === 'fixed_pulley' && sys.ropeConsumed === 0 && sys.hintTimer > 100) {
+      sys.hint = '👇 Grab the orange handle and drag DOWN!';
+    }
+    // L2: struggling without movable
+    if (cfg.id === 'movable_pulley' && sys.struggling && sys.movableCount === 0 && sys.hintTimer > 60) {
+      sys.hint = 'Too heavy! Drag the ⚙️ pulley onto the load.';
+    }
+    // L3: two failed rigs
+    if (cfg.id === 'compound_pulleys' && sys.struggling && sys.hintTimer > 80) {
+      sys.hint = 'Count the ropes holding the weight!';
+    }
+    // L4: no CW placed after 10 s
+    if (cfg.id === 'counterweight' && sys.cwMass === 0 && sys.hintTimer > 200) {
+      sys.hint = 'Drag a stone 🪨 into the bucket!';
+    }
+    // L5: post-elephant
+    if (cfg.id === 'elevator_elephant' && sys.eventFired && sys.hintTimer > 60 && sys.struggling) {
+      sys.hint = 'More pulleys? Bigger counterweight?';
+    }
+    // L6: wrong direction
+    if (cfg.isWindlass && sys.hintTimer > 100 && sys.ropeConsumed === 0) {
+      sys.hint = 'Grab the knob and drag CLOCKWISE ↻';
+    }
   }
 }
 
-/**
- * Handle pulley-specific input.
- */
+// ── input ────────────────────────────────────────────────────────────────────
+
 export function applyModuleInput(state, playerId, input, now) {
   const player = state.players[playerId];
   if (!player || !player.connected) return false;
-  const pu = state.pulley;
-  if (!pu) return false;
+  const sys = state.pulley;
+  if (!sys) return false;
+  const cfg = LEVELS[state.level];
+  if (!cfg) return false;
 
   switch (input.action) {
+
+    // ── cursor move ─────────────────────────────────────────────────────
     case 'cursor_move': {
-      player.cursorX = clamp(input.x || 0, 0, state.sceneWidth);
-      player.cursorY = clamp(input.y || 0, 0, state.sceneHeight);
+      const prevCY = player.cursorY;
+      applyCursorMove(player, input, state.sceneWidth, state.sceneHeight);
 
-      // Move held pulley
-      if (player.heldObjectId) {
-        const pulley = pu.pulleys.find(p => p.id === player.heldObjectId);
-        if (pulley) {
-          pulley.x = player.cursorX;
-          pulley.y = player.cursorY;
-        }
-        // Move held CW item
-        if (pu.counterweight) {
-          const cwItem = pu.counterweight.cwPalette.find(c => c.id === player.heldObjectId);
-          if (cwItem) {
-            cwItem.x = player.cursorX;
-            cwItem.y = player.cursorY;
-          }
-        }
-      }
-
-      // Update pull drag
-      if (pu.pull.active && pu.pull.playerId === playerId) {
-        pu.pull.currentY = player.cursorY;
-      }
-      return true;
-    }
-
-    case 'pull_start': {
-      if (pu.pull.active) return true; // someone already pulling
-
-      // Check if pointer is near the rope free end
-      const dist = Math.hypot(
-        player.cursorX - pu.rope.freeEndX,
-        player.cursorY - pu.rope.freeEndY
-      );
-      if (dist < 50) {
-        pu.pull.playerId = playerId;
-        pu.pull.active = true;
-        pu.pull.dragStartY = player.cursorY;
-        pu.pull.currentY = player.cursorY;
-        pu.pull.effort = 0;
-      }
-      return true;
-    }
-
-    case 'pull_stop': {
-      if (pu.pull.playerId === playerId) {
-        pu.pull.active = false;
-        pu.pull.playerId = null;
-        pu.pull.effort = 0;
-        pu.pull.dragStartY = 0;
-        pu.pull.currentY = 0;
-      }
-      return true;
-    }
-
-    case 'grab': {
-      const objectId = input.objectId;
-
-      // Check pulleys
-      const pulley = pu.pulleys.find(p => p.id === objectId);
-      if (pulley && !pulley.claimedBy) {
-        pulley.claimedBy = playerId;
-        pulley.claimTime = now;
-        player.heldObjectId = pulley.id;
-        if (pulley.placed) {
-          pulley.placed = false;
-          pulley.anchorId = null;
-          // Recalculate
-          pu.ma = computeMA(pu.pulleys);
-          updateEffort(state);
-          buildRopeWaypoints(state);
-        }
-        return true;
-      }
-
-      // Check CW palette items
-      if (pu.counterweight) {
-        const cwItem = pu.counterweight.cwPalette.find(c => c.id === objectId && !c.claimedBy && !c.placed);
-        if (cwItem) {
-          cwItem.claimedBy = playerId;
-          cwItem.claimTime = now;
-          player.heldObjectId = cwItem.id;
-          return true;
-        }
-      }
-      return true;
-    }
-
-    case 'release': {
       if (!player.heldObjectId) return true;
 
-      // Check if releasing a pulley
-      const pulley = pu.pulleys.find(p => p.id === player.heldObjectId);
-      if (pulley) {
-        pulley.claimedBy = null;
-        pulley.claimTime = null;
-        player.heldObjectId = null;
+      // --- rope hand pull -------------------------------------------------
+      if (player.heldObjectId === 'ROPE_HAND' && !cfg.isWindlass) {
+        const desired = clamp(player.cursorY, ANCHOR_Y, FLOOR_Y);
+        const delta   = desired - sys.handY;
 
-        // Try to snap to anchor or load zone
-        if (pulley.type === 'fixed') {
-          // Snap to nearest unoccupied anchor
-          let bestAnchor = null;
-          let bestDist = SNAP_DIST;
-          for (const anchor of pu.anchors) {
-            if (anchor.type !== 'fixed') continue;
-            // Check if anchor is already occupied
-            const occupied = pu.pulleys.some(p => p.placed && p.anchorId === anchor.id && p.id !== pulley.id);
-            if (occupied) continue;
-            const dist = Math.hypot(pulley.x - anchor.x, pulley.y - anchor.y);
-            if (dist < bestDist) {
-              bestAnchor = anchor;
-              bestDist = dist;
-            }
-          }
-          if (bestAnchor) {
-            pulley.placed = true;
-            pulley.anchorId = bestAnchor.id;
-            pulley.x = bestAnchor.x;
-            pulley.y = bestAnchor.y;
+        if (delta > 0) {
+          // pulling DOWN — try to consume rope
+          const eff = effortNeeded(sys);
+          if (eff > MAX_EFFORT) {
+            sys.struggling = true;
           } else {
-            // Return to palette
-            pulley.placed = false;
-            pulley.y = pu.floorY + 40;
+            sys.struggling = false;
+            const surplus = MAX_EFFORT - eff;
+            const mult = clamp(surplus / 5, 0.15, 1);
+            const actual = delta * mult;
+            sys.handY += actual;
+            sys.ropeConsumed += actual;
+            sys.hintTimer = 0;  // reset hint timer on successful pull
+            sys.hint = null;
           }
-        } else if (pulley.type === 'movable') {
-          // Snap to load zone (near the load)
-          const loadTopY = pu.load.y - pu.load.height / 2;
-          const dist = Math.abs(pulley.y - loadTopY);
-          if (dist < SNAP_DIST + 30) {
-            pulley.placed = true;
-            pulley.y = loadTopY;
-            // Keep x near where dropped, but constrain
-            pulley.x = clamp(pulley.x, pu.load.x - 60, pu.load.x + 60);
-          } else {
-            pulley.placed = false;
-            pulley.y = pu.floorY + 40;
-          }
+        } else {
+          // moving hand up — free, doesn't change ropeConsumed
+          sys.handY = desired;
         }
-
-        // Recalculate
-        pu.ma = computeMA(pu.pulleys);
-        updateEffort(state);
-        buildRopeWaypoints(state);
         return true;
       }
 
-      // Check CW item release
-      if (pu.counterweight) {
-        const cwItem = pu.counterweight.cwPalette.find(c => c.id === player.heldObjectId);
-        if (cwItem) {
-          cwItem.claimedBy = null;
-          cwItem.claimTime = null;
-          player.heldObjectId = null;
+      // --- crank (windlass) -----------------------------------------------
+      if (player.heldObjectId === 'CRANK' && cfg.isWindlass) {
+        const cx = 400, cy = 140;   // crank centre in game coords
+        const dx = player.cursorX - cx;
+        const dy = player.cursorY - cy;
+        const angle = Math.atan2(dy, dx);
+        let dTheta = angle - sys.crankAngle;
+        while (dTheta >  Math.PI) dTheta -= 2 * Math.PI;
+        while (dTheta < -Math.PI) dTheta += 2 * Math.PI;
 
-          // Check if near counterweight zone (right side of screen)
-          if (cwItem.x > 580 && cwItem.y < pu.floorY - 30) {
-            cwItem.placed = true;
-            pu.counterweight.items.push({ ...cwItem });
-            pu.counterweight.weight = pu.counterweight.items.reduce((s, i) => s + i.weight, 0);
-            updateEffort(state);
+        if (dTheta > 0) {
+          // clockwise
+          const eff = effortNeeded(sys);
+          if (eff > MAX_EFFORT) {
+            sys.struggling = true;
           } else {
-            cwItem.placed = false;
-            cwItem.y = pu.floorY + 40;
+            sys.struggling = false;
+            sys.ropeConsumed += dTheta * CRANK_SCALE;
+            sys.hintTimer = 0;
+            sys.hint = null;
           }
-          return true;
         }
+        sys.crankAngle = angle;
+        return true;
       }
 
-      player.heldObjectId = null;
+      // --- dragging a CW object or movable pulley -------------------------
+      if (player.heldObjectId === 'MOVABLE_PULLEY_DRAG') return true;
+      const held = state.objects.find(o => o.id === player.heldObjectId);
+      if (held) { held.x = player.cursorX; held.y = player.cursorY; }
       return true;
     }
 
+    // ── grab ──────────────────────────────────────────────────────────────
+    case 'grab': {
+      const oid = input.objectId;
+
+      if (oid === 'ROPE_HAND' && !cfg.isWindlass) {
+        player.heldObjectId = 'ROPE_HAND';
+        sys.struggling = false;
+        return true;
+      }
+      if (oid === 'CRANK' && cfg.isWindlass) {
+        player.heldObjectId = 'CRANK';
+        const dx = player.cursorX - 400;
+        const dy = player.cursorY - 140;
+        sys.crankAngle = Math.atan2(dy, dx);
+        return true;
+      }
+
+      // rig selection (L3)
+      if (oid === 'RIG_1') { sys.selectedRig = 1; sys.hintTimer = 0; return true; }
+      if (oid === 'RIG_2') { sys.selectedRig = 2; sys.hintTimer = 0; return true; }
+      if (oid === 'RIG_4') { sys.selectedRig = 4; sys.hintTimer = 0; return true; }
+
+      // movable pulley from palette
+      if (oid === 'MOVABLE_PULLEY_ICON' && cfg.allowMovable &&
+          sys.movableCount < sys.maxMovable) {
+        player.heldObjectId = 'MOVABLE_PULLEY_DRAG';
+        return true;
+      }
+
+      // CW objects
+      const obj = state.objects.find(o => o.id === oid);
+      if (!obj || obj.claimedBy) return true;
+      claimObject(obj, player, now);
+      obj.inSlot = false;
+      return true;
+    }
+
+    // ── release ───────────────────────────────────────────────────────────
+    case 'release': {
+      sys.struggling = false;
+      const held = player.heldObjectId;
+      if (!held) return true;
+
+      if (held === 'ROPE_HAND') {
+        // ratchet: hand springs back to anchor, ropeConsumed stays
+        sys.handY = ANCHOR_Y;
+        player.heldObjectId = null;
+        return true;
+      }
+      if (held === 'CRANK') {
+        player.heldObjectId = null;
+        return true;
+      }
+      if (held === 'MOVABLE_PULLEY_DRAG') {
+        player.heldObjectId = null;
+        // snap if dropped near load (x 300–500, y near loadY)
+        if (player.cursorX > 300 && player.cursorX < 500 &&
+            player.cursorY > sys.loadY - 80 && player.cursorY < sys.loadY + 40) {
+          sys.movableCount = Math.min(sys.movableCount + 1, sys.maxMovable);
+        }
+        return true;
+      }
+
+      // CW object
+      const obj = state.objects.find(o => o.id === held);
+      if (!obj) { player.heldObjectId = null; return true; }
+      releaseObject(obj, player);
+
+      if (cfg.hasCounterweight) {
+        // bucket zone: x 130–290, y < 320
+        if (obj.x > 130 && obj.x < 290 && obj.y < 320) {
+          // swap: remove any existing CW from slot
+          for (const o of state.objects) {
+            if (o.id !== obj.id && o.inSlot) {
+              o.inSlot = false; o.x = o.homeX; o.y = o.homeY;
+            }
+          }
+          obj.inSlot = true;
+          sys.cwOverload = false;  // reset overload flag on CW swap
+          sys.hint = null;
+          sys.hintTimer = 0;
+        } else {
+          obj.inSlot = false;
+          obj.x = obj.homeX; obj.y = obj.homeY;
+        }
+      }
+      return true;
+    }
+
+    // ── reset ─────────────────────────────────────────────────────────────
     case 'reset': {
-      initModule(state, state.level);
+      resetLevel(state);
       return true;
     }
 
@@ -790,10 +537,38 @@ export function applyModuleInput(state, playerId, input, now) {
       return true;
     }
 
-    default:
-      return false;
+    default: return false;
   }
 }
 
-/** How many sub-levels this module has. */
+function resetLevel(state) {
+  const cfg = LEVELS[state.level];
+  if (!cfg) return;
+  const sys = state.pulley;
+  if (!sys) return;
+
+  sys.handY = ANCHOR_Y;
+  sys.ropeConsumed = 0;
+  sys.struggling = false;
+  sys.cwMass = 0;
+  sys.cwOverload = false;
+  sys.cwOverloadCountdown = 0;
+  sys.screenShake = 0;
+  sys.hint = null;
+  sys.hintTimer = 0;
+
+  for (const o of state.objects) {
+    o.inSlot = false; o.x = o.homeX; o.y = o.homeY;
+    o.claimedBy = null; o.claimTime = null;
+  }
+
+  if (cfg.scriptedEvent === 'elephant') {
+    sys.eventFired = false;
+    sys.loadMass = LOADS[cfg.loadType].mass;
+    sys.movableCount = 0;
+  }
+
+  state.message = cfg.desc;
+}
+
 export const numLevels = NUM_LEVELS;

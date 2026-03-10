@@ -57,6 +57,9 @@ export const gameConfig = {
   parent: 'app',
   backgroundColor: '#0b0f1a',
   pixelArt: false,
+  input: {
+    activePointers: 4,
+  },
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
