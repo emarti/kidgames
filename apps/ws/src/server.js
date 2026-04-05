@@ -9,6 +9,7 @@ import { createCometHost } from './games/comet.js';
 import { createArchimedesHost } from './games/archimedes.js';
 import { createWallmoverHost } from './games/wallmover.js';
 import { createFlingHost } from './games/fling.js';
+import { createTypingHost } from './games/typing.js';
 
 const port = Number.parseInt(process.env.PORT ?? '8080', 10);
 if (!Number.isFinite(port) || port <= 0) throw new Error(`Invalid PORT: ${process.env.PORT}`);
@@ -28,6 +29,7 @@ for (const host of [
   createArchimedesHost(),
   createWallmoverHost(),
   createFlingHost(),
+  createTypingHost(),
 ]) {
   hosts.set(host.gameId, host);
 }

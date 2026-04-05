@@ -352,6 +352,40 @@ sudo rsync -a --delete ~/games/wallmover/client/dist/ /srv/games/wallmover/
 sudo systemctl restart games-backend caddy
 ```
 
+## One-time asset generation (Cartesia TTS audio)
+
+The typing game speaks each completed word aloud using pre-generated WAV files
+committed to the repo. If you add words or change the word lists, regenerate:
+
+1. Copy the example env file and add your Cartesia API key:
+
+```bash
+cp .env.local.example .env.local
+# edit .env.local and set CARTESIA_API_KEY=sk_car_...
+```
+
+2. Run the generation script (skips words that already have a file):
+
+```bash
+node scripts/generate-typing-audio.js
+```
+
+Or via Docker if Node is not installed locally:
+
+```bash
+docker run --rm -v $(pwd):/repo -w /repo node:20 \
+  node scripts/generate-typing-audio.js
+```
+
+3. Commit the new files:
+
+```bash
+git add typing/client/public/audio/
+git commit -m "Regenerate TTS audio"
+```
+
+`.env.local` is git-ignored and never committed.
+
 ## Local development (Docker)
 
 Docker remains supported for local development/debugging:

@@ -153,6 +153,25 @@ RUN cd fling/client && npm run build
 
 
 ########################
+# Typing client build
+########################
+FROM node:20-slim AS typing-client-build
+
+WORKDIR /repo
+
+# Install deps (cache-friendly)
+COPY typing/client/package*.json ./typing/client/
+RUN cd typing/client && npm install --no-audit --no-fund
+
+# App source
+COPY typing/client/ ./typing/client/
+
+# Host typing under /games/typing/
+ENV VITE_BASE=/games/typing/
+RUN cd typing/client && npm run build
+
+
+########################
 # Gateway (Caddy) image
 ########################
 FROM caddy:2-alpine AS gateway
@@ -185,6 +204,10 @@ COPY --from=wallmover-client-build /repo/wallmover/client/dist/ /srv/games/wallm
 # Fling client build output lives at /games/fling/
 RUN mkdir -p /srv/games/fling
 COPY --from=fling-client-build /repo/fling/client/dist/ /srv/games/fling/
+
+# Typing client build output lives at /games/typing/
+RUN mkdir -p /srv/games/typing
+COPY --from=typing-client-build /repo/typing/client/dist/ /srv/games/typing/
 
 # Caddy config
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile
