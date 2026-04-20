@@ -10,6 +10,8 @@ import { createArchimedesHost } from './games/archimedes.js';
 import { createWallmoverHost } from './games/wallmover.js';
 import { createFlingHost } from './games/fling.js';
 import { createTypingHost } from './games/typing.js';
+import { createGoHost } from './games/go.js';
+import { createGameRoomHost } from './games/gameroom.js';
 
 const port = Number.parseInt(process.env.PORT ?? '8080', 10);
 if (!Number.isFinite(port) || port <= 0) throw new Error(`Invalid PORT: ${process.env.PORT}`);
@@ -30,6 +32,8 @@ for (const host of [
   createWallmoverHost(),
   createFlingHost(),
   createTypingHost(),
+  createGoHost(),
+  createGameRoomHost(),
 ]) {
   hosts.set(host.gameId, host);
 }

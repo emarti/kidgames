@@ -98,8 +98,11 @@ main() {
   npm_install "$APP_DIR/typing/client" client
   su - "$APP_USER" -c "cd '$APP_DIR/typing/client' && NODE_OPTIONS=--max-old-space-size=$BUILD_MAX_OLD_SPACE_MB VITE_BASE=/games/typing/ npm run build"
 
+  npm_install "$APP_DIR/gameroom/client" client
+  su - "$APP_USER" -c "cd '$APP_DIR/gameroom/client' && NODE_OPTIONS=--max-old-space-size=$BUILD_MAX_OLD_SPACE_MB VITE_BASE=/games/gameroom/ npm run build"
+
   log "Deploying static files to /srv"
-  mkdir -p /srv/games /srv/games/snake /srv/games/maze /srv/games/comet /srv/games/wallmover /srv/games/archimedes /srv/games/fling /srv/games/typing
+  mkdir -p /srv/games /srv/games/snake /srv/games/maze /srv/games/comet /srv/games/wallmover /srv/games/archimedes /srv/games/fling /srv/games/typing /srv/games/gameroom
   rsync -a --delete "$APP_DIR/infra/site/games/" /srv/games/
   rsync -a --delete "$APP_DIR/snake/client/dist/" /srv/games/snake/
   rsync -a --delete "$APP_DIR/maze/client/dist/" /srv/games/maze/
@@ -108,6 +111,7 @@ main() {
   rsync -a --delete "$APP_DIR/archimedes/client/dist/" /srv/games/archimedes/
   rsync -a --delete "$APP_DIR/fling/client/dist/" /srv/games/fling/
   rsync -a --delete "$APP_DIR/typing/client/dist/" /srv/games/typing/
+  rsync -a --delete "$APP_DIR/gameroom/client/dist/" /srv/games/gameroom/
   chmod -R a+rX /srv
 
   log "Installing Caddyfile"

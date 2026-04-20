@@ -506,8 +506,8 @@ export function step(state, now = Date.now()) {
   const REVERSE = 45 * dp.shipReverseMult; // px/s^2
   // Signed speed bounds along the ship's facing direction.
   // Forward max is SPEED_MAX; reverse max is |SPEED_MIN|.
-  const SPEED_MAX = 220; // px/s
-  const SPEED_MIN = -220; // px/s
+  const SPEED_MAX = 330; // px/s
+  const SPEED_MIN = -330; // px/s
   // Overall velocity magnitude is also capped to avoid runaway diagonals.
   const SPEED_CAP = Math.max(Math.abs(SPEED_MAX), Math.abs(SPEED_MIN));
 
@@ -517,6 +517,11 @@ export function step(state, now = Date.now()) {
 
     // Cooldown always decays (even if paused individually).
     p.shootCooldownMs = Math.max(0, (p.shootCooldownMs ?? 0) - (dt * 1000));
+
+    // Drift: always integrate position so ships keep moving even when paused.
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    applyWrap(p, state.w, state.h, state.topology);
 
     if (p.paused) continue;
 
@@ -568,12 +573,6 @@ export function step(state, now = Date.now()) {
 
     // Hard safety clamp (handles numeric drift / weirdness).
     ({ vx: p.vx, vy: p.vy } = clampVelocityToSpeedCap(p.vx, p.vy, SPEED_CAP));
-
-    // Integrate
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
-
-    applyWrap(p, state.w, state.h, state.topology);
 
     // Shoot
     if (p.input?.shoot && p.shootCooldownMs <= 0) {

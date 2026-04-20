@@ -655,10 +655,14 @@ export default class PlayScene extends Phaser.Scene {
       this.createTouchControls_();
     }
 
-    this.onState = (e) => this.renderState(e.detail);
+    this._stateReceivedAt = 0;
+    this.onState = (e) => {
+      this._stateReceivedAt = performance.now();
+      this.detectCrashes(e.detail);
+    };
     this.game.net.addEventListener('state', this.onState);
 
-    if (this.game.net.latestState) this.renderState(this.game.net.latestState);
+    if (this.game.net.latestState) this._stateReceivedAt = performance.now();
   }
 
   shutdown() {
@@ -917,6 +921,11 @@ export default class PlayScene extends Phaser.Scene {
 
     this.renderFireworks(time);
 
+    // Extrapolate from last server state and render every frame.
+    const elapsed = (performance.now() - (this._stateReceivedAt || performance.now())) / 1000;
+    const extrapolated = this.extrapolateState(state, elapsed);
+    this.renderState(extrapolated);
+
     const me = state.players?.[net.playerId];
 
     // Gather keyboard input
@@ -990,11 +999,65 @@ export default class PlayScene extends Phaser.Scene {
     if (typeof btn._redraw === 'function') btn._redraw(selected);
   }
 
-  renderState(state) {
-    const net = this.game.net;
-    const layout = this.computeLayout(state);
+  clientDifficultyParams(difficulty) {
+    const d = String(difficulty ?? 'easy').toLowerCase();
+    if (d === 'medium') return { shipTurnMult: 1.56, shipThrustMult: 1.20, shipReverseMult: 1.20 };
+    if (d === 'hard') return { shipTurnMult: 1.755, shipThrustMult: 1.35, shipReverseMult: 1.35 };
+    return { shipTurnMult: 1.0, shipThrustMult: 1.0, shipReverseMult: 1.0 };
+  }
 
-    // Detect hard-mode ship crash transitions (ALIVE -> WAITING)
+  extrapolateState(state, dt) {
+    if (dt <= 0.001) return state;
+    const t = Math.min(dt, 2.0);
+    const w = state.w;
+    const h = state.h;
+    const wrap = (v, span) => ((v % span) + span) % span;
+
+    const dp = this.clientDifficultyParams(state.difficulty);
+    const TURN_RATE = 1.35 * dp.shipTurnMult;
+    const THRUST = 45 * dp.shipThrustMult;
+    const REVERSE = 45 * dp.shipReverseMult;
+
+    const ext = { ...state };
+
+    ext.players = {};
+    for (const pid of [1, 2, 3, 4]) {
+      const p = state.players?.[pid];
+      if (!p) continue;
+      const ep = { ...p };
+
+      if (p.state === 'ALIVE' && p.connected) {
+        let ax = 0;
+        let ay = 0;
+        if (!p.paused) {
+          ep.angle = p.angle + (p.input?.turn ?? 0) * TURN_RATE * t;
+          if (p.input?.thrust) { ax += Math.cos(p.angle) * THRUST; ay += Math.sin(p.angle) * THRUST; }
+          if (p.input?.brake) { ax -= Math.cos(p.angle) * REVERSE; ay -= Math.sin(p.angle) * REVERSE; }
+        }
+        ep.x = wrap(p.x + p.vx * t + 0.5 * ax * t * t, w);
+        ep.y = wrap(p.y + p.vy * t + 0.5 * ay * t * t, h);
+      }
+
+      ext.players[pid] = ep;
+    }
+
+    ext.bullets = (state.bullets ?? []).map(b => ({
+      ...b,
+      x: wrap(b.x + b.vx * t, w),
+      y: wrap(b.y + b.vy * t, h),
+    }));
+
+    ext.comets = (state.comets ?? []).map(c => ({
+      ...c,
+      x: wrap(c.x + c.vx * t, w),
+      y: wrap(c.y + c.vy * t, h),
+    }));
+
+    return ext;
+  }
+
+  detectCrashes(state) {
+    const net = this.game.net;
     const diff = String(state.difficulty ?? 'easy').toLowerCase();
     if (diff === 'hard') {
       for (const pid of [1, 2, 3, 4]) {
@@ -1008,12 +1071,15 @@ export default class PlayScene extends Phaser.Scene {
         if (cur) this.prevPlayerStates[pid] = cur;
       }
     } else {
-      // Keep tracking so a later switch to hard doesn't miss state.
       for (const pid of [1, 2, 3, 4]) {
         const cur = state.players?.[pid]?.state;
         if (cur) this.prevPlayerStates[pid] = cur;
       }
     }
+  }
+
+  renderState(state) {
+    const layout = this.computeLayout(state);
 
     // Clear
     this.worldG.clear();

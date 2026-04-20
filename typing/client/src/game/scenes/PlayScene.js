@@ -20,6 +20,7 @@ const THEMES = [
 
 const AVATARS = ['🦊', '🐱', '🐶', '🐸', '🐼', '🦄'];
 const COLORS = ['#ff4d4d', '#4d94ff', '#4dff88', '#ffcc4d', '#cc4dff', '#ff8c4d'];
+const MAX_WORD_LENGTH = 7;
 
 // ---------------------------------------------------------------------------
 // Background drawing functions — each receives (g, w, gh)
@@ -1253,6 +1254,7 @@ export default class PlayScene extends Phaser.Scene {
     this.scrollOffset = 0;
     this.bgScrollY = 0;
     this._audioUnlocked = false;
+    this.showHints = localStorage.getItem('typing_showHints') !== 'false';
     this.prevFirstRecentWord = null;
     this.letterTexts = [];
     this.emojiWordText = null;
@@ -1268,8 +1270,8 @@ export default class PlayScene extends Phaser.Scene {
     // Recent words container (above current word)
     this.recentContainer = this.add.container(0, 0);
 
-    // Create letter pool (max word length = 6)
-    for (let i = 0; i < 8; i++) {
+    // Create letter pool
+    for (let i = 0; i < MAX_WORD_LENGTH; i++) {
       const t = this.add.text(0, 0, '', {
         fontSize: '58px',
         fontStyle: 'bold',
@@ -1446,7 +1448,7 @@ export default class PlayScene extends Phaser.Scene {
 
     // Emoji to the right
     const emojiX = startX + currentWord.length * LETTER_STEP + 14;
-    this.emojiWordText.setText(currentEmoji);
+    this.emojiWordText.setText(this.showHints ? currentEmoji : '');
     this.emojiWordText.setPosition(emojiX, WORD_Y + this.scrollOffset);
     this.emojiWordText.setVisible(true);
   }
@@ -1467,7 +1469,8 @@ export default class PlayScene extends Phaser.Scene {
       }
       const theme = THEMES[this.state.obstacleIndex % THEMES.length];
       t.setColor(theme.darkText ? '#1a1a2e' : '#dddddd');
-      t.setText(`${rw.word.toUpperCase()}  ${rw.emoji}`);
+      const emojiSuffix = (this.showHints && rw.emoji) ? `  ${rw.emoji}` : '';
+      t.setText(`${rw.word.toUpperCase()}${emojiSuffix}`);
       t.setPosition(W / 2, y);
       t.setAlpha(Math.max(0.06, 0.65 - i * 0.12));
       t.setVisible(true);
@@ -1635,7 +1638,7 @@ export default class PlayScene extends Phaser.Scene {
     this.setupContainer.add(overlay);
 
     const panelW = Math.min(520, W - 40);
-    const panelH = 460;
+    const panelH = 540;
     const px = W / 2;
     const py = H / 2;
 
@@ -1706,13 +1709,28 @@ export default class PlayScene extends Phaser.Scene {
       this.setupColorBtns.push({ bg, color });
     });
 
+    // Picture hints toggle
+    const hintsToggleBtn = this.add.text(px, py + 54, '', {
+      fontSize: '17px',
+      color: '#1a1a2e',
+      backgroundColor: '#4dff88',
+      padding: { x: 16, y: 8 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => {
+        this.showHints = !this.showHints;
+        localStorage.setItem('typing_showHints', this.showHints ? 'true' : 'false');
+        hintsToggleBtn.setText(`Picture hints: ${this.showHints ? 'ON' : 'OFF'}`);
+      });
+    this.hintsToggleBtn = hintsToggleBtn;
+    this.setupContainer.add(hintsToggleBtn);
+
     // Level selector (debug)
-    const levelLabel = this.add.text(px - panelW / 2 + 16, py + 68, 'Obstacle:', {
+    const levelLabel = this.add.text(px - panelW / 2 + 16, py + 96, 'Obstacle:', {
       fontSize: '15px', color: '#94a3b8',
     }).setOrigin(0, 0.5);
     this.setupContainer.add(levelLabel);
 
-    const levelLeftBtn = this.add.text(px - 36, py + 68, '◀', {
+    const levelLeftBtn = this.add.text(px - 36, py + 96, '◀', {
       fontSize: '20px', color: '#ffffff', backgroundColor: '#334155',
       padding: { x: 10, y: 5 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true })
@@ -1721,12 +1739,12 @@ export default class PlayScene extends Phaser.Scene {
       });
     this.setupContainer.add(levelLeftBtn);
 
-    this.setupLevelText = this.add.text(px, py + 68, '1', {
+    this.setupLevelText = this.add.text(px, py + 96, '1', {
       fontSize: '20px', color: '#ffffff', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.setupContainer.add(this.setupLevelText);
 
-    const levelRightBtn = this.add.text(px + 36, py + 68, '▶', {
+    const levelRightBtn = this.add.text(px + 36, py + 96, '▶', {
       fontSize: '20px', color: '#ffffff', backgroundColor: '#334155',
       padding: { x: 10, y: 5 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true })
@@ -1736,7 +1754,7 @@ export default class PlayScene extends Phaser.Scene {
     this.setupContainer.add(levelRightBtn);
 
     // Start button (initial start only)
-    const startBtn = this.add.text(px, py + 118, '🚀  START !', {
+    const startBtn = this.add.text(px, py + 148, '🚀  START !', {
       fontSize: '28px',
       color: '#1a1a2e',
       backgroundColor: '#ffd24d',
@@ -1748,7 +1766,7 @@ export default class PlayScene extends Phaser.Scene {
     this.setupContainer.add(startBtn);
 
     // Resume button (mid-game pause only)
-    const resumeBtn = this.add.text(px, py + 110, '▶  Resume', {
+    const resumeBtn = this.add.text(px, py + 140, '▶  Resume', {
       fontSize: '26px',
       color: '#1a1a2e',
       backgroundColor: '#4dff88',
@@ -1761,7 +1779,7 @@ export default class PlayScene extends Phaser.Scene {
     this.setupContainer.add(resumeBtn);
 
     // Restart button (mid-game pause only, below resume)
-    const restartBtn = this.add.text(px, py + 168, '↺  Restart obstacle', {
+    const restartBtn = this.add.text(px, py + 198, '↺  Restart obstacle', {
       fontSize: '20px',
       color: '#ffffff',
       backgroundColor: '#64748b',
@@ -1799,6 +1817,9 @@ export default class PlayScene extends Phaser.Scene {
     this.setupStartBtn?.setVisible(isStart);
     this.setupResumeBtn?.setVisible(!isStart);
     this.setupRestartBtn?.setVisible(!isStart);
+
+    // Sync hints toggle label
+    this.hintsToggleBtn?.setText(`Picture hints: ${this.showHints ? 'ON' : 'OFF'}`);
 
     // Level display
     if (this.setupLevelText) {

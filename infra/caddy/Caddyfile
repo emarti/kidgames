@@ -65,6 +65,12 @@
     @typingNoSlash path /games/typing
     redir @typingNoSlash /games/typing/ 308
 
+    @goNoSlash path /games/go
+    redir @goNoSlash /games/go/ 308
+
+    @gameroomNoSlash path /games/gameroom
+    redir @gameroomNoSlash /games/gameroom/ 308
+
     # WebSocket endpoint (reverse-proxied to the game server)
     handle /games/snake/ws* {
       reverse_proxy {$GAMES_BACKEND:games-backend:8080}
@@ -91,6 +97,14 @@
     }
 
     handle /games/typing/ws* {
+      reverse_proxy {$GAMES_BACKEND:games-backend:8080}
+    }
+
+    handle /games/go/ws* {
+      reverse_proxy {$GAMES_BACKEND:games-backend:8080}
+    }
+
+    handle /games/gameroom/ws* {
       reverse_proxy {$GAMES_BACKEND:games-backend:8080}
     }
 

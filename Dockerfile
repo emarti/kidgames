@@ -10,7 +10,7 @@
 FROM node:20-slim AS games-backend
 
 WORKDIR /app
-
+RUN apt-get update && apt-get install -y gnugo && rm -rf /var/lib/apt/lists/*
 COPY apps/ws/package.json ./
 RUN npm install --no-audit --no-fund
 
@@ -172,6 +172,25 @@ RUN cd typing/client && npm run build
 
 
 ########################
+# Game Room client build
+########################
+FROM node:20-slim AS gameroom-client-build
+
+WORKDIR /repo
+
+# Install deps (cache-friendly)
+COPY gameroom/client/package*.json ./gameroom/client/
+RUN cd gameroom/client && npm install --no-audit --no-fund
+
+# App source
+COPY gameroom/client/ ./gameroom/client/
+
+# Host gameroom under /games/gameroom/
+ENV VITE_BASE=/games/gameroom/
+RUN cd gameroom/client && npm run build
+
+
+########################
 # Gateway (Caddy) image
 ########################
 FROM caddy:2-alpine AS gateway
@@ -208,6 +227,13 @@ COPY --from=fling-client-build /repo/fling/client/dist/ /srv/games/fling/
 # Typing client build output lives at /games/typing/
 RUN mkdir -p /srv/games/typing
 COPY --from=typing-client-build /repo/typing/client/dist/ /srv/games/typing/
+
+# Go client build output lives at /games/go/ (legacy — served by go host)
+# REMOVED: go/ renamed to gameroom/
+
+# Game Room client build output lives at /games/gameroom/
+RUN mkdir -p /srv/games/gameroom
+COPY --from=gameroom-client-build /repo/gameroom/client/dist/ /srv/games/gameroom/
 
 # Caddy config
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile
