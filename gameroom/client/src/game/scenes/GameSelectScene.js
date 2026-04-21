@@ -6,10 +6,10 @@
  * already made. A "Solo Explore" toggle lets any player move either side.
  *
  * Scene flow:
- *   MenuScene → GameSelectScene → SideScene → PlayScene
+ *   MenuScene → GameSelectScene → PlayScene
  */
 
-import Phaser from 'phaser';
+import NetScene from './NetScene.js';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {
@@ -34,17 +34,16 @@ const GAMES = [
   { id: 'go',       label: 'Go',               icon: '⊕',  desc: '9×9 board · capture stones',    implemented: true  },
   { id: 'checkers', label: 'Checkers',          icon: '◉',  desc: '8×8 board · jump and king',     implemented: false },
   { id: 'chess',    label: 'Chess',             icon: '♞',  desc: '8×8 board · classic strategy',  implemented: false },
-  { id: 'morris',   label: "Nine Men's Morris", icon: '⬡',  desc: 'mills and blocking',             implemented: false },
+  { id: 'morris',   label: "Nine Men's Morris", icon: '⬡',  desc: 'mills and blocking',             implemented: true  },
   { id: 'cchk',     label: 'Chinese Checkers',  icon: '✦',  desc: 'star board · hop to the other side', implemented: false },
   { id: 'foxgeese', label: 'Fox & Geese',       icon: '🦊', desc: 'asymmetric · fox vs geese',     implemented: false },
   { id: 'hex',      label: 'Hex',               icon: '⬡',  desc: '11×11 · connect your sides',    implemented: false },
   { id: 'reversi',  label: 'Reversi',           icon: '◑',  desc: '8×8 · flip opponent pieces',    implemented: false },
 ];
 
-export default class GameSelectScene extends Phaser.Scene {
+export default class GameSelectScene extends NetScene {
   constructor() {
     super({ key: 'GameSelectScene' });
-    this._listeners = [];
     this._selectedGame = null;
     this._tiles = [];
   }
@@ -232,7 +231,7 @@ export default class GameSelectScene extends Phaser.Scene {
     const st  = net.latestState;
 
     // If the game type changed, send select_game first; server will broadcast
-    // the updated state and we advance to SideScene on the state update.
+    // the updated state and we advance to PlayScene on the state update.
     if (st?.gameType !== this._selectedGame) {
       net.send('select_game', { gameType: this._selectedGame });
     } else {
@@ -257,16 +256,4 @@ export default class GameSelectScene extends Phaser.Scene {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
-
-  _on(emitter, event, cb) {
-    emitter.addEventListener(event, cb);
-    this._listeners.push({ emitter, event, cb });
-  }
-
-  shutdown() {
-    for (const { emitter, event, cb } of this._listeners) {
-      emitter.removeEventListener(event, cb);
-    }
-    this._listeners = [];
-  }
 }

@@ -152,7 +152,7 @@ function _updatePhase(state) {
   const color = state.turn;
   if (state.piecesInHand[color] > 0) {
     state.phase = 'placing';
-  } else if (state.piecesOnBoard[color] === 3) {
+  } else if (state.flyingAlways || state.piecesOnBoard[color] === 3) {
     state.phase = 'flying';
   } else {
     state.phase = 'moving';
@@ -203,6 +203,7 @@ export function newGameState() {
     lastMove: null,
     gameOver: false,
     winner: null,
+    flyingAlways: false,
     history: [],
     tick: 0,
   };
@@ -248,8 +249,8 @@ export function movePiece(state, pid, from, to) {
   if (state.board[from] !== color)                 return { ok: false, error: 'Not your piece' };
   if (state.board[to] !== null)                    return { ok: false, error: 'Target occupied' };
 
-  // Phase 2: must be adjacent.
-  if (state.phase === 'moving' && !ADJACENCY[from].includes(to)) {
+  // Phase 2: must be adjacent (unless flying or flyingAlways).
+  if (state.phase === 'moving' && !state.flyingAlways && !ADJACENCY[from].includes(to)) {
     return { ok: false, error: 'Not adjacent' };
   }
 
@@ -297,8 +298,16 @@ export function removePiece(state, pid, pointIndex) {
 export function undoMove(state) {
   if (state.history.length === 0) return { ok: false, error: 'Nothing to undo' };
   const snap = JSON.parse(state.history.pop());
+  // Preserve flyingAlways — it's a game option, not part of move history.
+  const flyingAlways = state.flyingAlways;
   Object.assign(state, snap);
+  state.flyingAlways = flyingAlways;
+  state.tick++;
   return { ok: true };
+}
+
+export function refreshPhase(state) {
+  _updatePhase(state);
 }
 
 export function resetGame(state) {

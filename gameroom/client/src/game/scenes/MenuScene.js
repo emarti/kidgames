@@ -1,9 +1,8 @@
-import Phaser from 'phaser';
+import NetScene from './NetScene.js';
 
-export default class MenuScene extends Phaser.Scene {
+export default class MenuScene extends NetScene {
   constructor() {
     super({ key: 'MenuScene' });
-    this._listeners = [];
   }
 
   create() {
@@ -115,17 +114,5 @@ export default class MenuScene extends Phaser.Scene {
     btn.on('pointerover', () => btn.setBackgroundColor('#555555'));
     btn.on('pointerout',  () => btn.setBackgroundColor('#333333'));
     return btn;
-  }
-
-  _on(emitter, event, cb) {
-    emitter.addEventListener(event, cb);
-    this._listeners.push({ emitter, event, cb });
-  }
-
-  shutdown() {
-    for (const { emitter, event, cb } of this._listeners) {
-      emitter.removeEventListener(event, cb);
-    }
-    this._listeners = [];
   }
 }

@@ -50,6 +50,23 @@ function newRoomState() {
   };
 }
 
+/**
+ * Execute a game action with temporary "both"-side color override.
+ * If the player's side is 'both', temporarily sets their sim color to
+ * `actingColor`, runs the action, and restores on failure.
+ */
+function withBothSide(room, ws, actingColor, actionFn) {
+  const playerSide = room.state.players[ws.playerId]?.side;
+  if (playerSide === 'both') {
+    const original = room.state.game.players[ws.playerId].color;
+    room.state.game.players[ws.playerId].color = actingColor;
+    const result = actionFn();
+    if (!result.ok) room.state.game.players[ws.playerId].color = original;
+    return result;
+  }
+  return actionFn();
+}
+
 // ─── Host factory ─────────────────────────────────────────────────────────────
 
 export function createGameRoomHost() {
@@ -258,16 +275,9 @@ export function createGameRoomHost() {
         const room = rooms.get(ws.room);
         if (!room || room.state.gameType !== 'morris' || !room.state.game) return;
         const pointIndex = Number(msg.pointIndex);
-        const playerSide = room.state.players[ws.playerId]?.side;
-        let result;
-        if (playerSide === 'both') {
-          const original = room.state.game.players[ws.playerId].color;
-          room.state.game.players[ws.playerId].color = room.state.game.turn;
-          result = MorrisSim.placePiece(room.state.game, ws.playerId, pointIndex);
-          if (!result.ok) room.state.game.players[ws.playerId].color = original;
-        } else {
-          result = MorrisSim.placePiece(room.state.game, ws.playerId, pointIndex);
-        }
+        const result = withBothSide(room, ws, room.state.game.turn, () =>
+          MorrisSim.placePiece(room.state.game, ws.playerId, pointIndex)
+        );
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
         room.state.tick++;
         room.updatedAt = nowMs();
@@ -281,16 +291,9 @@ export function createGameRoomHost() {
         if (!room || room.state.gameType !== 'morris' || !room.state.game) return;
         const from = Number(msg.from);
         const to   = Number(msg.to);
-        const playerSide = room.state.players[ws.playerId]?.side;
-        let result;
-        if (playerSide === 'both') {
-          const original = room.state.game.players[ws.playerId].color;
-          room.state.game.players[ws.playerId].color = room.state.game.turn;
-          result = MorrisSim.movePiece(room.state.game, ws.playerId, from, to);
-          if (!result.ok) room.state.game.players[ws.playerId].color = original;
-        } else {
-          result = MorrisSim.movePiece(room.state.game, ws.playerId, from, to);
-        }
+        const result = withBothSide(room, ws, room.state.game.turn, () =>
+          MorrisSim.movePiece(room.state.game, ws.playerId, from, to)
+        );
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
         room.state.tick++;
         room.updatedAt = nowMs();
@@ -303,16 +306,9 @@ export function createGameRoomHost() {
         const room = rooms.get(ws.room);
         if (!room || room.state.gameType !== 'morris' || !room.state.game) return;
         const pointIndex = Number(msg.pointIndex);
-        const playerSide = room.state.players[ws.playerId]?.side;
-        let result;
-        if (playerSide === 'both') {
-          const original = room.state.game.players[ws.playerId].color;
-          room.state.game.players[ws.playerId].color = room.state.game.pendingRemove;
-          result = MorrisSim.removePiece(room.state.game, ws.playerId, pointIndex);
-          if (!result.ok) room.state.game.players[ws.playerId].color = original;
-        } else {
-          result = MorrisSim.removePiece(room.state.game, ws.playerId, pointIndex);
-        }
+        const result = withBothSide(room, ws, room.state.game.pendingRemove, () =>
+          MorrisSim.removePiece(room.state.game, ws.playerId, pointIndex)
+        );
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
         room.state.tick++;
         room.updatedAt = nowMs();
@@ -326,22 +322,11 @@ export function createGameRoomHost() {
         if (!ws.room || !ws.playerId) return;
         const room = rooms.get(ws.room);
         if (!room || room.state.gameType !== 'go' || !room.state.game) return;
-
         const x = Number(msg.x);
         const y = Number(msg.y);
-        let result;
-
-        const playerSide = room.state.players[ws.playerId]?.side;
-        if (playerSide === 'both') {
-          // Temporarily set the player's color to the current turn.
-          const original = room.state.game.players[ws.playerId].color;
-          room.state.game.players[ws.playerId].color = room.state.game.turn;
-          result = GoSim.placeStone(room.state.game, ws.playerId, x, y);
-          if (!result.ok) room.state.game.players[ws.playerId].color = original;
-        } else {
-          result = GoSim.placeStone(room.state.game, ws.playerId, x, y);
-        }
-
+        const result = withBothSide(room, ws, room.state.game.turn, () =>
+          GoSim.placeStone(room.state.game, ws.playerId, x, y)
+        );
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
         room.state.tick++;
         room.updatedAt = nowMs();
@@ -353,18 +338,9 @@ export function createGameRoomHost() {
         if (!ws.room || !ws.playerId) return;
         const room = rooms.get(ws.room);
         if (!room || room.state.gameType !== 'go' || !room.state.game) return;
-
-        let result;
-        const passSide = room.state.players[ws.playerId]?.side;
-        if (passSide === 'both') {
-          const original = room.state.game.players[ws.playerId].color;
-          room.state.game.players[ws.playerId].color = room.state.game.turn;
-          result = GoSim.passTurn(room.state.game, ws.playerId);
-          if (!result.ok) room.state.game.players[ws.playerId].color = original;
-        } else {
-          result = GoSim.passTurn(room.state.game, ws.playerId);
-        }
-
+        const result = withBothSide(room, ws, room.state.game.turn, () =>
+          GoSim.passTurn(room.state.game, ws.playerId)
+        );
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
         room.state.tick++;
         room.updatedAt = nowMs();
@@ -393,6 +369,18 @@ export function createGameRoomHost() {
         if (!room || !room.state.game) return;
         if (room.state.gameType === 'go')          GoSim.resetGame(room.state.game);
         else if (room.state.gameType === 'morris') MorrisSim.resetGame(room.state.game);
+        room.state.tick++;
+        room.updatedAt = nowMs();
+        safeBroadcast(room, { type: 'state', state: room.state });
+        break;
+      }
+
+      case 'toggle_flying': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (!room || room.state.gameType !== 'morris' || !room.state.game) return;
+        room.state.game.flyingAlways = !room.state.game.flyingAlways;
+        MorrisSim.refreshPhase(room.state.game);
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });

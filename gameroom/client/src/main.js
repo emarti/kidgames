@@ -1,7 +1,6 @@
 import Phaser from 'phaser';
 import BootScene from './game/scenes/BootScene.js';
 import MenuScene from './game/scenes/MenuScene.js';
-import SideScene from './game/scenes/SideScene.js';
 import GameSelectScene from './game/scenes/GameSelectScene.js';
 import PlayScene from './game/scenes/PlayScene.js';
 import { Net } from './net.js';
@@ -37,12 +36,12 @@ function applyViewportSizing() {
   return { w, h: usableH };
 }
 
-applyViewportSizing();
+const { w, h } = applyViewportSizing();
 
 export const gameConfig = {
   type: Phaser.AUTO,
-  width: applyViewportSizing().w,
-  height: applyViewportSizing().h,
+  width: w,
+  height: h,
   parent: 'app',
   backgroundColor: '#1a1a2e',
   pixelArt: true,
@@ -50,7 +49,7 @@ export const gameConfig = {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, MenuScene, GameSelectScene, SideScene, PlayScene],
+  scene: [BootScene, MenuScene, GameSelectScene, PlayScene],
 };
 
 const game = new Phaser.Game(gameConfig);

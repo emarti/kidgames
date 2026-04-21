@@ -1,15 +1,15 @@
 /**
  * morris.js — Phaser 3 renderer for Nine Men's Morris.
  *
- * Usage (called from PlayScene):
- *   import morrisRenderer from './renderers/morris.js';
- *   morrisRenderer.init(scene, helpers);
- *   morrisRenderer.draw(gameState, myColor, mySide);
- *   morrisRenderer.showHint(hintMsg);
- *   morrisRenderer.clearHint();
- *   morrisRenderer.shutdown();
+ * Uniform renderer interface:
+ *   morrisRenderer.init(scene, config)
+ *   morrisRenderer.draw(gameState, ctx)
+ *   morrisRenderer.showHint(hintMsg)
+ *   morrisRenderer.clearHint()
+ *   morrisRenderer.shutdown()
  *
- * helpers: { boardX, boardY, boardSize, onPointClick(idx), onPieceDragEnd(from, to) }
+ * config: { boardX, boardY, boardSize, onAction(type, payload) }
+ * ctx:    { myPid, mySide, canMove }
  */
 
 // ─── Topology (self-contained — matches morris_sim.js exactly) ──────────────
@@ -41,25 +41,31 @@ const MILL_LIST = [
 
 // ─── Renderer state ───────────────────────────────────────────────────────────
 
-let _scene       = null;
-let _bx          = 0;   // board top-left pixel x
-let _by          = 0;   // board top-left pixel y
-let _bs          = 0;   // board pixel size (width = height)
-let _onPointClick   = null;
-let _onPieceDragEnd = null;
+let _scene     = null;
+let _bx        = 0;
+let _by        = 0;
+let _bs        = 0;
+let _onAction  = null;
 
-let _boardGfx    = null;
-let _pieceGfx    = null;
-let _overlayGfx  = null;
-let _hintGfx     = null;
-let _hitZones    = [];  // array of 24 Phaser GameObjects
+let _boardGfx  = null;
+let _pieceGfx  = null;
+let _hintGfx   = null;
+let _hitZones  = [];
 
-let _selected    = null; // selected point index or null
-let _dragFrom    = null;
-let _dragGfx     = null; // floating piece during drag
-let _dragColor   = null;
+// Scene-level listener refs for cleanup.
+let _onPointerMove = null;
+let _onPointerUp   = null;
 
-let _lastMillFlash = null; // { points, tween }
+let _selected  = null;
+let _dragFrom  = null;
+let _dragGfx   = null;
+let _dragColor = null;
+
+let _lastMillFlash = null;
+
+// Cached from last draw() for input logic.
+let _lastGameState = null;
+let _lastCtx       = null;
 
 // ─── Pixel helpers ────────────────────────────────────────────────────────────
 
@@ -73,7 +79,7 @@ function _pieceRadius() {
 }
 
 function _hitRadius() {
-  return Math.max(22, Math.round(_bs * 0.07)); // ≥44px diameter for iPad
+  return Math.max(22, Math.round(_bs * 0.07));
 }
 
 // ─── Board drawing ────────────────────────────────────────────────────────────
@@ -82,16 +88,13 @@ function _drawBoard() {
   const gfx = _boardGfx;
   gfx.clear();
 
-  // Warm wood background
   const pad = Math.round(_bs * 0.04);
   gfx.fillStyle(0xc8a96a, 1);
   gfx.fillRect(_bx - pad, _by - pad, _bs + pad * 2, _bs + pad * 2);
 
   gfx.lineStyle(2.5, 0x3d2010, 1);
 
-  // Three concentric squares: outer (0-7), middle (8-15), inner (16-23)
   const fracs = [0, 1/6, 2/6];
-  const sizes = [1, 2/3, 1/3];
   for (const frac of fracs) {
     const x0 = _bx + frac * _bs;
     const y0 = _by + frac * _bs;
@@ -99,12 +102,11 @@ function _drawBoard() {
     gfx.strokeRect(x0, y0, s, s);
   }
 
-  // Cross-connections at midpoints
   const midpoints = [
-    [1, 9], [9, 17],   // top midpoints
-    [3, 11], [11, 19], // right midpoints
-    [5, 13], [13, 21], // bottom midpoints
-    [7, 15], [15, 23], // left midpoints
+    [1, 9], [9, 17],
+    [3, 11], [11, 19],
+    [5, 13], [13, 21],
+    [7, 15], [15, 23],
   ];
   for (const [a, b] of midpoints) {
     const pa = _px(a);
@@ -115,7 +117,6 @@ function _drawBoard() {
     gfx.strokePath();
   }
 
-  // Point dots (empty intersection markers)
   for (let i = 0; i < 24; i++) {
     const p = _px(i);
     gfx.fillStyle(0x3d2010, 0.6);
@@ -125,33 +126,31 @@ function _drawBoard() {
 
 // ─── Pieces ───────────────────────────────────────────────────────────────────
 
-function _drawPieces(board, selected, validDests, removable, millPoints, dragFrom) {
+function _drawPieces(board, selected, validDests, removable, millPoints) {
   const gfx = _pieceGfx;
   gfx.clear();
   const r = _pieceRadius();
 
   for (let i = 0; i < 24; i++) {
-    if (i === dragFrom) continue; // being dragged — don't draw at source
     const color = board[i];
     const p = _px(i);
+    const isSelected = (i === selected);
 
     if (color) {
-      _drawPiece(gfx, p.x, p.y, r, color);
+      _drawPiece(gfx, p.x, p.y, r, color, isSelected ? 0.35 : 1);
     }
 
-    // Mill highlight (gold ring around all 3 pieces)
     if (millPoints && millPoints.includes(i)) {
       gfx.lineStyle(3, 0xffd700, 0.9);
       gfx.strokeCircle(p.x, p.y, r + 4);
     }
 
-    // Selected piece: gold ring
-    if (i === selected) {
-      gfx.lineStyle(3, 0xffd700, 1);
+    if (isSelected) {
+      // Faint green selection ring — piece stays visible but dimmed.
+      gfx.lineStyle(2.5, 0x44ff88, 0.75);
       gfx.strokeCircle(p.x, p.y, r + 5);
     }
 
-    // Valid destinations: green ring
     if (validDests && validDests.includes(i) && !color) {
       gfx.fillStyle(0x00cc44, 0.4);
       gfx.fillCircle(p.x, p.y, r);
@@ -159,7 +158,6 @@ function _drawPieces(board, selected, validDests, removable, millPoints, dragFro
       gfx.strokeCircle(p.x, p.y, r);
     }
 
-    // Removable opponent pieces: red ring
     if (removable && removable.includes(i)) {
       gfx.lineStyle(3, 0xff3333, 0.9);
       gfx.strokeCircle(p.x, p.y, r + 5);
@@ -167,28 +165,27 @@ function _drawPieces(board, selected, validDests, removable, millPoints, dragFro
   }
 }
 
-function _drawPiece(gfx, px, py, r, color) {
+function _drawPiece(gfx, px, py, r, color, alpha = 1) {
   if (color === 'black') {
-    gfx.fillStyle(0x111111, 1);
+    gfx.fillStyle(0x111111, alpha);
     gfx.fillCircle(px, py, r);
-    gfx.lineStyle(1.5, 0x444444, 1);
+    gfx.lineStyle(1.5, 0x444444, alpha);
     gfx.strokeCircle(px, py, r);
-    gfx.fillStyle(0x555555, 0.3);
+    gfx.fillStyle(0x555555, 0.3 * alpha);
     gfx.fillCircle(px - r * 0.25, py - r * 0.25, r * 0.35);
   } else {
-    gfx.fillStyle(0xf0f0f0, 1);
+    gfx.fillStyle(0xf0f0f0, alpha);
     gfx.fillCircle(px, py, r);
-    gfx.lineStyle(2, 0x888888, 1);
+    gfx.lineStyle(2, 0x888888, alpha);
     gfx.strokeCircle(px, py, r);
-    gfx.lineStyle(1, 0x333333, 0.15);
+    gfx.lineStyle(1, 0x333333, 0.15 * alpha);
     gfx.strokeCircle(px + 1, py + 1, r);
   }
 }
 
-// ─── Hit zones ────────────────────────────────────────────────name──────────
+// ─── Hit zones ────────────────────────────────────────────────────────────────
 
 function _buildHitZones() {
-  // Destroy old zones first.
   for (const z of _hitZones) if (z && z.destroy) z.destroy();
   _hitZones = [];
 
@@ -207,7 +204,63 @@ function _buildHitZones() {
 // ─── Input handling ───────────────────────────────────────────────────────────
 
 function _onZoneDown(pointer, idx) {
-  if (_onPointClick) _onPointClick(idx, pointer);
+  const g   = _lastGameState;
+  const ctx = _lastCtx;
+  if (!g || g.gameOver || !ctx) return;
+
+  const mySide = ctx.mySide;
+
+  // Removing phase: click opponent piece to remove.
+  if (g.phase === 'removing') {
+    const actingColor = g.pendingRemove;
+    if (mySide !== 'both' && mySide !== actingColor) return;
+    const opp = actingColor === 'black' ? 'white' : 'black';
+    if (g.board[idx] === opp) {
+      if (_onAction) _onAction('remove_piece', { pointIndex: idx });
+    }
+    return;
+  }
+
+  const actingColor = g.turn;
+  if (mySide !== 'both' && mySide !== actingColor) return;
+
+  // Placing phase.
+  if (g.phase === 'placing') {
+    if (g.board[idx] === null) {
+      if (_onAction) _onAction('place_piece', { pointIndex: idx });
+    }
+    return;
+  }
+
+  // Moving / flying phase.
+  if (_selected === null) {
+    if (g.board[idx] === actingColor) {
+      _selected = idx;
+      _startDrag(idx, actingColor);
+      _redraw();
+    }
+  } else {
+    if (idx === _selected) {
+      _selected = null;
+      _cancelDrag();
+      _redraw();
+    } else if (g.board[idx] === null) {
+      if (_onAction) _onAction('move_piece', { from: _selected, to: idx });
+      _selected = null;
+      _cancelDrag();
+    } else if (g.board[idx] === actingColor) {
+      _selected = idx;
+      _cancelDrag();
+      _startDrag(idx, actingColor);
+      _redraw();
+    }
+  }
+}
+
+function _redraw() {
+  if (_lastGameState && _lastCtx) {
+    morrisRenderer.draw(_lastGameState, _lastCtx);
+  }
 }
 
 // ─── Drag handling ────────────────────────────────────────────────────────────
@@ -215,7 +268,7 @@ function _onZoneDown(pointer, idx) {
 function _startDrag(from, color) {
   _dragFrom  = from;
   _dragColor = color;
-  if (!_dragGfx) _dragGfx = _scene.add.graphics();
+  if (!_dragGfx) _dragGfx = _scene.add.graphics().setDepth(14);
 }
 
 function _updateDrag(px, py) {
@@ -229,9 +282,21 @@ function _endDrag(toIdx) {
   _dragFrom  = null;
   _dragColor = null;
   if (_dragGfx) { _dragGfx.clear(); }
-  if (from !== null && toIdx !== null && from !== toIdx && _onPieceDragEnd) {
-    _onPieceDragEnd(from, toIdx);
-  }
+
+  if (from === null || toIdx === null || from === toIdx) return;
+
+  const g   = _lastGameState;
+  const ctx = _lastCtx;
+  if (!g || g.gameOver) return;
+  if (g.phase !== 'moving' && g.phase !== 'flying') return;
+  const mySide = ctx?.mySide;
+  const actingColor = g.turn;
+  if (mySide !== 'both' && mySide !== actingColor) return;
+  if (g.board[from] !== actingColor) return;
+  if (g.board[toIdx] !== null) return;
+
+  _selected = null;
+  if (_onAction) _onAction('move_piece', { from, to: toIdx });
 }
 
 function _cancelDrag() {
@@ -264,7 +329,6 @@ function _flashMills(newMillPoints) {
   _lastMillFlash = { points: newMillPoints };
   _lastMillFlash.timer = _scene.time.delayedCall(1200, () => {
     _lastMillFlash = null;
-    // Redraw will clear the flash on next draw call.
   });
 }
 
@@ -276,6 +340,15 @@ function _detectMills(board) {
     }
   }
   return [...millPoints];
+}
+
+function _isInMill(board, idx) {
+  const color = board[idx];
+  if (!color) return false;
+  return MILL_LIST.some(([a, b, c]) =>
+    (a === idx || b === idx || c === idx) &&
+    board[a] === color && board[b] === color && board[c] === color
+  );
 }
 
 // ─── Hint ─────────────────────────────────────────────────────────────────────
@@ -296,13 +369,11 @@ function _showHintInternal(move) {
   } else if (move.type === 'move') {
     const pf = _px(move.from);
     const pt = _px(move.to);
-    // Line from → to
     _hintGfx.lineStyle(2, 0x00cc44, 0.5);
     _hintGfx.beginPath();
     _hintGfx.moveTo(pf.x, pf.y);
     _hintGfx.lineTo(pt.x, pt.y);
     _hintGfx.strokePath();
-    // Dot at destination
     _hintGfx.fillStyle(0x00cc44, 0.85);
     _hintGfx.fillCircle(pt.x, pt.y, r * 0.6);
     _hintGfx.lineStyle(2, 0x00ff66, 0.7);
@@ -314,63 +385,52 @@ function _showHintInternal(move) {
 
 const morrisRenderer = {
 
-  init(scene, helpers) {
-    _scene        = scene;
-    _bx           = helpers.boardX;
-    _by           = helpers.boardY;
-    _bs           = helpers.boardSize;
-    _onPointClick   = helpers.onPointClick   ?? null;
-    _onPieceDragEnd = helpers.onPieceDragEnd ?? null;
-    _selected     = null;
-    _dragFrom     = null;
+  showPassButton: false,
+
+  init(scene, config) {
+    _scene    = scene;
+    _bx       = config.boardX;
+    _by       = config.boardY;
+    _bs       = config.boardSize;
+    _onAction = config.onAction ?? null;
+    _selected = null;
+    _dragFrom = null;
     _lastMillFlash = null;
+    _lastGameState = null;
+    _lastCtx = null;
 
     _boardGfx   = scene.add.graphics().setDepth(10);
     _pieceGfx   = scene.add.graphics().setDepth(11);
-    _overlayGfx = scene.add.graphics().setDepth(12);
     _hintGfx    = scene.add.graphics().setDepth(13);
     _dragGfx    = scene.add.graphics().setDepth(14);
 
     _drawBoard();
     _buildHitZones();
 
-    // Scene-level pointer events for drag support.
-    scene.input.on('pointermove', (pointer) => {
+    // Scene-level pointer events for drag support (stored for cleanup).
+    _onPointerMove = (pointer) => {
       if (_dragFrom !== null) _updateDrag(pointer.x, pointer.y);
-    });
-    scene.input.on('pointerup', (pointer) => {
+    };
+    _onPointerUp = (pointer) => {
       if (_dragFrom !== null) {
         const toIdx = _nearestPoint(pointer.x, pointer.y);
         _endDrag(toIdx);
       }
-    });
+    };
+    scene.input.on('pointermove', _onPointerMove);
+    scene.input.on('pointerup', _onPointerUp);
   },
 
-  /** Set which point is "selected" (by the input layer). */
-  setSelected(idx) {
-    _selected = idx;
-  },
-
-  /** Begin a drag from a given point. */
-  beginDrag(from, color) {
-    _startDrag(from, color);
-  },
-
-  /** Cancel an in-progress drag without firing the callback. */
-  cancelDrag() {
-    _cancelDrag();
-  },
-
-  draw(gameState) {
+  draw(gameState, ctx) {
     if (!_scene) return;
+    _lastGameState = gameState;
+    _lastCtx = ctx;
 
     const board = gameState.board;
     const phase = gameState.phase;
 
-    // Redraw board background on every call (ensures it survives display-list changes).
     _drawBoard();
 
-    // Valid destinations for selected piece.
     let validDests = null;
     if (_selected !== null && board[_selected] && phase === 'moving') {
       validDests = ADJ[_selected].filter((i) => board[i] === null);
@@ -378,7 +438,6 @@ const morrisRenderer = {
       validDests = board.map((c, i) => c === null ? i : -1).filter((i) => i >= 0);
     }
 
-    // Removable pieces during removing phase.
     let removable = null;
     if (phase === 'removing') {
       const opp = gameState.pendingRemove === 'black' ? 'white' : 'black';
@@ -388,10 +447,9 @@ const morrisRenderer = {
         .filter((i) => i >= 0);
     }
 
-    // Active mill flash.
     const millPoints = _lastMillFlash ? _lastMillFlash.points : _detectMills(board);
 
-    _drawPieces(board, _selected, validDests, removable, millPoints, _dragFrom);
+    _drawPieces(board, _selected, validDests, removable, millPoints);
   },
 
   showHint(hintMsg) {
@@ -402,34 +460,72 @@ const morrisRenderer = {
     if (_hintGfx) _hintGfx.clear();
   },
 
-  flashNewMills(board) {
-    _flashMills(_detectMills(board));
+  formatTurnText(gameState) {
+    if (gameState.gameOver) {
+      return gameState.winner === 'black' ? '⚫ BLACK wins!' : '⚪ WHITE wins!';
+    }
+    if (gameState.phase === 'removing') {
+      const who = gameState.pendingRemove === 'black' ? '⚫ BLACK' : '⚪ WHITE';
+      return `${who} — remove an opponent piece`;
+    }
+    const who = gameState.turn === 'black' ? '⚫ BLACK' : '⚪ WHITE';
+    const verb = gameState.phase === 'placing' ? 'placing' :
+                 gameState.phase === 'flying'  ? (gameState.flyingAlways ? 'flying (always)' : 'flying (any empty)') : 'moving';
+    return `${who}'s turn — ${verb}`;
+  },
+
+  formatTurnColor(gameState) {
+    if (gameState.gameOver) return '#ffd700';
+    return gameState.turn === 'black' ? '#dddddd' : '#ffffff';
+  },
+
+  formatCaptureText(gameState) {
+    const ih = gameState.piecesInHand;
+    const cap = gameState.captured;
+    return `in hand: ⚫ ${ih.black}  ⚪ ${ih.white}    captured: ⚫ ${cap.black}  ⚪ ${cap.white}`;
+  },
+
+  getGameOverInfo(gameState) {
+    if (!gameState.gameOver) return null;
+    const winnerStr = gameState.winner === 'black' ? '⚫ BLACK wins!' : '⚪ WHITE wins!';
+    const cap = gameState.captured;
+    return {
+      title: 'GAME OVER',
+      winner: winnerStr,
+      lines: [
+        `Captured: ⚫ ${cap.black}  ⚪ ${cap.white}`,
+      ],
+      buttons: [
+        { label: 'New Game', actions: ['restart'] },
+      ],
+    };
+  },
+
+  resetSelection() {
+    _selected = null;
+    _cancelDrag();
   },
 
   shutdown() {
+    // Remove scene-level drag listeners to prevent stacking on re-init.
+    if (_scene && _onPointerMove) _scene.input.off('pointermove', _onPointerMove);
+    if (_scene && _onPointerUp)   _scene.input.off('pointerup', _onPointerUp);
+    _onPointerMove = null;
+    _onPointerUp   = null;
     for (const z of _hitZones) if (z && z.destroy) z.destroy();
     _hitZones = [];
     if (_boardGfx)   { _boardGfx.destroy();   _boardGfx   = null; }
-    if (_pieceGfx)   { _pieceGfx.destroy();   _pieceGfx   = null; }
-    if (_overlayGfx) { _overlayGfx.destroy(); _overlayGfx = null; }
-    if (_hintGfx)    { _hintGfx.destroy();    _hintGfx    = null; }
-    if (_dragGfx)    { _dragGfx.destroy();    _dragGfx    = null; }
+    if (_pieceGfx)   { _pieceGfx.destroy();    _pieceGfx   = null; }
+    if (_hintGfx)    { _hintGfx.destroy();     _hintGfx    = null; }
+    if (_dragGfx)    { _dragGfx.destroy();     _dragGfx    = null; }
     _scene = null;
-    _onPointClick = null;
-    _onPieceDragEnd = null;
+    _onAction = null;
     _selected = null;
     _dragFrom = null;
     _lastMillFlash = null;
+    _lastGameState = null;
+    _lastCtx = null;
   },
 };
-
-function _isInMill(board, idx) {
-  const color = board[idx];
-  if (!color) return false;
-  return MILL_LIST.some(([a, b, c]) =>
-    (a === idx || b === idx || c === idx) &&
-    board[a] === color && board[b] === color && board[c] === color
-  );
-}
 
 export default morrisRenderer;
