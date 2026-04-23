@@ -11,11 +11,28 @@
 import * as GoSim from './go_sim.js';
 import { suggestMove as goHintSuggest } from './go_hint.js';
 import * as MorrisSim from './morris_sim.js';
-import { suggestMove as morrisHintSuggest } from './morris_hint.js';
 import * as FoxGeeseSim from './foxgeese_sim.js';
-import { suggestMove as foxgeeseHintSuggest } from './foxgeese_hint.js';
 import * as PiratesBulgarsSim from './piratesbulgars_sim.js';
-import { suggestMove as piratesbulgarsHintSuggest } from './piratesbulgars_hint.js';
+import { Worker } from 'worker_threads';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const _dir = dirname(fileURLToPath(import.meta.url));
+const WORKER_SCRIPT = join(_dir, 'mcts_worker.js');
+
+// Run a synchronous MCTS hint in a Worker thread so the main event loop
+// (comet ticks, snake ticks, etc.) is never blocked during the search.
+function mctsInWorker(hintModuleRelPath, state) {
+  return new Promise((resolve, reject) => {
+    const moduleUrl = new URL(hintModuleRelPath, import.meta.url).href;
+    const worker = new Worker(WORKER_SCRIPT, { workerData: { module: moduleUrl, state } });
+    worker.once('message', (msg) => {
+      if (msg.error) reject(new Error(msg.error));
+      else resolve(msg);
+    });
+    worker.once('error', reject);
+  });
+}
 import { normalizeRoomCode } from '../shared.js';
 import {
   countConnectedPlayers,
@@ -436,29 +453,17 @@ export function createGameRoomHost() {
             if (ws.room) safeBroadcast(room, { type: 'hint', x: null, y: null });
           });
         } else if (room.state.gameType === 'morris') {
-          try {
-            const result = morrisHintSuggest(snap);
-            if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null });
-          } catch (e) {
-            console.error('[gameroom] morris hint error', e);
-            if (ws.room) safeBroadcast(room, { type: 'hint', move: null });
-          }
+          mctsInWorker('./morris_hint.js', snap)
+            .then((result) => { if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null }); })
+            .catch((e) => { console.error('[gameroom] morris hint error', e); if (ws.room) safeBroadcast(room, { type: 'hint', move: null }); });
         } else if (room.state.gameType === 'foxgeese') {
-          try {
-            const result = foxgeeseHintSuggest(snap);
-            if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null });
-          } catch (e) {
-            console.error('[gameroom] foxgeese hint error', e);
-            if (ws.room) safeBroadcast(room, { type: 'hint', move: null });
-          }
+          mctsInWorker('./foxgeese_hint.js', snap)
+            .then((result) => { if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null }); })
+            .catch((e) => { console.error('[gameroom] foxgeese hint error', e); if (ws.room) safeBroadcast(room, { type: 'hint', move: null }); });
         } else if (room.state.gameType === 'piratesbulgars') {
-          try {
-            const result = piratesbulgarsHintSuggest(snap);
-            if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null });
-          } catch (e) {
-            console.error('[gameroom] piratesbulgars hint error', e);
-            if (ws.room) safeBroadcast(room, { type: 'hint', move: null });
-          }
+          mctsInWorker('./piratesbulgars_hint.js', snap)
+            .then((result) => { if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null }); })
+            .catch((e) => { console.error('[gameroom] piratesbulgars hint error', e); if (ws.room) safeBroadcast(room, { type: 'hint', move: null }); });
         }
         break;
       }
