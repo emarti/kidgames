@@ -1,11 +1,15 @@
 import goRenderer from '../renderers/go.js';
 import morrisRenderer from '../renderers/morris.js';
+import foxgeeseRenderer from '../renderers/foxgeese.js';
+import piratesbulgarsRenderer from '../renderers/piratesbulgars.js';
 import NetScene from './NetScene.js';
 
 // ─── Renderer registry ────────────────────────────────────────────────────────
 const RENDERERS = {
-  go:     goRenderer,
-  morris: morrisRenderer,
+  go:              goRenderer,
+  morris:          morrisRenderer,
+  foxgeese:        foxgeeseRenderer,
+  piratesbulgars:  piratesbulgarsRenderer,
 };
 
 // ─── UI palette ───────────────────────────────────────────────────────────────
@@ -113,6 +117,10 @@ export default class PlayScene extends NetScene {
     this._captureText = this.add.text(cx, this._topBarY + 28, '', {
       ...FONT, fontSize: '15px', color: '#aaaaaa',
     }).setOrigin(0.5).setDepth(20);
+
+    this._roomText = this.add.text(8, 8, '', {
+      ...FONT, fontSize: '13px', color: '#666677',
+    }).setOrigin(0, 0).setDepth(20);
 
     const by = this._botBarY;
     const sp = Math.min(118, this._W * 0.22);
@@ -224,7 +232,11 @@ export default class PlayScene extends NetScene {
 
   _onPass() {
     if (this._activeRenderer?.showPassButton) {
-      this.game.net.send('pass_turn');
+      if (this._activeGameType === 'piratesbulgars') {
+        this.game.net.send('end_jump');
+      } else {
+        this.game.net.send('pass_turn');
+      }
     }
   }
 
@@ -320,6 +332,7 @@ export default class PlayScene extends NetScene {
     this._turnText.setText(renderer.formatTurnText(gameState));
     this._turnText.setColor(renderer.formatTurnColor(gameState));
     this._captureText.setText(renderer.formatCaptureText(gameState));
+    if (this._roomText) this._roomText.setText(`Room ${this.game.net.roomId ?? ''}`);
 
     // Side panel.
     this._updateSidePanel(mySide);
@@ -331,10 +344,16 @@ export default class PlayScene extends NetScene {
     else this._undoBtn.disableInteractive();
 
     if (renderer.showPassButton) {
-      this._passBtn.setVisible(true);
-      this._passBtn.setAlpha(canMove ? 1 : 0.4);
-      if (canMove) this._passBtn.setInteractive({ useHandCursor: true });
-      else this._passBtn.disableInteractive();
+      // For piratesbulgars, only show pass when there's a pending multi-jump.
+      const showPass = gameType === 'piratesbulgars'
+        ? gameState.pendingJump !== null && canMove
+        : true;
+      this._passBtn.setVisible(showPass);
+      if (showPass) {
+        this._passBtn.setAlpha(canMove ? 1 : 0.4);
+        if (canMove) this._passBtn.setInteractive({ useHandCursor: true });
+        else this._passBtn.disableInteractive();
+      }
     }
 
     // Draw the game board.
@@ -358,7 +377,7 @@ export default class PlayScene extends NetScene {
     const cx = W / 2;
     const cy = H / 2;
 
-    this._scoreOverlay = this.add.container(0, 0);
+    this._scoreOverlay = this.add.container(0, 0).setDepth(50);
 
     const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.65).setOrigin(0, 0);
     this._scoreOverlay.add(dim);

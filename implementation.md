@@ -15,10 +15,12 @@ Browser (Phaser client)
   |  WebSocket: /games/gameroom/ws
   v
 Node WS backend
-  apps/ws/src/games/gameroom.js  (room host, message routing)
-  apps/ws/src/games/go_sim.js    (Go rules engine)
-  apps/ws/src/games/go_hint.js   (GNU Go GTP subprocess)
-```
+  apps/ws/src/games/gameroom.js   (room host, message routing)
+  apps/ws/src/games/go_sim.js     (Go rules engine)
+  apps/ws/src/games/go_hint.js    (GNU Go GTP subprocess)
+  apps/ws/src/games/morris_sim.js (Nine Men's Morris rules engine)
+  apps/ws/src/games/morris_hint.js (UCT MCTS hint engine for Morris)  apps/ws/src/games/foxgeese_sim.js  (Fox & Geese rules engine)
+  apps/ws/src/games/foxgeese_hint.js (UCT MCTS hint engine for Fox & Geese)```
 
 Room state shape (top-level, broadcast to all clients):
 ```json
@@ -226,11 +228,9 @@ New message (client → server):
 
 ---
 
-## Phase 5 — Nine Men's Morris
+## Phase 5 — Nine Men's Morris  ✅ DONE
 
-**Session plan:** Graph board is the tricky part — not a grid.
-
-### Server sim: `apps/ws/src/games/gameroom_morris_sim.js`
+### Server sim: `apps/ws/src/games/morris_sim.js`
 
 Board representation:
 ```
@@ -244,39 +244,49 @@ Game phases:
 - Phase 2 (Moving): move a piece to an adjacent empty point
 - Phase 3 (Flying): when a player has exactly 3 pieces, they may move to any empty point
 
-Rules to implement:
-- [ ] Phase tracking per player: `piecesInHand`, `piecesOnBoard`
-- [ ] Mill detection: after every placement/move, check if any mill was formed
-- [ ] If mill formed → player must remove one opponent piece (not from opponent's mill)
-- [ ] If all opponent pieces are in mills, any opponent piece may be removed
-- [ ] Win: opponent has < 3 pieces OR opponent has no legal moves in phase 2
-- [ ] Phase 2 → 3 transition: automatic when player has exactly 3 pieces on board
-- [ ] Undo: stack of snapshots
+- [x] Phase tracking per player: `piecesInHand`, `piecesOnBoard`
+- [x] Mill detection: after every placement/move, check if any mill was formed
+- [x] If mill formed → player must remove one opponent piece (`removing` phase); not from opponent's mill unless all are milled
+- [x] Win: opponent has < 3 pieces (and hand empty) OR opponent has no legal moves in moving phase
+- [x] Phase 2 → 3 (flying) transition: automatic when player has exactly 3 pieces on board
+- [x] `flyingAlways` flag — host-toggleable rule variant (always allow flying)
+- [x] Undo: stack of JSON snapshots (capped at 300); `undoMove()` exported
+- [x] `legalMovesFor(state, color)` helper exported (used by hint engine)
+- [x] `selectColor`, `setPlayerConnected`, `resetGame`, `refreshPhase` exported
 
 New messages (client → server):
 - `place_piece { pointIndex }` — phase 1
 - `move_piece { from, to }` — phase 2/3
 - `remove_piece { pointIndex }` — after forming a mill
+- `toggle_flying` — toggles `flyingAlways` flag (calls `refreshPhase`)
 
 ### Client renderer: `gameroom/client/src/game/renderers/morris.js`
 
-- [ ] Draw the classic three-square board (nested squares with connecting lines)
-- [ ] 24 intersection points with hit areas
-- [ ] Highlight valid destinations during moves
-- [ ] Highlight newly formed mills (briefly flash the 3 points)
-- [ ] "Remove opponent piece" mode: red ring on removable pieces
+- [x] Draw the classic three-square board (nested squares with connecting lines, tan background)
+- [x] 24 intersection points with hit areas (pointer-up, drag-and-drop support)
+- [x] Drag-and-drop piece movement: ghost piece follows pointer, snaps on release
+- [x] Highlight selected piece and valid destinations (green rings)
+- [x] Highlight newly formed mills (yellow flash for 1.2s)
+- [x] "Remove opponent piece" mode: red ring on removable pieces
+- [x] `formatTurnText`, `formatTurnColor`, `formatCaptureText`, `getGameOverInfo` implemented
+- [x] `showHint` / `clearHint`: blue ring on hinted point index (place/move/remove)
+- [x] `resetSelection()` clears drag state on new tick
 
 ### Hints
-- [ ] `apps/ws/src/games/gameroom_morris_hint.js` — JS MCTS: legal moves = valid placements (phase 1) or adjacent moves (phase 2) or any empty point (phase 3); evaluate terminal by piece count and mobility.
-- [ ] Route `request_hint` for `gameType === 'morris'` in `gameroom.js`
+- [x] `apps/ws/src/games/morris_hint.js` — UCT MCTS (C=1.4), up to 3000 iterations / 1500 ms; random rollouts capped at 80 ply
+- [x] `request_hint` for `gameType === 'morris'` routes to `morrisHintSuggest` in `gameroom.js`; result broadcast as `{ type: 'hint', move }` where `move` is `{ type, pointIndex? from? to? }`
 
 ### Integration
-- [ ] Add `'morris'` to `IMPLEMENTED` in `gameroom.js`
-- [ ] `place_piece`, `move_piece`, `remove_piece` handlers: require `ws.playerId`; support `side: 'both'`
-- [ ] `undo_move` routes to morris sim; `selectColor(game, pid, color)` exposed
-- [ ] `request_hint` routes to `gameroom_morris_hint.js`
-- [ ] `join_room` auto-side; direct to PlayScene if game active
-- [ ] Write `docs/gameroom_morris_LLM.md`
+- [x] `'morris'` added to `IMPLEMENTED` set in `gameroom.js`
+- [x] `place_piece`, `move_piece`, `remove_piece` handlers with `ws.playerId` guard and `side: 'both'` override via `withBothSide()`
+- [x] `toggle_flying` handler: flips `game.flyingAlways`, calls `MorrisSim.refreshPhase()`
+- [x] `undo_move` routes to `MorrisSim.undoMove()`; `restart` routes to `MorrisSim.resetGame()`
+- [x] `select_side` syncs to `MorrisSim.selectColor()` (`'both'` → `null` for sim)
+- [x] `join_room` auto-assigns black/white; `setPlayerConnected` called on join/leave
+- [x] `select_game` re-syncs connections and auto-assigns black to first connected player
+- [x] `PlayScene`: `morrisRenderer` registered in renderer map; `actingColor` uses `pendingRemove` during removing phase
+- [x] `PlayScene` pause overlay: 🕊 Flying ON/OFF toggle button (morris-only, sized +46px)
+- [x] `docs/gameroom_morris_LLM.md` — not yet written
 
 ---
 
@@ -323,48 +333,77 @@ New messages:
 
 ---
 
-## Phase 7 — Fox and Geese (Pirates & Bulgars)
+## Phase 7 — Fox and Geese (Pirates & Bulgars)  ✅ DONE
 
-**Session plan:** Asymmetric game — one fox, many geese.
+Theme: Fox = **Pirate** (`'black'` internally), Geese = **Bulgars** (`'white'` internally).
+Side panel stays black/white; renderer displays Pirate/Bulgars text.
 
-### Server sim: `apps/ws/src/games/gameroom_foxgeese_sim.js`
+### Server sim: `apps/ws/src/games/foxgeese_sim.js`
 
-Board: cross-shaped grid (33 points). Same topology as standard Fox & Geese.
-- Fox: 1 piece (starts at center or specific start position)
-- Geese: 13 pieces (start on one half of the board)
-- Asymmetric sides: `{ side: 'fox' }` or `{ side: 'geese' }`
+Board: 33-point orthogonal cross grid (7×7 minus four corner 2×2 blocks).
+- Fox starts at index 16 (center, col 3 row 3)
+- 13 Geese start on rows 0–2 (indices 0–12)
+- `COORDS[i]`, `POINT_POSITIONS[i]`, `ADJACENCY[i]` exported
 
-Rules:
-- [ ] Geese move: 1 step forward (toward fox's starting area) or sideways — NOT backward
-- [ ] Fox moves: 1 step in any direction (4 or 8 — choose 4-directional for simplicity)
-- [ ] Fox captures: jumps over a goose to empty square behind (like checkers); must capture if available
-- [ ] Multiple captures in one turn if available (like checkers multi-jump)
-- [ ] Geese win: surround fox so it cannot move
-- [ ] Fox wins: reduces geese to fewer than 4 (can no longer be surrounded)
-- [ ] Track whose turn it is; fox goes first
+- [x] Fox ('black') moves orthogonally to adjacent empty square, or captures by jumping over a Bulgar to the empty square beyond
+- [x] Forced capture: if any capture is available fox must take it (`legalMovesFor` returns only captures when captures exist)
+- [x] Multi-jump: after a capture, if more captures are available from the landing square, `pendingJump` is set; fox must continue. Turn stays `'black'`.
+- [x] Bulgars ('white') move forward (row++) or sideways (row unchanged) to adjacent empty squares; no captures
+- [x] Fox wins: `geeseCaptured >= 10` (≤3 Bulgars remain)
+- [x] Geese win: fox has no legal moves on its turn
+- [x] Undo: stack of JSON snapshots (cap 300); `undoMove()` exported
+- [x] `resetGame(state)` preserves player connections
+- [x] `selectColor`, `setPlayerConnected`, `legalMovesFor` exported
 
-New messages:
-- `move_piece { from: {x,y}, to: {x,y} }` — standard for both sides
+State shape:
+```json
+{
+  "board": [null|"black"|"white" ...],   // 33 elements
+  "turn": "black|white",
+  "pendingJump": null,                    // index fox is continuing from, or null
+  "geeseCaptured": 0,
+  "players": { "1..4": { "connected": bool, "color": null } },
+  "lastMove": { "type": "move", "from", "to", "color", "captured": bool },
+  "gameOver": false,
+  "winner": null,
+  "history": [],
+  "tick": 0
+}
+```
+
+New message (client → server):
+- `move_piece { from, to }` — used for both Pirate and Bulgar moves
 
 ### Client renderer: `gameroom/client/src/game/renderers/foxgeese.js`
 
-- [ ] Draw cross-shaped board (highlight the 33 valid points)
-- [ ] Fox: distinctive piece (different shape/color — e.g. orange triangle or fox emoji)
-- [ ] Geese: smaller same-colored circles
-- [ ] Highlight fox captures (mandatory)
-- [ ] Show geese that are captured/removed
+- [x] Draw cross-shaped board: tan background, orthogonal lines between all adjacent pairs, small intersection dots
+- [x] Fox (black): amber/orange circle with highlight glint
+- [x] Bulgars (white): white circles with highlight glint
+- [x] Click-to-select + drag-and-drop (mirrors Morris renderer pattern)
+- [x] `pendingJump` auto-shows gold ring on jumping fox; only capture destinations shown
+- [x] Green rings on valid destinations (captures or empty adjacents)
+- [x] Hint: blue ring + arrow on `move.to`
+- [x] `formatTurnText` → "🏴‍☠️ PIRATE to move" / "⚔️ BULGARS to move" / "continue jump!" / game-over text
+- [x] `formatCaptureText` → "Bulgars captured: N  remaining: M"
+- [x] `getGameOverInfo` → overlay with winner + New Game button
+- [x] `showPassButton = false`
 
 ### Hints
-- [ ] `apps/ws/src/games/gameroom_foxgeese_hint.js` — JS MCTS: asymmetric playout (fox maximizes captures and escape options; geese maximize encirclement); evaluate terminal by fox mobility and goose count.
-- [ ] Route `request_hint` for `gameType === 'foxgeese'` in `gameroom.js`
+- [x] `apps/ws/src/games/foxgeese_hint.js` — UCT MCTS (C=1.4), 2000 iter / 1500ms, 60-ply rollouts
+  - Fox heuristic: proportion of Bulgars captured
+  - Geese heuristic: fox mobility (fewer moves = better for geese)
+- [x] `request_hint` for `gameType === 'foxgeese'` routes to `foxgeeseHintSuggest` in `gameroom.js`
 
 ### Integration
-- [ ] Add `'foxgeese'` to `IMPLEMENTED` in `gameroom.js`
-- [ ] `move_piece` handler: require `ws.playerId`; support `side: 'both'` (overrides to fox or geese based on `game.turn`)
-- [ ] `undo_move` routes to foxgeese sim; `selectColor(game, pid, color)` exposed (sides: `'fox'`, `'geese'`)
-- [ ] `request_hint` routes to `gameroom_foxgeese_hint.js`
-- [ ] `join_room` auto-side: fox first, then geese; direct to PlayScene if game active
-- [ ] Write `docs/gameroom_foxgeese_LLM.md`
+- [x] `'foxgeese'` added to `IMPLEMENTED` set in `gameroom.js`
+- [x] `move_piece` case dispatches to `FoxGeeseSim.movePiece`; `actingColor = game.turn` (pendingJump keeps turn='black'); `withBothSide` used
+- [x] `undo_move` routes to `FoxGeeseSim.undoMove()`; `restart` routes to `FoxGeeseSim.resetGame()`
+- [x] `select_side` uses shared `_sideSims` map (refactored from per-game branches)
+- [x] `join_room` and `select_game` use shared `_joinSims` / `_selectSims` maps; auto-assign black/white
+- [x] `setPlayerConnected` called on join/leave for foxgeese
+- [x] `foxgeeseRenderer` registered in `PlayScene` `RENDERERS` map
+- [x] Architecture note: `select_game`, `join_room`, `select_side` handlers consolidated into sim-maps to ease future game additions
+- [x] `docs/gameroom_foxgeese_LLM.md` — not yet written
 
 ---
 

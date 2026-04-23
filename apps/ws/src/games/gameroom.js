@@ -12,6 +12,10 @@ import * as GoSim from './go_sim.js';
 import { suggestMove as goHintSuggest } from './go_hint.js';
 import * as MorrisSim from './morris_sim.js';
 import { suggestMove as morrisHintSuggest } from './morris_hint.js';
+import * as FoxGeeseSim from './foxgeese_sim.js';
+import { suggestMove as foxgeeseHintSuggest } from './foxgeese_hint.js';
+import * as PiratesBulgarsSim from './piratesbulgars_sim.js';
+import { suggestMove as piratesbulgarsHintSuggest } from './piratesbulgars_hint.js';
 import { normalizeRoomCode } from '../shared.js';
 import {
   countConnectedPlayers,
@@ -23,13 +27,15 @@ import {
 
 // ─── Game registry ────────────────────────────────────────────────────────────
 
-const GAME_TYPES = ['go', 'checkers', 'chess', 'morris', 'cchk', 'foxgeese', 'hex', 'reversi'];
-const IMPLEMENTED = new Set(['go', 'morris']);
+const GAME_TYPES = ['go', 'checkers', 'chess', 'morris', 'cchk', 'foxgeese', 'hex', 'piratesbulgars'];
+const IMPLEMENTED = new Set(['go', 'morris', 'foxgeese', 'piratesbulgars']);
 
 // Build initial sim state for a given game type.
 function newGameSimState(gameType) {
-  if (gameType === 'go')     return GoSim.newGameState();
-  if (gameType === 'morris') return MorrisSim.newGameState();
+  if (gameType === 'go')              return GoSim.newGameState();
+  if (gameType === 'morris')          return MorrisSim.newGameState();
+  if (gameType === 'foxgeese')        return FoxGeeseSim.newGameState();
+  if (gameType === 'piratesbulgars')  return PiratesBulgarsSim.newGameState();
   // Placeholder: other games return null until their sim modules are added.
   return null;
 }
@@ -109,6 +115,10 @@ export function createGameRoomHost() {
         GoSim.setPlayerConnected(room.state.game, ws.playerId, false);
       } else if (room.state.gameType === 'morris' && room.state.game) {
         MorrisSim.setPlayerConnected(room.state.game, ws.playerId, false);
+      } else if (room.state.gameType === 'foxgeese' && room.state.game) {
+        FoxGeeseSim.setPlayerConnected(room.state.game, ws.playerId, false);
+      } else if (room.state.gameType === 'piratesbulgars' && room.state.game) {
+        PiratesBulgarsSim.setPlayerConnected(room.state.game, ws.playerId, false);
       }
     }
     room.updatedAt = nowMs();
@@ -183,11 +193,16 @@ export function createGameRoomHost() {
           GoSim.setPlayerConnected(room.state.game, pid, true);
         } else if (room.state.gameType === 'morris' && room.state.game) {
           MorrisSim.setPlayerConnected(room.state.game, pid, true);
+        } else if (room.state.gameType === 'foxgeese' && room.state.game) {
+          FoxGeeseSim.setPlayerConnected(room.state.game, pid, true);
+        } else if (room.state.gameType === 'piratesbulgars' && room.state.game) {
+          PiratesBulgarsSim.setPlayerConnected(room.state.game, pid, true);
         }
 
         // Auto-assign a side if none is taken yet (player can always change it).
-        if ((room.state.gameType === 'go' || room.state.gameType === 'morris') && room.state.game) {
-          const Sim = room.state.gameType === 'go' ? GoSim : MorrisSim;
+        const _joinSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim };
+        if (_joinSims[room.state.gameType] && room.state.game) {
+          const Sim = _joinSims[room.state.gameType];
           const playerList = Object.values(room.state.players);
           const hasBlack = playerList.some(p => p.side === 'black');
           const hasWhite = playerList.some(p => p.side === 'white');
@@ -225,8 +240,9 @@ export function createGameRoomHost() {
         // Reset all player sides when game changes.
         for (const p of [1, 2, 3, 4]) room.state.players[p].side = null;
         // Re-sync player connections into the new sim.
-        if (gameType === 'go' || gameType === 'morris') {
-          const Sim = gameType === 'go' ? GoSim : MorrisSim;
+        const _selectSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim };
+        if (_selectSims[gameType]) {
+          const Sim = _selectSims[gameType];
           for (const p of [1, 2, 3, 4]) {
             if (room.state.players[p].connected) {
               Sim.setPlayerConnected(room.state.game, p, true);
@@ -256,12 +272,10 @@ export function createGameRoomHost() {
         room.state.players[ws.playerId].side = side;
         // Sync into the active sim's own player state.
         // 'both' is a room-level concept; the sim gets null (spectator/unset).
-        if (room.state.gameType === 'go') {
+        const _sideSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim };
+        if (_sideSims[room.state.gameType]) {
           const simColor = (side === 'both') ? null : side;
-          GoSim.selectColor(room.state.game, ws.playerId, simColor);
-        } else if (room.state.gameType === 'morris') {
-          const simColor = (side === 'both') ? null : side;
-          MorrisSim.selectColor(room.state.game, ws.playerId, simColor);
+          _sideSims[room.state.gameType].selectColor(room.state.game, ws.playerId, simColor);
         }
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
@@ -288,12 +302,26 @@ export function createGameRoomHost() {
       case 'move_piece': {
         if (!ws.room || !ws.playerId) return;
         const room = rooms.get(ws.room);
-        if (!room || room.state.gameType !== 'morris' || !room.state.game) return;
+        if (!room || !room.state.game) return;
         const from = Number(msg.from);
         const to   = Number(msg.to);
-        const result = withBothSide(room, ws, room.state.game.turn, () =>
-          MorrisSim.movePiece(room.state.game, ws.playerId, from, to)
-        );
+        let result;
+        if (room.state.gameType === 'morris') {
+          result = withBothSide(room, ws, room.state.game.turn, () =>
+            MorrisSim.movePiece(room.state.game, ws.playerId, from, to)
+          );
+        } else if (room.state.gameType === 'foxgeese') {
+          // actingColor = fox's turn; pendingJump keeps turn='black' so game.turn is always correct.
+          result = withBothSide(room, ws, room.state.game.turn, () =>
+            FoxGeeseSim.movePiece(room.state.game, ws.playerId, from, to)
+          );
+        } else if (room.state.gameType === 'piratesbulgars') {
+          result = withBothSide(room, ws, room.state.game.turn, () =>
+            PiratesBulgarsSim.movePiece(room.state.game, ws.playerId, from, to)
+          );
+        } else {
+          return;
+        }
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
         room.state.tick++;
         room.updatedAt = nowMs();
@@ -353,8 +381,10 @@ export function createGameRoomHost() {
         const room = rooms.get(ws.room);
         if (!room || !room.state.game) return;
         let result;
-        if (room.state.gameType === 'go')     result = GoSim.undoMove(room.state.game);
-        else if (room.state.gameType === 'morris') result = MorrisSim.undoMove(room.state.game);
+        if (room.state.gameType === 'go')           result = GoSim.undoMove(room.state.game);
+        else if (room.state.gameType === 'morris')   result = MorrisSim.undoMove(room.state.game);
+        else if (room.state.gameType === 'foxgeese') result = FoxGeeseSim.undoMove(room.state.game);
+        else if (room.state.gameType === 'piratesbulgars') result = PiratesBulgarsSim.undoMove(room.state.game);
         else result = { ok: false, error: 'Undo not yet implemented for this game' };
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
         room.state.tick++;
@@ -367,8 +397,10 @@ export function createGameRoomHost() {
         if (!ws.room || !ws.playerId) return;
         const room = rooms.get(ws.room);
         if (!room || !room.state.game) return;
-        if (room.state.gameType === 'go')          GoSim.resetGame(room.state.game);
-        else if (room.state.gameType === 'morris') MorrisSim.resetGame(room.state.game);
+        if (room.state.gameType === 'go')           GoSim.resetGame(room.state.game);
+        else if (room.state.gameType === 'morris')   MorrisSim.resetGame(room.state.game);
+        else if (room.state.gameType === 'foxgeese') FoxGeeseSim.resetGame(room.state.game);
+        else if (room.state.gameType === 'piratesbulgars') PiratesBulgarsSim.resetGame(room.state.game);
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
@@ -411,7 +443,37 @@ export function createGameRoomHost() {
             console.error('[gameroom] morris hint error', e);
             if (ws.room) safeBroadcast(room, { type: 'hint', move: null });
           }
+        } else if (room.state.gameType === 'foxgeese') {
+          try {
+            const result = foxgeeseHintSuggest(snap);
+            if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null });
+          } catch (e) {
+            console.error('[gameroom] foxgeese hint error', e);
+            if (ws.room) safeBroadcast(room, { type: 'hint', move: null });
+          }
+        } else if (room.state.gameType === 'piratesbulgars') {
+          try {
+            const result = piratesbulgarsHintSuggest(snap);
+            if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null });
+          } catch (e) {
+            console.error('[gameroom] piratesbulgars hint error', e);
+            if (ws.room) safeBroadcast(room, { type: 'hint', move: null });
+          }
         }
+        break;
+      }
+
+      case 'end_jump': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (!room || room.state.gameType !== 'piratesbulgars' || !room.state.game) return;
+        const result = withBothSide(room, ws, 'black', () =>
+          PiratesBulgarsSim.endJump(room.state.game, ws.playerId)
+        );
+        if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
+        room.state.tick++;
+        room.updatedAt = nowMs();
+        safeBroadcast(room, { type: 'state', state: room.state });
         break;
       }
 

@@ -47,10 +47,11 @@ let _by        = 0;
 let _bs        = 0;
 let _onAction  = null;
 
-let _boardGfx  = null;
-let _pieceGfx  = null;
-let _hintGfx   = null;
-let _hitZones  = [];
+let _boardGfx    = null;
+let _lastMoveGfx = null;
+let _pieceGfx    = null;
+let _hintGfx     = null;
+let _hitZones    = [];
 
 // Scene-level listener refs for cleanup.
 let _onPointerMove = null;
@@ -121,6 +122,47 @@ function _drawBoard() {
     const p = _px(i);
     gfx.fillStyle(0x3d2010, 0.6);
     gfx.fillCircle(p.x, p.y, 3);
+  }
+}
+
+// ─── Last-move marker ─────────────────────────────────────────────────────────
+
+function _drawLastMoveMarker(lastMove) {
+  const gfx = _lastMoveGfx;
+  gfx.clear();
+  if (!lastMove) return;
+
+  const r = Math.max(10, Math.round(_bs * 0.04));
+
+  if (lastMove.type === 'move') {
+    const from = _px(lastMove.from);
+    const to   = _px(lastMove.to);
+    const col  = lastMove.color === 'black' ? 0xff8800 : 0xcccccc;
+    // Line connecting from → to.
+    gfx.lineStyle(2.5, col, 0.5);
+    gfx.beginPath();
+    gfx.moveTo(from.x, from.y);
+    gfx.lineTo(to.x, to.y);
+    gfx.strokePath();
+    // Rings on both endpoints.
+    gfx.lineStyle(3, col, 0.6);
+    gfx.strokeCircle(from.x, from.y, r + 4);
+    gfx.strokeCircle(to.x, to.y, r + 4);
+    // Filled dot on destination.
+    gfx.fillStyle(col, 0.35);
+    gfx.fillCircle(to.x, to.y, r);
+  } else if (lastMove.type === 'place') {
+    const p   = _px(lastMove.pointIndex);
+    const col = lastMove.color === 'black' ? 0xff8800 : 0xcccccc;
+    gfx.lineStyle(3, col, 0.6);
+    gfx.strokeCircle(p.x, p.y, r + 4);
+    gfx.fillStyle(col, 0.35);
+    gfx.fillCircle(p.x, p.y, r);
+  } else if (lastMove.type === 'remove') {
+    const p = _px(lastMove.pointIndex);
+    // Red ring to show where a piece was taken.
+    gfx.lineStyle(3, 0xff3333, 0.7);
+    gfx.strokeCircle(p.x, p.y, r + 4);
   }
 }
 
@@ -399,10 +441,11 @@ const morrisRenderer = {
     _lastGameState = null;
     _lastCtx = null;
 
-    _boardGfx   = scene.add.graphics().setDepth(10);
-    _pieceGfx   = scene.add.graphics().setDepth(11);
-    _hintGfx    = scene.add.graphics().setDepth(13);
-    _dragGfx    = scene.add.graphics().setDepth(14);
+    _boardGfx    = scene.add.graphics().setDepth(10);
+    _lastMoveGfx = scene.add.graphics().setDepth(12);
+    _pieceGfx    = scene.add.graphics().setDepth(11);
+    _hintGfx     = scene.add.graphics().setDepth(13);
+    _dragGfx     = scene.add.graphics().setDepth(14);
 
     _drawBoard();
     _buildHitZones();
@@ -449,6 +492,7 @@ const morrisRenderer = {
 
     const millPoints = _lastMillFlash ? _lastMillFlash.points : _detectMills(board);
 
+    _drawLastMoveMarker(gameState.lastMove);
     _drawPieces(board, _selected, validDests, removable, millPoints);
   },
 
@@ -514,10 +558,11 @@ const morrisRenderer = {
     _onPointerUp   = null;
     for (const z of _hitZones) if (z && z.destroy) z.destroy();
     _hitZones = [];
-    if (_boardGfx)   { _boardGfx.destroy();   _boardGfx   = null; }
-    if (_pieceGfx)   { _pieceGfx.destroy();    _pieceGfx   = null; }
-    if (_hintGfx)    { _hintGfx.destroy();     _hintGfx    = null; }
-    if (_dragGfx)    { _dragGfx.destroy();     _dragGfx    = null; }
+    if (_boardGfx)     { _boardGfx.destroy();     _boardGfx     = null; }
+    if (_lastMoveGfx)  { _lastMoveGfx.destroy();  _lastMoveGfx  = null; }
+    if (_pieceGfx)     { _pieceGfx.destroy();      _pieceGfx     = null; }
+    if (_hintGfx)      { _hintGfx.destroy();       _hintGfx      = null; }
+    if (_dragGfx)      { _dragGfx.destroy();       _dragGfx      = null; }
     _scene = null;
     _onAction = null;
     _selected = null;
