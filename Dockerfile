@@ -191,6 +191,25 @@ RUN cd gameroom/client && npm run build
 
 
 ########################
+# Alphabet client build
+########################
+FROM node:20-slim AS alphabet-client-build
+
+WORKDIR /repo
+
+# Install deps (cache-friendly)
+COPY alphabet/client/package*.json ./alphabet/client/
+RUN cd alphabet/client && npm install --no-audit --no-fund
+
+# App source
+COPY alphabet/client/ ./alphabet/client/
+
+# Host alphabet under /games/alphabet/
+ENV VITE_BASE=/games/alphabet/
+RUN cd alphabet/client && npm run build
+
+
+########################
 # Gateway (Caddy) image
 ########################
 FROM caddy:2-alpine AS gateway
@@ -234,6 +253,10 @@ COPY --from=typing-client-build /repo/typing/client/dist/ /srv/games/typing/
 # Game Room client build output lives at /games/gameroom/
 RUN mkdir -p /srv/games/gameroom
 COPY --from=gameroom-client-build /repo/gameroom/client/dist/ /srv/games/gameroom/
+
+# Alphabet client build output lives at /games/alphabet/
+RUN mkdir -p /srv/games/alphabet
+COPY --from=alphabet-client-build /repo/alphabet/client/dist/ /srv/games/alphabet/
 
 # Caddy config
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile

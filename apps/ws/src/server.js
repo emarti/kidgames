@@ -10,6 +10,7 @@ import { createArchimedesHost } from './games/archimedes.js';
 import { createWallmoverHost } from './games/wallmover.js';
 import { createFlingHost } from './games/fling.js';
 import { createTypingHost } from './games/typing.js';
+import { createAlphabetHost } from './games/alphabet.js';
 import { createGoHost } from './games/go.js';
 import { createGameRoomHost } from './games/gameroom.js';
 
@@ -32,6 +33,7 @@ for (const host of [
   createWallmoverHost(),
   createFlingHost(),
   createTypingHost(),
+  createAlphabetHost(),
   createGoHost(),
   createGameRoomHost(),
 ]) {
