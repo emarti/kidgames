@@ -1,6 +1,6 @@
 /**
  * piratesbulgars.js — Phaser 3 renderer for Pirates and Bulgars.
- * Pirates = 'white' (white circles), Bulgars = 'black' (dark red/maroon).
+ * Pirates = 'white' (dark/black pieces), Bulgars = 'black' (gold/cream pieces).
  *
  * Renderer interface:
  *   init(scene, config)   config: { boardX, boardY, boardSize, onAction }
@@ -158,7 +158,7 @@ function _drawLastMoveMarker(lastMove) {
   const from = _px(lastMove.from);
   const to   = _px(lastMove.to);
   const r    = Math.max(10, Math.round(_bs * 0.04));
-  const col  = lastMove.color === 'black' ? 0x991133 : 0xcccccc;
+  const col  = lastMove.color === 'black' ? 0xccaa44 : 0x444466;
   // Highlight rings on source and destination squares.
   gfx.lineStyle(3, col, 0.6);
   gfx.strokeCircle(from.x, from.y, r + 4);
@@ -215,22 +215,22 @@ function _drawPieces(board, selected, validDests, pendingJump) {
 
 function _drawPiece(gfx, px, py, r, color, alpha = 1) {
   if (color === 'black') {
-    // Bulgars: dark red/maroon.
-    gfx.fillStyle(0x8b1a2b, alpha);
+    // Bulgars: gold/cream (fortress defenders).
+    gfx.fillStyle(0xe8d090, alpha);
     gfx.fillCircle(px, py, r);
-    gfx.lineStyle(2, 0x550011, alpha);
+    gfx.lineStyle(2, 0x8b7030, alpha);
     gfx.strokeCircle(px, py, r);
     // Highlight glint.
-    gfx.fillStyle(0xcc3344, 0.4 * alpha);
+    gfx.fillStyle(0xfff8e0, 0.4 * alpha);
     gfx.fillCircle(px - r * 0.25, py - r * 0.25, r * 0.35);
   } else {
-    // Pirates: white.
-    gfx.fillStyle(0xf0f0f0, alpha);
+    // Pirates: dark/black.
+    gfx.fillStyle(0x222233, alpha);
     gfx.fillCircle(px, py, r);
-    gfx.lineStyle(1.5, 0x888888, alpha);
+    gfx.lineStyle(1.5, 0x000000, alpha);
     gfx.strokeCircle(px, py, r);
     // Highlight glint.
-    gfx.fillStyle(0xffffff, 0.4 * alpha);
+    gfx.fillStyle(0x555566, 0.4 * alpha);
     gfx.fillCircle(px - r * 0.2, py - r * 0.2, r * 0.3);
   }
 }
@@ -276,8 +276,9 @@ function _computeLegalDests(gameState, fromIdx, color) {
     }
     // During pendingJump, only capture moves.
     if (pendingJump !== null) return caps;
-    // Otherwise: captures + regular moves.
-    for (const c of caps) dests.push(c);
+    // If any captures exist, they are forced.
+    if (caps.length > 0) return caps;
+    // No captures: regular adjacent moves.
     for (const nb of ADJ[fromIdx]) {
       if (board[nb] === null) dests.push(nb);
     }
@@ -395,7 +396,7 @@ function _nearestPoint(px, py) {
 
 const piratesbulgarsRenderer = {
 
-  showPassButton: true,
+  showPassButton: false,
 
   init(scene, config) {
     _scene    = scene;
@@ -491,7 +492,7 @@ const piratesbulgarsRenderer = {
       return gameState.winner === 'white' ? '🏴‍☠️ PIRATES win!' : '⚔️ BULGARS win!';
     }
     if (gameState.pendingJump !== null) {
-      return '⚔️ BULGARS — continue jump or pass';
+      return '⚔️ BULGARS — must continue jumping';
     }
     const who = gameState.turn === 'white' ? '🏴‍☠️ PIRATES' : '⚔️ BULGARS';
     return `${who} to move`;
@@ -499,7 +500,7 @@ const piratesbulgarsRenderer = {
 
   formatTurnColor(gameState) {
     if (gameState.gameOver) return '#ffd700';
-    return gameState.turn === 'white' ? '#ffffff' : '#cc2244';
+    return gameState.turn === 'white' ? '#aabbcc' : '#eedd88';
   },
 
   formatCaptureText(gameState) {

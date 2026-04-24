@@ -137,7 +137,7 @@ function _drawLastMoveMarker(lastMove) {
   if (lastMove.type === 'move') {
     const from = _px(lastMove.from);
     const to   = _px(lastMove.to);
-    const col  = lastMove.color === 'black' ? 0xff8800 : 0xcccccc;
+    const col  = lastMove.color === 'black' ? 0x88aaff : 0xcccccc;
     // Line connecting from → to.
     gfx.lineStyle(2.5, col, 0.5);
     gfx.beginPath();
@@ -148,16 +148,11 @@ function _drawLastMoveMarker(lastMove) {
     gfx.lineStyle(3, col, 0.6);
     gfx.strokeCircle(from.x, from.y, r + 4);
     gfx.strokeCircle(to.x, to.y, r + 4);
-    // Filled dot on destination.
-    gfx.fillStyle(col, 0.35);
-    gfx.fillCircle(to.x, to.y, r);
   } else if (lastMove.type === 'place') {
     const p   = _px(lastMove.pointIndex);
-    const col = lastMove.color === 'black' ? 0xff8800 : 0xcccccc;
+    const col = lastMove.color === 'black' ? 0x88aaff : 0xcccccc;
     gfx.lineStyle(3, col, 0.6);
     gfx.strokeCircle(p.x, p.y, r + 4);
-    gfx.fillStyle(col, 0.35);
-    gfx.fillCircle(p.x, p.y, r);
   } else if (lastMove.type === 'remove') {
     const p = _px(lastMove.pointIndex);
     // Red ring to show where a piece was taken.

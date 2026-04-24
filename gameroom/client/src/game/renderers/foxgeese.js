@@ -54,6 +54,19 @@ const ADJ = COORDS.map(({ col, row }) => {
   return nb;
 });
 
+// Alquerque-style diagonal connections at the five 2×2-cell square centres.
+const _DIAG_CENTERS = [[3, 1], [1, 3], [3, 3], [5, 3], [3, 5]];
+for (const [cx, cy] of _DIAG_CENTERS) {
+  const ci = _IDX_MAP[`${cx},${cy}`];
+  for (const [dc, dr] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
+    const ni = _IDX_MAP[`${cx + dc},${cy + dr}`];
+    if (ni !== undefined) {
+      if (!ADJ[ci].includes(ni)) ADJ[ci].push(ni);
+      if (!ADJ[ni].includes(ci)) ADJ[ni].push(ci);
+    }
+  }
+}
+
 // ─── Renderer state ───────────────────────────────────────────────────────────
 
 let _scene    = null;
@@ -236,16 +249,17 @@ function _computeLegalDests(gameState, fromIdx, color) {
   const dests       = [];
 
   if (color === 'black') {
-    // Fox: check forced captures first.
+    // Fox: check forced captures first (supports orthogonal + diagonal jumps).
     const { col: fc, row: fr } = COORDS[fromIdx];
     const caps = [];
-    for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
-      const midKey  = `${fc + dc},${fr + dr}`;
-      const toKey   = `${fc + 2 * dc},${fr + 2 * dr}`;
-      const midIdx  = _IDX_MAP[midKey];
-      const toIdx   = _IDX_MAP[toKey];
-      if (midIdx !== undefined && toIdx !== undefined &&
-          board[midIdx] === 'white' && board[toIdx] === null) {
+    for (const midIdx of ADJ[fromIdx]) {
+      if (board[midIdx] !== 'white') continue;
+      const { col: mc, row: mr } = COORDS[midIdx];
+      const dc = mc - fc;
+      const dr = mr - fr;
+      const toKey = `${fc + 2 * dc},${fr + 2 * dr}`;
+      const toIdx = _IDX_MAP[toKey];
+      if (toIdx !== undefined && board[toIdx] === null && ADJ[midIdx].includes(toIdx)) {
         caps.push(toIdx);
       }
     }
@@ -255,10 +269,9 @@ function _computeLegalDests(gameState, fromIdx, color) {
       if (board[nb] === null) dests.push(nb);
     }
   } else {
-    // Geese: forward or sideways.
-    const fromRow = COORDS[fromIdx].row;
+    // Geese: any direction along board lines.
     for (const nb of ADJ[fromIdx]) {
-      if (board[nb] === null && COORDS[nb].row >= fromRow) dests.push(nb);
+      if (board[nb] === null) dests.push(nb);
     }
   }
   return dests;
@@ -482,7 +495,7 @@ const foxgeeseRenderer = {
   },
 
   formatCaptureText(gameState) {
-    const remaining = 13 - gameState.geeseCaptured;
+    const remaining = 15 - gameState.geeseCaptured;
     return `Geese captured: ${gameState.geeseCaptured}   remaining: ${remaining}`;
   },
 
@@ -493,7 +506,7 @@ const foxgeeseRenderer = {
       title:  'GAME OVER',
       winner: foxWon ? '🦊 FOX wins!' : '🪿 GEESE win!',
       lines:  [
-        `Geese captured: ${gameState.geeseCaptured} / 13`,
+        `Geese captured: ${gameState.geeseCaptured} / 15`,
       ],
       buttons: [
         { label: 'New Game', actions: ['restart'] },

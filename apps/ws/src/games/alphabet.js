@@ -136,13 +136,6 @@ export function createAlphabetHost() {
         break;
       }
 
-      case 'advance_after_reveal': {
-        if (!ws.room) return;
-        const room = rooms.get(ws.room);
-        if (room) Sim.advanceAfterReveal(room.state);
-        break;
-      }
-
       case 'select_avatar': {
         if (!ws.room || !ws.playerId) return;
         const room = rooms.get(ws.room);

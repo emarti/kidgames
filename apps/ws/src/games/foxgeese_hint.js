@@ -5,7 +5,7 @@
  * Budget: up to 2000 iterations or 1500ms, whichever comes first.
  */
 
-import { legalMovesFor, COORDS } from './foxgeese_sim.js';
+import { legalMovesFor, COORDS, ADJACENCY } from './foxgeese_sim.js';
 
 const C              = 1.4;
 const MAX_ITER       = 2000;
@@ -80,15 +80,15 @@ function applyMove(s, move) {
 
 function _afterFoxMove(s, landIdx, wasCap) {
   if (wasCap) {
-    // Check for continuation captures from landing square.
+    // Check for continuation captures from landing square via ADJACENCY.
     const { col: lc, row: lr } = COORDS[landIdx];
-    for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
-      const midIdx  = _lookup(lc + dc,     lr + dr);
-      const landIdx2 = _lookup(lc + 2 * dc, lr + 2 * dr);
-      if (
-        midIdx >= 0 && landIdx2 >= 0 &&
-        s.board[midIdx] === 'white' && s.board[landIdx2] === null
-      ) {
+    for (const midIdx of ADJACENCY[landIdx]) {
+      if (s.board[midIdx] !== 'white') continue;
+      const { col: mc, row: mr } = COORDS[midIdx];
+      const dc = mc - lc;
+      const dr = mr - lr;
+      const toIdx = _lookup(lc + 2 * dc, lr + 2 * dr);
+      if (toIdx >= 0 && s.board[toIdx] === null && ADJACENCY[midIdx].includes(toIdx)) {
         s.pendingJump = landIdx;
         return; // More captures available — turn stays 'black'
       }
@@ -101,7 +101,7 @@ function _afterFoxMove(s, landIdx, wasCap) {
 
 function _checkWin(s) {
   if (s.gameOver) return;
-  if (s.geeseCaptured >= 10) {
+  if (s.geeseCaptured >= 11) {
     s.gameOver = true;
     s.winner   = 'black';
     return;

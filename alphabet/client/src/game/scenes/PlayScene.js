@@ -485,7 +485,6 @@ export default class PlayScene extends Phaser.Scene {
     // Word letters
     const word = state.currentWord ?? '';
     const missing = state.missingIndex ?? 0;
-    const revealed = state.autoReveal;
 
     // Compute max font size that fits
     const maxFontSize = Math.min(72, Math.floor((W * 0.85) / Math.max(word.length, 1) / 0.65));
@@ -503,15 +502,9 @@ export default class PlayScene extends Phaser.Scene {
       t.setPosition(startX + i * charW, WORD_Y);
 
       if (i === missing) {
-        if (revealed) {
-          // Show the answer in green
-          t.setText(word[i].toUpperCase());
-          t.setColor(flashColor ?? '#44ff88');
-        } else {
-          // Show underscore
-          t.setText('_');
-          t.setColor(flashColor ?? '#ffdd44');
-        }
+        // Show underscore
+        t.setText('_');
+        t.setColor(flashColor ?? '#ffdd44');
       } else {
         t.setText(word[i]);
         t.setColor(flashColor ?? '#e0e0f0');
@@ -814,7 +807,7 @@ export default class PlayScene extends Phaser.Scene {
     const prev = this._prevState;
 
     // Correct answer — play sound and freeze display on the completed word
-    if (prev && !state.celebrating && prev.wordsCompleted !== state.wordsCompleted && !state.autoReveal) {
+    if (prev && !state.celebrating && prev.wordsCompleted !== state.wordsCompleted) {
       const pid = state.lastTypedBy ?? 1;
       const colorInt = PLAYER_COLORS_INT[pid] ?? 0x44ff88;
       // Freeze: keep showing the *previous* word (fully revealed, all green) for 900ms
@@ -830,17 +823,9 @@ export default class PlayScene extends Phaser.Scene {
       this._playVisualCelebration();
     }
 
-    // Wrong answer (wrongAttempts went up but no autoReveal yet)
-    if (prev && !state.autoReveal && state.wrongAttempts > (prev.wrongAttempts ?? 0)) {
+    // Wrong answer — flash word red
+    if (prev && state.wrongAttempts > (prev.wrongAttempts ?? 0)) {
       this._flashWord('#ff4444');
-    }
-
-    // Auto-reveal — schedule advance after 1500ms
-    if (!prev?.autoReveal && state.autoReveal) {
-      if (this._revealTimer) this._revealTimer.remove();
-      this._revealTimer = this.time.delayedCall(1500, () => {
-        this.game.net.send('advance_after_reveal');
-      });
     }
 
     // Celebration started
@@ -888,7 +873,7 @@ export default class PlayScene extends Phaser.Scene {
         // Show the just-completed word fully revealed in green
         this._updateWordDisplayForFreeze(this._correctFreeze);
       } else {
-        this._updateWordDisplay(state, state.autoReveal ? '#44ff88' : null);
+        this._updateWordDisplay(state, null);
       }
     }
 

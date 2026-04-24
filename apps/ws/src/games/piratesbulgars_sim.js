@@ -32,7 +32,7 @@
  *   2 Bulgars at indices 28 (row 5, col 3) and 31 (row 6, col 3).
  *
  * Pirates move first. Pirates move only toward fortress (row ≥ current row).
- * Bulgars move any direction. Bulgars capture by jumping (optional, multi-jump allowed).
+ * Bulgars move any direction. Bulgars capture by jumping (forced, multi-jump required).
  *
  * Pirates win: fill all 9 fortress points OR both Bulgars have no legal moves.
  * Bulgars win: pirates reduced below 9 (can't fill fortress).
@@ -229,19 +229,25 @@ export function legalMovesFor(state, color) {
   if (state.gameOver) return moves;
 
   if (color === 'black') {
-    // Bulgars: move any direction or capture by jumping. Captures are optional.
+    // Bulgars: move any direction or capture by jumping. Captures are forced.
     if (state.pendingJump !== null) {
       // Mid multi-jump: only capture moves from the pending position.
       const caps = _bulgarCaptures(state.board, state.pendingJump);
       for (const { from, to } of caps) moves.push({ type: 'move', from, to });
       return moves;
     }
+    // Collect all captures across all bulgars.
+    const allCaps = [];
     for (let i = 0; i < 33; i++) {
       if (state.board[i] !== 'black') continue;
-      // Captures.
       const caps = _bulgarCaptures(state.board, i);
-      for (const { from, to } of caps) moves.push({ type: 'move', from, to });
-      // Regular adjacent moves.
+      for (const { from, to } of caps) allCaps.push({ type: 'move', from, to });
+    }
+    // If any captures exist, they are forced.
+    if (allCaps.length > 0) return allCaps;
+    // No captures: regular adjacent moves.
+    for (let i = 0; i < 33; i++) {
+      if (state.board[i] !== 'black') continue;
       for (const nb of ADJACENCY[i]) {
         if (state.board[nb] === null) moves.push({ type: 'move', from: i, to: nb });
       }
@@ -321,12 +327,16 @@ export function movePiece(state, pid, from, to) {
   return { ok: true };
 }
 
-/** End multi-jump voluntarily (bulgars only, since captures are optional). */
+/** End multi-jump (bulgars only). Only allowed when no further captures exist. */
 export function endJump(state, pid) {
   if (state.gameOver) return { ok: false, error: 'Game is over' };
   if (state.pendingJump === null) return { ok: false, error: 'No pending jump' };
   const color = state.players[pid]?.color;
   if (color !== 'black') return { ok: false, error: 'Not your turn' };
+
+  // Forced capture: cannot end jump if captures remain.
+  const caps = _bulgarCaptures(state.board, state.pendingJump);
+  if (caps.length > 0) return { ok: false, error: 'Must continue capturing' };
 
   _pushSnapshot(state);
   state.pendingJump = null;

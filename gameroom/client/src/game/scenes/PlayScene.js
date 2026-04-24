@@ -122,6 +122,10 @@ export default class PlayScene extends NetScene {
       ...FONT, fontSize: '13px', color: '#666677',
     }).setOrigin(0, 0).setDepth(20);
 
+    this._playersText = this.add.text(8, 24, '', {
+      ...FONT, fontSize: '12px', color: '#556666',
+    }).setOrigin(0, 0).setDepth(20);
+
     const by = this._botBarY;
     const sp = Math.min(118, this._W * 0.22);
 
@@ -333,6 +337,12 @@ export default class PlayScene extends NetScene {
     this._turnText.setColor(renderer.formatTurnColor(gameState));
     this._captureText.setText(renderer.formatCaptureText(gameState));
     if (this._roomText) this._roomText.setText(`Room ${this.game.net.roomId ?? ''}`);
+
+    // Player count.
+    if (this._playersText && state.players) {
+      const n = Object.values(state.players).filter(p => p.connected).length;
+      this._playersText.setText(`${n} player${n !== 1 ? 's' : ''} connected`);
+    }
 
     // Side panel.
     this._updateSidePanel(mySide);

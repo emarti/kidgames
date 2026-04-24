@@ -9,7 +9,7 @@
  * State:
  *  { tick, paused, reasonPaused, levelIndex, wordIndex, wordOrder,
  *    currentWord, currentEmoji, missingIndex, wordsCompleted, wordsPerLevel,
- *    recentWords, autoReveal, celebrating, celebrateStart, lastTypedBy,
+ *    recentWords, celebrating, celebrateStart, lastTypedBy,
  *    wrongAttempts, players }
  */
 
@@ -271,7 +271,6 @@ function loadLevel(state, levelIndex) {
   state.celebrating = false;
   state.celebrateStart = 0;
   state.wrongAttempts = 0;
-  state.autoReveal = false;
   state.lastTypedBy = null;
 }
 
@@ -279,7 +278,6 @@ function advanceWord(state) {
   const level = LEVELS[state.levelIndex];
   state.wordIndex++;
   state.wrongAttempts = 0;
-  state.autoReveal = false;
 
   const rawIndex = state.wordOrder[state.wordIndex];
   const next = level.words[rawIndex];
@@ -308,7 +306,6 @@ export function newGameState() {
     celebrating: false,
     celebrateStart: 0,
     wrongAttempts: 0,
-    autoReveal: false,
     lastTypedBy: null,
     players: {
       1: makePlayer(1),
@@ -374,14 +371,12 @@ export function selectColor(state, playerId, color) {
  *
  * Returns:
  *  'correct'   — right letter, word advanced (or level complete)
- *  'revealed'  — wrong for 2nd time; answer auto-revealed, word will advance
- *  'wrong'     — first wrong attempt, player gets another try
+ *  'wrong'     — wrong attempt, player keeps trying
  *  'ignored'   — input rejected (paused, celebrating, etc.)
  */
 export function applyKey(state, playerId, key) {
   if (state.paused) return 'ignored';
   if (state.celebrating) return 'ignored';
-  if (state.autoReveal) return 'ignored'; // waiting for advance after reveal
 
   const k = String(key ?? '').toLowerCase();
   if (k.length !== 1 || !/[a-z]/.test(k)) return 'ignored';
@@ -402,8 +397,6 @@ export function applyKey(state, playerId, key) {
     if (state.wordsCompleted >= state.wordsPerLevel) {
       state.celebrating = true;
       state.celebrateStart = Date.now();
-      state.wrongAttempts = 0;
-      state.autoReveal = false;
     } else {
       advanceWord(state);
     }
@@ -411,35 +404,7 @@ export function applyKey(state, playerId, key) {
   } else {
     // ── Wrong ─────────────────────────────────────────────────────────────────
     state.wrongAttempts++;
-    if (state.wrongAttempts >= 2) {
-      // Auto-reveal: set autoReveal flag; client will show the answer briefly,
-      // then call advance_word to move on.
-      state.autoReveal = true;
-      return 'revealed';
-    }
     return 'wrong';
-  }
-}
-
-/**
- * advanceAfterReveal — called by client after showing the revealed letter
- * for a moment. Moves to the next word.
- */
-export function advanceAfterReveal(state) {
-  if (!state.autoReveal) return;
-  state.recentWords = [
-    { word: state.currentWord, emoji: state.currentEmoji, missingIndex: state.missingIndex, revealed: true },
-    ...state.recentWords,
-  ].slice(0, 6);
-  state.wordsCompleted++;
-
-  if (state.wordsCompleted >= state.wordsPerLevel) {
-    state.celebrating = true;
-    state.celebrateStart = Date.now();
-    state.wrongAttempts = 0;
-    state.autoReveal = false;
-  } else {
-    advanceWord(state);
   }
 }
 
