@@ -117,6 +117,7 @@ function _pushSnapshot(state) {
   });
   state.history.push(snap);
   if (state.history.length > 300) state.history.shift();
+  state.redoSnapshot = null;
 }
 
 function _opponent(color) {
@@ -205,6 +206,7 @@ export function newGameState() {
     winner: null,
     flyingAlways: false,
     history: [],
+    redoSnapshot: null,
     tick: 0,
   };
 }
@@ -297,8 +299,25 @@ export function removePiece(state, pid, pointIndex) {
 
 export function undoMove(state) {
   if (state.history.length === 0) return { ok: false, error: 'Nothing to undo' };
+  state.redoSnapshot = JSON.stringify({
+    board: state.board, turn: state.turn, phase: state.phase,
+    pendingRemove: state.pendingRemove, piecesInHand: state.piecesInHand,
+    piecesOnBoard: state.piecesOnBoard, captured: state.captured,
+    lastMove: state.lastMove, gameOver: state.gameOver, winner: state.winner, tick: state.tick,
+  });
   const snap = JSON.parse(state.history.pop());
-  // Preserve flyingAlways — it's a game option, not part of move history.
+  const flyingAlways = state.flyingAlways;
+  Object.assign(state, snap);
+  state.flyingAlways = flyingAlways;
+  state.tick++;
+  return { ok: true };
+}
+
+export function redoMove(state) {
+  if (!state.redoSnapshot) return { ok: false, error: 'Nothing to redo' };
+  _pushSnapshot(state);
+  const snap = JSON.parse(state.redoSnapshot);
+  state.redoSnapshot = null;
   const flyingAlways = state.flyingAlways;
   Object.assign(state, snap);
   state.flyingAlways = flyingAlways;

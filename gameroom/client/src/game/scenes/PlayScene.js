@@ -2,6 +2,7 @@ import goRenderer from '../renderers/go.js';
 import morrisRenderer from '../renderers/morris.js';
 import foxgeeseRenderer from '../renderers/foxgeese.js';
 import piratesbulgarsRenderer from '../renderers/piratesbulgars.js';
+import hexRenderer from '../renderers/hex.js';
 import NetScene from './NetScene.js';
 
 // ─── Renderer registry ────────────────────────────────────────────────────────
@@ -10,6 +11,7 @@ const RENDERERS = {
   morris:          morrisRenderer,
   foxgeese:        foxgeeseRenderer,
   piratesbulgars:  piratesbulgarsRenderer,
+  hex:             hexRenderer,
 };
 
 // ─── UI palette ───────────────────────────────────────────────────────────────
@@ -30,11 +32,15 @@ const BOARD_SIZE = 9; // used only for layout geometry
 export default class PlayScene extends NetScene {
   constructor() {
     super({ key: 'PlayScene' });
-    this._prevTick      = -1;
-    this._scoreOverlay  = null;
-    this._gameOverlay   = null;
-    this._activeRenderer  = null;
-    this._activeGameType  = null;
+    this._prevTick            = -1;
+    this._prevGameOver        = false;
+    this._scoreOverlay        = null;
+    this._gameOverlay         = null;
+    this._activeRenderer      = null;
+    this._activeGameType      = null;
+    this._celebrationTimer    = null;
+    this._celebrationParticles = [];
+    this._pendingGoInfo       = null;
   }
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
@@ -45,11 +51,15 @@ export default class PlayScene extends NetScene {
     if (this._activeRenderer) {
       this._activeRenderer.shutdown();
     }
-    this._activeRenderer  = null;
-    this._activeGameType  = null;
-    this._prevTick        = -1;
-    this._scoreOverlay    = null;
-    this._gameOverlay     = null;
+    this._activeRenderer      = null;
+    this._activeGameType      = null;
+    this._prevTick            = -1;
+    this._prevGameOver        = false;
+    this._scoreOverlay        = null;
+    this._gameOverlay         = null;
+    this._celebrationTimer    = null;
+    this._celebrationParticles = [];
+    this._pendingGoInfo       = null;
 
     // Register shutdown so Phaser calls it when the scene stops.
     this.events.once('shutdown', this.shutdown, this);
@@ -129,11 +139,15 @@ export default class PlayScene extends NetScene {
     const by = this._botBarY;
     const sp = Math.min(118, this._W * 0.22);
 
-    this._undoBtn = this._btn(cx - sp * 1.5, by, '↩ UNDO',  BTN_UNDO_BG,  BTN_UNDO_HOV,  () => this._onUndo());
-    this._passBtn = this._btn(cx - sp * 0.5, by, 'PASS',     BTN_PASS_BG,  BTN_PASS_HOV,  () => this._onPass());
-    this._hintBtn = this._btn(cx + sp * 0.5, by, '💡 HINT',  '#1a3a6a',    '#2a5a9a',     () => this._onHint());
-    this._menuBtn = this._btn(cx + sp * 1.5, by, '⏸ PAUSE',  BTN_MENU_BG,  BTN_MENU_HOV,  () => this._openOverlay('pause'));
+    this._undoBtn = this._btn(cx - sp * 2, by, '↩ UNDO',  BTN_UNDO_BG,  BTN_UNDO_HOV,  () => this._onUndo());
+    this._redoBtn = this._btn(cx - sp * 1, by, '↪ REDO',  BTN_PASS_BG,  BTN_PASS_HOV,  () => this._onRedo());
+    this._passBtn = this._btn(cx,          by, 'PASS',     BTN_PASS_BG,  BTN_PASS_HOV,  () => this._onPass());
+    this._hintBtn = this._btn(cx + sp * 1, by, '💡 HINT',  '#1a3a6a',    '#2a5a9a',     () => this._onHint());
+    this._menuBtn = this._btn(cx + sp * 2, by, '⏸ PAUSE',  BTN_MENU_BG,  BTN_MENU_HOV,  () => this._openOverlay('pause'));
     this._undoBtn.setDepth(20);
+    this._redoBtn.setDepth(20);
+    this._redoBtn.setAlpha(0.4);
+    this._redoBtn.disableInteractive();
     this._passBtn.setDepth(20);
     this._hintBtn.setDepth(20);
     this._menuBtn.setDepth(20);
@@ -226,12 +240,17 @@ export default class PlayScene extends NetScene {
 
   _setupInput() {
     this.input.keyboard.on('keydown-U', () => this._onUndo());
+    this.input.keyboard.on('keydown-R', () => this._onRedo());
     this.input.keyboard.on('keydown-P', () => this._onPass());
     this.input.keyboard.on('keydown-ESC', () => this._openOverlay('pause'));
   }
 
   _onUndo() {
     this.game.net.send('undo_move');
+  }
+
+  _onRedo() {
+    this.game.net.send('redo_move');
   }
 
   _onPass() {
@@ -292,6 +311,7 @@ export default class PlayScene extends NetScene {
     this._activeRenderer  = renderer;
     this._activeGameType  = gameType;
     this._prevTick        = -1;
+    this._prevGameOver    = false;
 
     // Pass button visibility.
     this._passBtn.setVisible(renderer.showPassButton);
@@ -353,6 +373,11 @@ export default class PlayScene extends NetScene {
     if (hasHistory) this._undoBtn.setInteractive({ useHandCursor: true });
     else this._undoBtn.disableInteractive();
 
+    const hasRedo = !!gameState.redoSnapshot;
+    this._redoBtn.setAlpha(hasRedo ? 1 : 0.4);
+    if (hasRedo) this._redoBtn.setInteractive({ useHandCursor: true });
+    else this._redoBtn.disableInteractive();
+
     if (renderer.showPassButton) {
       // For piratesbulgars, only show pass when there's a pending multi-jump.
       const showPass = gameType === 'piratesbulgars'
@@ -369,13 +394,99 @@ export default class PlayScene extends NetScene {
     // Draw the game board.
     renderer.draw(gameState, ctx);
 
-    // Game-over overlay.
+    // Game-over overlay — with 2s celebration delay on first trigger.
     const goInfo = renderer.getGameOverInfo(gameState);
+    const justEnded = goInfo && !this._prevGameOver;
+    this._prevGameOver = !!goInfo;
+
     if (goInfo) {
-      this._showGameOverOverlay(goInfo);
+      if (justEnded) {
+        // First frame of game over — launch celebration, delay overlay by 2s.
+        this._pendingGoInfo = goInfo;
+        this._startCelebration();
+      } else if (!this._celebrationTimer && !this._scoreOverlay) {
+        // Celebration already finished (or was skipped) — show overlay.
+        this._showGameOverOverlay(goInfo);
+      }
     } else {
+      this._prevGameOver = false;
+      this._stopCelebration();
       this._hideScoreOverlay();
     }
+  }
+
+  // ─── Victory celebration ────────────────────────────────────────────────────
+
+  _startCelebration() {
+    this._stopCelebration();
+    const { width: W, height: H } = this.scale;
+    const cx = W / 2;
+    const cy = H / 2;
+
+    const COLORS = [0xffd700, 0xff4466, 0x44ddff, 0x88ff44, 0xff8800, 0xcc44ff, 0xffffff];
+    const COUNT = 60;
+
+    for (let i = 0; i < COUNT; i++) {
+      const angle  = Math.random() * Math.PI * 2;
+      const speed  = 120 + Math.random() * 260;
+      const size   = 5 + Math.random() * 10;
+      const color  = COLORS[Math.floor(Math.random() * COLORS.length)];
+      const isRect = Math.random() < 0.4;
+
+      const obj = isRect
+        ? this.add.rectangle(cx, cy, size, size * 1.6, color).setDepth(48)
+        : this.add.circle(cx, cy, size / 2, color).setDepth(48);
+
+      const destX = cx + Math.cos(angle) * speed * (1.2 + Math.random());
+      const destY = cy + Math.sin(angle) * speed * (1.2 + Math.random());
+
+      this.tweens.add({
+        targets: obj,
+        x: destX,
+        y: destY,
+        alpha: 0,
+        scaleX: 0.3 + Math.random() * 0.7,
+        scaleY: 0.3 + Math.random() * 0.7,
+        duration: 1600 + Math.random() * 400,
+        delay: Math.random() * 200,
+        ease: 'Quad.easeOut',
+      });
+
+      this._celebrationParticles.push(obj);
+    }
+
+    // Central flash star.
+    const flash = this.add.text(cx, cy - 30, '✦', {
+      fontSize: '80px', color: '#ffd700', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(48).setAlpha(0);
+    this.tweens.add({
+      targets: flash,
+      alpha: { from: 0, to: 1 },
+      scaleX: { from: 0.1, to: 1.5 },
+      scaleY: { from: 0.1, to: 1.5 },
+      yoyo: true,
+      duration: 500,
+      ease: 'Back.easeOut',
+    });
+    this._celebrationParticles.push(flash);
+
+    this._celebrationTimer = this.time.delayedCall(2000, () => {
+      this._celebrationTimer = null;
+      this._stopCelebration();
+      if (this._pendingGoInfo) {
+        this._showGameOverOverlay(this._pendingGoInfo);
+        this._pendingGoInfo = null;
+      }
+    });
+  }
+
+  _stopCelebration() {
+    if (this._celebrationTimer) {
+      this._celebrationTimer.remove();
+      this._celebrationTimer = null;
+    }
+    for (const p of this._celebrationParticles) p.destroy();
+    this._celebrationParticles = [];
   }
 
   // ─── Generic game-over overlay ──────────────────────────────────────────────
@@ -460,6 +571,9 @@ export default class PlayScene extends NetScene {
   }
 
   _hideScoreOverlay() {
+    this._stopCelebration();
+    this._prevGameOver  = false;
+    this._pendingGoInfo = null;
     if (this._scoreOverlay) {
       this._scoreOverlay.destroy(true);
       this._scoreOverlay = null;
@@ -483,7 +597,9 @@ export default class PlayScene extends NetScene {
     const panelW = Math.min(W * 0.82, 320);
     const isMorris = (st?.gameType === 'morris');
     const flyingOn = isMorris && (st?.game?.flyingAlways ?? false);
-    const panelH = 230 + (isMorris ? 46 : 0);
+    const isHex = (st?.gameType === 'hex');
+    const hexSize = isHex ? (st?.game?.boardSize ?? 11) : 11;
+    const panelH = 230 + (isMorris ? 46 : 0) + (isHex ? 46 : 0);
     const cy     = H / 2;
     const top    = cy - panelH / 2;
     const panel  = this.add.rectangle(cx, cy, panelW, panelH, 0x16213e)
@@ -509,6 +625,12 @@ export default class PlayScene extends NetScene {
         bg:  flyingOn ? '#1a3a4a' : '#3a2a10',
         hov: flyingOn ? '#2a5a6a' : '#5a4a30',
         cb: () => { this.game.net.send('toggle_flying'); this._hideOverlay(); },
+      }] : []),
+      ...(isHex ? [{
+        label: hexSize === 11 ? '⬡ Board: 11×11' : '⬡ Board: 9×9',
+        bg:  '#1a3a4a',
+        hov: '#2a5a6a',
+        cb: () => { this.game.net.send('toggle_hex_size'); this._hideOverlay(); },
       }] : []),
       { label: '←  Game Select', bg: '#333355', hov: '#555577', cb: () => { this._hideOverlay(); this.scene.start('GameSelectScene'); } },
       { label: '⌂  Main Menu', bg: '#333333', hov: '#555555', cb: () => { this._hideOverlay(); this.scene.start('MenuScene'); } },
@@ -548,6 +670,7 @@ export default class PlayScene extends NetScene {
 
   shutdown() {
     super.shutdown();
+    this._stopCelebration();
     if (this._activeRenderer) {
       this._activeRenderer.shutdown();
       this._activeRenderer = null;

@@ -37,7 +37,7 @@ const GAMES = [
   { id: 'morris',   label: "Nine Men's Morris", icon: '⬡',  desc: 'mills and blocking',             implemented: true  },
   { id: 'cchk',     label: 'Chinese Checkers',  icon: '✦',  desc: 'star board · hop to the other side', implemented: false },
   { id: 'foxgeese', label: 'Fox & Geese',       icon: '🦊', desc: 'asymmetric · fox vs geese',     implemented: true  },
-  { id: 'hex',      label: 'Hex',               icon: '⬡',  desc: '11×11 · connect your sides',    implemented: false },
+  { id: 'hex',      label: 'Hex',               icon: '⬡',  desc: '11×11 · connect your sides',    implemented: true  },
   { id: 'piratesbulgars', label: 'Pirates & Bulgars', icon: '🏴‍☠️', desc: 'asymmetric · swarm the fortress', implemented: true },
 ];
 

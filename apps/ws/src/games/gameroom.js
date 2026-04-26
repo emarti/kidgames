@@ -13,6 +13,7 @@ import { suggestMove as goHintSuggest } from './go_hint.js';
 import * as MorrisSim from './morris_sim.js';
 import * as FoxGeeseSim from './foxgeese_sim.js';
 import * as PiratesBulgarsSim from './piratesbulgars_sim.js';
+import * as HexSim from './hex_sim.js';
 import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -45,7 +46,7 @@ import {
 // ─── Game registry ────────────────────────────────────────────────────────────
 
 const GAME_TYPES = ['go', 'checkers', 'chess', 'morris', 'cchk', 'foxgeese', 'hex', 'piratesbulgars'];
-const IMPLEMENTED = new Set(['go', 'morris', 'foxgeese', 'piratesbulgars']);
+const IMPLEMENTED = new Set(['go', 'morris', 'foxgeese', 'piratesbulgars', 'hex']);
 
 // Build initial sim state for a given game type.
 function newGameSimState(gameType) {
@@ -53,6 +54,7 @@ function newGameSimState(gameType) {
   if (gameType === 'morris')          return MorrisSim.newGameState();
   if (gameType === 'foxgeese')        return FoxGeeseSim.newGameState();
   if (gameType === 'piratesbulgars')  return PiratesBulgarsSim.newGameState();
+  if (gameType === 'hex')             return HexSim.newGameState();
   // Placeholder: other games return null until their sim modules are added.
   return null;
 }
@@ -136,6 +138,8 @@ export function createGameRoomHost() {
         FoxGeeseSim.setPlayerConnected(room.state.game, ws.playerId, false);
       } else if (room.state.gameType === 'piratesbulgars' && room.state.game) {
         PiratesBulgarsSim.setPlayerConnected(room.state.game, ws.playerId, false);
+      } else if (room.state.gameType === 'hex' && room.state.game) {
+        HexSim.setPlayerConnected(room.state.game, ws.playerId, false);
       }
     }
     room.updatedAt = nowMs();
@@ -214,10 +218,12 @@ export function createGameRoomHost() {
           FoxGeeseSim.setPlayerConnected(room.state.game, pid, true);
         } else if (room.state.gameType === 'piratesbulgars' && room.state.game) {
           PiratesBulgarsSim.setPlayerConnected(room.state.game, pid, true);
+        } else if (room.state.gameType === 'hex' && room.state.game) {
+          HexSim.setPlayerConnected(room.state.game, pid, true);
         }
 
         // Auto-assign a side if none is taken yet (player can always change it).
-        const _joinSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim };
+        const _joinSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim, hex: HexSim };
         if (_joinSims[room.state.gameType] && room.state.game) {
           const Sim = _joinSims[room.state.gameType];
           const playerList = Object.values(room.state.players);
@@ -257,7 +263,7 @@ export function createGameRoomHost() {
         // Reset all player sides when game changes.
         for (const p of [1, 2, 3, 4]) room.state.players[p].side = null;
         // Re-sync player connections into the new sim.
-        const _selectSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim };
+        const _selectSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim, hex: HexSim };
         if (_selectSims[gameType]) {
           const Sim = _selectSims[gameType];
           for (const p of [1, 2, 3, 4]) {
@@ -289,7 +295,7 @@ export function createGameRoomHost() {
         room.state.players[ws.playerId].side = side;
         // Sync into the active sim's own player state.
         // 'both' is a room-level concept; the sim gets null (spectator/unset).
-        const _sideSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim };
+        const _sideSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim, hex: HexSim };
         if (_sideSims[room.state.gameType]) {
           const simColor = (side === 'both') ? null : side;
           _sideSims[room.state.gameType].selectColor(room.state.game, ws.playerId, simColor);
@@ -366,12 +372,23 @@ export function createGameRoomHost() {
       case 'place_stone': {
         if (!ws.room || !ws.playerId) return;
         const room = rooms.get(ws.room);
-        if (!room || room.state.gameType !== 'go' || !room.state.game) return;
-        const x = Number(msg.x);
-        const y = Number(msg.y);
-        const result = withBothSide(room, ws, room.state.game.turn, () =>
-          GoSim.placeStone(room.state.game, ws.playerId, x, y)
-        );
+        if (!room || !room.state.game) return;
+        let result;
+        if (room.state.gameType === 'go') {
+          const x = Number(msg.x);
+          const y = Number(msg.y);
+          result = withBothSide(room, ws, room.state.game.turn, () =>
+            GoSim.placeStone(room.state.game, ws.playerId, x, y)
+          );
+        } else if (room.state.gameType === 'hex') {
+          const row = Number(msg.row);
+          const col = Number(msg.col);
+          result = withBothSide(room, ws, room.state.game.turn, () =>
+            HexSim.placeStone(room.state.game, ws.playerId, row, col)
+          );
+        } else {
+          return;
+        }
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
         room.state.tick++;
         room.updatedAt = nowMs();
@@ -402,7 +419,26 @@ export function createGameRoomHost() {
         else if (room.state.gameType === 'morris')   result = MorrisSim.undoMove(room.state.game);
         else if (room.state.gameType === 'foxgeese') result = FoxGeeseSim.undoMove(room.state.game);
         else if (room.state.gameType === 'piratesbulgars') result = PiratesBulgarsSim.undoMove(room.state.game);
+        else if (room.state.gameType === 'hex')      result = HexSim.undoMove(room.state.game);
         else result = { ok: false, error: 'Undo not yet implemented for this game' };
+        if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
+        room.state.tick++;
+        room.updatedAt = nowMs();
+        safeBroadcast(room, { type: 'state', state: room.state });
+        break;
+      }
+
+      case 'redo_move': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (!room || !room.state.game) return;
+        let result;
+        if (room.state.gameType === 'go')           result = GoSim.redoMove(room.state.game);
+        else if (room.state.gameType === 'morris')   result = MorrisSim.redoMove(room.state.game);
+        else if (room.state.gameType === 'foxgeese') result = FoxGeeseSim.redoMove(room.state.game);
+        else if (room.state.gameType === 'piratesbulgars') result = PiratesBulgarsSim.redoMove(room.state.game);
+        else if (room.state.gameType === 'hex')      result = HexSim.redoMove(room.state.game);
+        else result = { ok: false, error: 'Redo not yet implemented for this game' };
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
         room.state.tick++;
         room.updatedAt = nowMs();
@@ -418,6 +454,7 @@ export function createGameRoomHost() {
         else if (room.state.gameType === 'morris')   MorrisSim.resetGame(room.state.game);
         else if (room.state.gameType === 'foxgeese') FoxGeeseSim.resetGame(room.state.game);
         else if (room.state.gameType === 'piratesbulgars') PiratesBulgarsSim.resetGame(room.state.game);
+        else if (room.state.gameType === 'hex')      HexSim.resetGame(room.state.game);
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
@@ -431,6 +468,17 @@ export function createGameRoomHost() {
         room.state.game.flyingAlways = !room.state.game.flyingAlways;
         MorrisSim.refreshPhase(room.state.game);
         room.state.tick++;
+        room.updatedAt = nowMs();
+        safeBroadcast(room, { type: 'state', state: room.state });
+        break;
+      }
+
+      case 'toggle_hex_size': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (!room || room.state.gameType !== 'hex' || !room.state.game) return;
+        const newSize = room.state.game.boardSize === 11 ? 9 : 11;
+        HexSim.setBoardSize(room.state.game, newSize);
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
         break;
@@ -464,6 +512,10 @@ export function createGameRoomHost() {
           mctsInWorker('./piratesbulgars_hint.js', snap)
             .then((result) => { if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null }); })
             .catch((e) => { console.error('[gameroom] piratesbulgars hint error', e); if (ws.room) safeBroadcast(room, { type: 'hint', move: null }); });
+        } else if (room.state.gameType === 'hex') {
+          mctsInWorker('./hex_hint.js', snap)
+            .then((result) => { if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null }); })
+            .catch((e) => { console.error('[gameroom] hex hint error', e); if (ws.room) safeBroadcast(room, { type: 'hint', move: null }); });
         }
         break;
       }

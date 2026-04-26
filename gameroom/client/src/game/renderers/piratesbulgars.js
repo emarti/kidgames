@@ -520,6 +520,7 @@ const piratesbulgarsRenderer = {
       ],
       buttons: [
         { label: 'New Game', actions: ['restart'] },
+        { label: 'Continue', actions: ['undo_move', 'undo_move'] },
       ],
     };
   },

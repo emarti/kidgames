@@ -10,6 +10,7 @@ export function newGameState() {
     captures: { black: 0, white: 0 },
     // Each history entry: { board, boardStr, turn, captures, lastMove, passCount }
     history: [],
+    redoSnapshot: null,
     lastMove: null,   // null | { x, y } | 'pass'
     passCount: 0,
     gameOver: false,
@@ -188,6 +189,17 @@ export function passTurn(state, pid) {
 export function undoMove(state) {
   if (state.history.length === 0) return { ok: false, error: 'Nothing to undo' };
 
+  state.redoSnapshot = {
+    board: copyBoard(state.board),
+    boardStr: boardToString(state.board),
+    turn: state.turn,
+    captures: { ...state.captures },
+    lastMove: state.lastMove,
+    passCount: state.passCount,
+    gameOver: state.gameOver,
+    score: state.score,
+  };
+
   const snapshot = state.history.pop();
   state.board = snapshot.board;
   state.turn = snapshot.turn;
@@ -201,12 +213,29 @@ export function undoMove(state) {
   return { ok: true };
 }
 
+export function redoMove(state) {
+  if (!state.redoSnapshot) return { ok: false, error: 'Nothing to redo' };
+  _pushSnapshot(state);
+  const snap = state.redoSnapshot;
+  state.redoSnapshot = null;
+  state.board = snap.board;
+  state.turn = snap.turn;
+  state.captures = { ...snap.captures };
+  state.lastMove = snap.lastMove;
+  state.passCount = snap.passCount;
+  state.gameOver = snap.gameOver ?? false;
+  state.score = snap.score ?? null;
+  state.tick++;
+  return { ok: true };
+}
+
 export function resetGame(state) {
   const size = state.boardSize;
   state.board = Array.from({ length: size }, () => Array(size).fill(null));
   state.turn = 'black';
   state.captures = { black: 0, white: 0 };
   state.history = [];
+  state.redoSnapshot = null;
   state.lastMove = null;
   state.passCount = 0;
   state.gameOver = false;
@@ -299,4 +328,5 @@ function _pushSnapshot(state) {
   });
   // Keep history bounded — 300 moves is plenty for any game of Go.
   if (state.history.length > 300) state.history.shift();
+  state.redoSnapshot = null;
 }

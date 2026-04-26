@@ -133,6 +133,7 @@ function _pushSnapshot(state) {
   });
   state.history.push(snap);
   if (state.history.length > 300) state.history.shift();
+  state.redoSnapshot = null;
 }
 
 /** Called after a fox move.  Handles multi-jump and turn advance. */
@@ -195,6 +196,7 @@ export function newGameState() {
     gameOver:  false,
     winner:    null,
     history:   [],
+    redoSnapshot: null,
     tick:      0,
   };
 }
@@ -311,7 +313,22 @@ export function movePiece(state, pid, from, to) {
 
 export function undoMove(state) {
   if (state.history.length === 0) return { ok: false, error: 'Nothing to undo' };
+  state.redoSnapshot = JSON.stringify({
+    board: state.board, turn: state.turn, pendingJump: state.pendingJump,
+    geeseCaptured: state.geeseCaptured, players: state.players,
+    lastMove: state.lastMove, gameOver: state.gameOver, winner: state.winner, tick: state.tick,
+  });
   const snap = JSON.parse(state.history.pop());
+  Object.assign(state, snap);
+  state.tick++;
+  return { ok: true };
+}
+
+export function redoMove(state) {
+  if (!state.redoSnapshot) return { ok: false, error: 'Nothing to redo' };
+  _pushSnapshot(state);
+  const snap = JSON.parse(state.redoSnapshot);
+  state.redoSnapshot = null;
   Object.assign(state, snap);
   state.tick++;
   return { ok: true };
