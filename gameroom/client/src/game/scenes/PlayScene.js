@@ -186,6 +186,7 @@ export default class PlayScene extends NetScene {
     this._sidePanelTxts   = {};
     this._sidePanelFg     = {};
     this._sidePanelStroke = {};
+    this._sidePanelDefLabels = {};
 
     for (const opt of sideOptions) {
       const bg  = this.add.rectangle(x, y, bw, bh, opt.fill)
@@ -203,6 +204,7 @@ export default class PlayScene extends NetScene {
       this._sidePanelTxts[opt.id]   = lbl;
       this._sidePanelFg[opt.id]     = opt.fg;
       this._sidePanelStroke[opt.id] = opt.stroke;
+      this._sidePanelDefLabels[opt.id] = opt.label;
       y += bh + gap;
     }
   }
@@ -214,6 +216,7 @@ export default class PlayScene extends NetScene {
 
   _updateSidePanel(mySide) {
     if (!this._sidePanelBgs) return;
+    const custom = this._activeRenderer?.sideLabels;
     for (const id of ['black', 'white', 'both']) {
       const bg  = this._sidePanelBgs[id];
       const lbl = this._sidePanelTxts[id];
@@ -221,6 +224,8 @@ export default class PlayScene extends NetScene {
       const sel = mySide === id;
       bg.setStrokeStyle(sel ? 3 : 1, sel ? 0xffd700 : this._sidePanelStroke[id]);
       lbl.setColor(sel ? '#ffd700' : this._sidePanelFg[id]);
+      if (custom && custom[id]) lbl.setText(custom[id]);
+      else lbl.setText(this._sidePanelDefLabels[id]);
     }
   }
 

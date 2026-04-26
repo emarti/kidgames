@@ -524,7 +524,7 @@ export function createGameRoomHost() {
         if (!ws.room || !ws.playerId) return;
         const room = rooms.get(ws.room);
         if (!room || room.state.gameType !== 'piratesbulgars' || !room.state.game) return;
-        const result = withBothSide(room, ws, 'black', () =>
+        const result = withBothSide(room, ws, 'white', () =>
           PiratesBulgarsSim.endJump(room.state.game, ws.playerId)
         );
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }

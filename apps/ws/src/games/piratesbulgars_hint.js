@@ -46,18 +46,18 @@ function cloneState(state) {
 }
 
 function applyMove(s, move) {
-  const actingColor = s.pendingJump !== null ? 'black' : s.turn;
+  const actingColor = s.pendingJump !== null ? 'white' : s.turn;
   const { from, to } = move;
 
   let captured = false;
-  if (actingColor === 'black') {
+  if (actingColor === 'white') {
     const { col: bc, row: br } = COORDS[from];
     const { col: tc, row: tr } = COORDS[to];
     const dc = tc - bc;
     const dr = tr - br;
     if (Math.abs(dc) === 2 || Math.abs(dr) === 2) {
       const midIdx = _lookup(bc + dc / 2, br + dr / 2);
-      if (midIdx >= 0 && s.board[midIdx] === 'white') {
+      if (midIdx >= 0 && s.board[midIdx] === 'black') {
         s.board[midIdx] = null;
         s.piratesCaptured++;
         captured = true;
@@ -68,10 +68,10 @@ function applyMove(s, move) {
   s.board[from] = null;
   s.board[to]   = actingColor;
 
-  if (actingColor === 'black') {
+  if (actingColor === 'white') {
     _afterBulgarMove(s, to, captured);
   } else {
-    s.turn = 'black';
+    s.turn = 'white';
     _checkWin(s);
   }
 }
@@ -80,7 +80,7 @@ function _bulgarCaptures(board, bulgarIdx) {
   const caps = [];
   const { col: bc, row: br } = COORDS[bulgarIdx];
   for (const midIdx of ADJACENCY[bulgarIdx]) {
-    if (board[midIdx] !== 'white') continue;
+    if (board[midIdx] !== 'black') continue;
     const { col: mc, row: mr } = COORDS[midIdx];
     const dc = mc - bc;
     const dr = mr - br;
@@ -104,32 +104,32 @@ function _afterBulgarMove(s, landIdx, wasCap) {
     }
   }
   s.pendingJump = null;
-  s.turn = 'white';
+  s.turn = 'black';
   _checkWin(s);
 }
 
 function _checkWin(s) {
   if (s.gameOver) return;
-  const pirateCount = s.board.filter(c => c === 'white').length;
+  const pirateCount = s.board.filter(c => c === 'black').length;
   if (pirateCount < 9) {
-    s.gameOver = true;
-    s.winner   = 'black';
-    return;
-  }
-  let fortressFilled = true;
-  for (const idx of FORTRESS) {
-    if (s.board[idx] !== 'white') { fortressFilled = false; break; }
-  }
-  if (fortressFilled) {
     s.gameOver = true;
     s.winner   = 'white';
     return;
   }
-  if (s.turn === 'black' && s.pendingJump === null) {
-    const moves = legalMovesFor(s, 'black');
+  let fortressFilled = true;
+  for (const idx of FORTRESS) {
+    if (s.board[idx] !== 'black') { fortressFilled = false; break; }
+  }
+  if (fortressFilled) {
+    s.gameOver = true;
+    s.winner   = 'black';
+    return;
+  }
+  if (s.turn === 'white' && s.pendingJump === null) {
+    const moves = legalMovesFor(s, 'white');
     if (moves.length === 0) {
       s.gameOver = true;
-      s.winner   = 'white';
+      s.winner   = 'black';
     }
   }
 }
@@ -153,11 +153,11 @@ function rollout(s, rootColor) {
   }
 
   // Non-terminal heuristic.
-  if (rootColor === 'white') {
+  if (rootColor === 'black') {
     // Pirates: reward filling fortress points.
     let filled = 0;
     for (const idx of FORTRESS) {
-      if (s.board[idx] === 'white') filled++;
+      if (s.board[idx] === 'black') filled++;
     }
     return filled / 9;
   } else {
@@ -169,7 +169,7 @@ function rollout(s, rootColor) {
 // ─── UCT search ──────────────────────────────────────────────────────────────
 
 export function suggestMove(state) {
-  const actingColor = state.pendingJump !== null ? 'black' : state.turn;
+  const actingColor = state.pendingJump !== null ? 'white' : state.turn;
   if (!actingColor) return { move: null };
 
   const rootMoves = legalMovesFor(state, actingColor);

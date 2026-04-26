@@ -223,9 +223,8 @@ export function undoMove(state) {
 
 export function redoMove(state) {
   if (!state.redoSnapshot) return { ok: false, error: 'Nothing to redo.' };
-  _pushSnapshot(state);
   const snap = state.redoSnapshot;
-  state.redoSnapshot = null;
+  _pushSnapshot(state);
   state.board = snap.board;
   state.turn = snap.turn;
   state.moveCount = snap.moveCount;

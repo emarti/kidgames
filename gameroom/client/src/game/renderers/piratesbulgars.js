@@ -1,6 +1,6 @@
 /**
  * piratesbulgars.js — Phaser 3 renderer for Pirates and Bulgars.
- * Pirates = 'white' (dark/black pieces), Bulgars = 'black' (gold/cream pieces).
+ * Pirates = 'black' (dark/black pieces), Bulgars = 'white' (gold/cream pieces).
  *
  * Renderer interface:
  *   init(scene, config)   config: { boardX, boardY, boardSize, onAction }
@@ -158,7 +158,7 @@ function _drawLastMoveMarker(lastMove) {
   const from = _px(lastMove.from);
   const to   = _px(lastMove.to);
   const r    = Math.max(10, Math.round(_bs * 0.04));
-  const col  = lastMove.color === 'black' ? 0xccaa44 : 0x444466;
+  const col  = lastMove.color === 'white' ? 0xccaa44 : 0x444466;
   // Highlight rings on source and destination squares.
   gfx.lineStyle(3, col, 0.6);
   gfx.strokeCircle(from.x, from.y, r + 4);
@@ -181,7 +181,7 @@ function _drawPieces(board, selected, validDests, pendingJump) {
     const color = board[i];
     if (!color) continue;
     const p   = _px(i);
-    const r   = color === 'black' ? br : pr;
+    const r   = color === 'white' ? br : pr;
     const dim = (i === selected || i === pendingJump) ? 0.35 : 1;
 
     _drawPiece(gfx, p.x, p.y, r, color, dim);
@@ -214,7 +214,7 @@ function _drawPieces(board, selected, validDests, pendingJump) {
 }
 
 function _drawPiece(gfx, px, py, r, color, alpha = 1) {
-  if (color === 'black') {
+  if (color === 'white') {
     // Bulgars: gold/cream (fortress defenders).
     gfx.fillStyle(0xe8d090, alpha);
     gfx.fillCircle(px, py, r);
@@ -259,12 +259,12 @@ function _computeLegalDests(gameState, fromIdx, color) {
   const pendingJump = gameState.pendingJump;
   const dests       = [];
 
-  if (color === 'black') {
+  if (color === 'white') {
     // Bulgar: captures (jump) + regular moves.
     const { col: bc, row: br } = COORDS[fromIdx];
     const caps = [];
     for (const midIdx of ADJ[fromIdx]) {
-      if (board[midIdx] !== 'white') continue;
+      if (board[midIdx] !== 'black') continue;
       const { col: mc, row: mr } = COORDS[midIdx];
       const dc = mc - bc;
       const dr = mr - br;
@@ -298,12 +298,12 @@ function _onZoneDown(pointer, idx) {
   if (!g || g.gameOver || !ctx) return;
 
   const mySide      = ctx.mySide;
-  const actingColor = g.pendingJump !== null ? 'black' : g.turn;
+  const actingColor = g.pendingJump !== null ? 'white' : g.turn;
   if (mySide !== 'both' && mySide !== actingColor) return;
 
   // During pending multi-jump: only capture destination clicks are valid.
   if (g.pendingJump !== null) {
-    const dests = _computeLegalDests(g, g.pendingJump, 'black');
+    const dests = _computeLegalDests(g, g.pendingJump, 'white');
     if (dests.includes(idx)) {
       if (_onAction) _onAction('move_piece', { from: g.pendingJump, to: idx });
     }
@@ -349,7 +349,7 @@ function _startDrag(from, color) {
 function _updateDrag(px, py) {
   if (_dragFrom === null || !_dragGfx) return;
   _dragGfx.clear();
-  const r = _dragColor === 'black' ? _bulgarRadius() : _pirateRadius();
+  const r = _dragColor === 'white' ? _bulgarRadius() : _pirateRadius();
   _drawPiece(_dragGfx, px, py, r, _dragColor);
 }
 
@@ -365,7 +365,7 @@ function _endDrag(toIdx) {
   if (!g || g.gameOver || !ctx) return;
 
   const mySide      = ctx.mySide;
-  const actingColor = g.pendingJump !== null ? 'black' : g.turn;
+  const actingColor = g.pendingJump !== null ? 'white' : g.turn;
   if (mySide !== 'both' && mySide !== actingColor) return;
   if (g.board[from] !== actingColor) return;
   if (g.board[toIdx] !== null) return;
@@ -397,6 +397,12 @@ function _nearestPoint(px, py) {
 const piratesbulgarsRenderer = {
 
   showPassButton: false,
+
+  sideLabels: {
+    black: '🏴‍☠️ Pirates',
+    white: '⚔️ Bulgars',
+    both:  '🏴‍☠️⚔️Both',
+  },
 
   init(scene, config) {
     _scene    = scene;
@@ -443,7 +449,7 @@ const piratesbulgarsRenderer = {
     _drawBoard();
 
     let validDests    = null;
-    const actingColor = pendingJump !== null ? 'black' : gameState.turn;
+    const actingColor = pendingJump !== null ? 'white' : gameState.turn;
     const sourceIdx   = pendingJump !== null ? pendingJump : _selected;
     if (sourceIdx !== null && board[sourceIdx] === actingColor) {
       validDests = _computeLegalDests(gameState, sourceIdx, actingColor);
@@ -489,29 +495,29 @@ const piratesbulgarsRenderer = {
 
   formatTurnText(gameState) {
     if (gameState.gameOver) {
-      return gameState.winner === 'white' ? '🏴‍☠️ PIRATES win!' : '⚔️ BULGARS win!';
+      return gameState.winner === 'black' ? '🏴‍☠️ PIRATES win!' : '⚔️ BULGARS win!';
     }
     if (gameState.pendingJump !== null) {
       return '⚔️ BULGARS — must continue jumping';
     }
-    const who = gameState.turn === 'white' ? '🏴‍☠️ PIRATES' : '⚔️ BULGARS';
+    const who = gameState.turn === 'black' ? '🏴‍☠️ PIRATES' : '⚔️ BULGARS';
     return `${who} to move`;
   },
 
   formatTurnColor(gameState) {
     if (gameState.gameOver) return '#ffd700';
-    return gameState.turn === 'white' ? '#aabbcc' : '#eedd88';
+    return gameState.turn === 'black' ? '#aabbcc' : '#eedd88';
   },
 
   formatCaptureText(gameState) {
-    const pirateCount = gameState.board.filter(c => c === 'white').length;
+    const pirateCount = gameState.board.filter(c => c === 'black').length;
     return `Pirates captured: ${gameState.piratesCaptured}   remaining: ${pirateCount}`;
   },
 
   getGameOverInfo(gameState) {
     if (!gameState.gameOver) return null;
-    const pirateWon = gameState.winner === 'white';
-    const pirateCount = gameState.board.filter(c => c === 'white').length;
+    const pirateWon = gameState.winner === 'black';
+    const pirateCount = gameState.board.filter(c => c === 'black').length;
     return {
       title:  'GAME OVER',
       winner: pirateWon ? '🏴‍☠️ PIRATES win!' : '⚔️ BULGARS win!',

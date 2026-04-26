@@ -326,9 +326,9 @@ export function undoMove(state) {
 
 export function redoMove(state) {
   if (!state.redoSnapshot) return { ok: false, error: 'Nothing to redo' };
+  const saved = state.redoSnapshot;
   _pushSnapshot(state);
-  const snap = JSON.parse(state.redoSnapshot);
-  state.redoSnapshot = null;
+  const snap = JSON.parse(saved);
   Object.assign(state, snap);
   state.tick++;
   return { ok: true };

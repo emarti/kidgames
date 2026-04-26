@@ -1,6 +1,6 @@
 /**
  * piratesbulgars_sim.js — Pirates and Bulgars rules engine.
- * Pirates = 'white' (24 pieces), Bulgars = 'black' (2 pieces).
+ * Pirates = 'black' (24 pieces), Bulgars = 'white' (2 pieces).
  *
  * Board: 33-point orthogonal cross grid (same as Fox and Geese).
  *
@@ -105,7 +105,7 @@ function _bulgarCaptures(board, bulgarIdx) {
   const caps = [];
   const { col: bc, row: br } = COORDS[bulgarIdx];
   for (const midIdx of ADJACENCY[bulgarIdx]) {
-    if (board[midIdx] !== 'white') continue;
+    if (board[midIdx] !== 'black') continue;
     const { col: mc, row: mr } = COORDS[midIdx];
     const dc = mc - bc;
     const dr = mr - br;
@@ -140,12 +140,12 @@ function _afterBulgarMove(state, landIdx, wasCap) {
     const more = _bulgarCaptures(state.board, landIdx);
     if (more.length > 0) {
       state.pendingJump = landIdx;
-      // Turn stays 'black'; player may continue jumping or end turn.
+      // Turn stays 'white'; player may continue jumping or end turn.
       return;
     }
   }
   state.pendingJump = null;
-  state.turn = 'white';
+  state.turn = 'black';
   _checkWin(state);
 }
 
@@ -153,30 +153,30 @@ function _checkWin(state) {
   if (state.gameOver) return;
 
   // Bulgars win if pirates reduced below 9 (can't fill 9 fortress points).
-  const pirateCount = state.board.filter(c => c === 'white').length;
+  const pirateCount = state.board.filter(c => c === 'black').length;
   if (pirateCount < 9) {
     state.gameOver = true;
-    state.winner   = 'black';
+    state.winner   = 'white';
     return;
   }
 
   // Pirates win if all 9 fortress points are occupied by pirates.
   let fortressFilled = true;
   for (const idx of FORTRESS) {
-    if (state.board[idx] !== 'white') { fortressFilled = false; break; }
+    if (state.board[idx] !== 'black') { fortressFilled = false; break; }
   }
   if (fortressFilled) {
     state.gameOver = true;
-    state.winner   = 'white';
+    state.winner   = 'black';
     return;
   }
 
   // Pirates also win if both Bulgars have no legal moves on Bulgars' turn.
-  if (state.turn === 'black' && state.pendingJump === null) {
-    const bulgarMoves = legalMovesFor(state, 'black');
+  if (state.turn === 'white' && state.pendingJump === null) {
+    const bulgarMoves = legalMovesFor(state, 'white');
     if (bulgarMoves.length === 0) {
       state.gameOver = true;
-      state.winner   = 'white';
+      state.winner   = 'black';
     }
   }
 }
@@ -187,14 +187,14 @@ export function newGameState() {
   const board = Array(33).fill(null);
   // Place pirates on all non-fortress points.
   for (let i = 0; i < 33; i++) {
-    if (!FORTRESS.has(i)) board[i] = 'white';
+    if (!FORTRESS.has(i)) board[i] = 'black';
   }
   // Place 2 bulgars in the fortress center column.
-  board[28] = 'black'; // row 5, col 3
-  board[31] = 'black'; // row 6, col 3
+  board[28] = 'white'; // row 5, col 3
+  board[31] = 'white'; // row 6, col 3
   return {
     board,
-    turn:            'white',       // Pirates move first
+    turn:            'black',       // Pirates move first
     pendingJump:     null,          // index bulgar is currently jumping from, or null
     piratesCaptured: 0,
     players: {
@@ -230,7 +230,7 @@ export function legalMovesFor(state, color) {
   const moves = [];
   if (state.gameOver) return moves;
 
-  if (color === 'black') {
+  if (color === 'white') {
     // Bulgars: move any direction or capture by jumping. Captures are forced.
     if (state.pendingJump !== null) {
       // Mid multi-jump: only capture moves from the pending position.
@@ -241,7 +241,7 @@ export function legalMovesFor(state, color) {
     // Collect all captures across all bulgars.
     const allCaps = [];
     for (let i = 0; i < 33; i++) {
-      if (state.board[i] !== 'black') continue;
+      if (state.board[i] !== 'white') continue;
       const caps = _bulgarCaptures(state.board, i);
       for (const { from, to } of caps) allCaps.push({ type: 'move', from, to });
     }
@@ -249,7 +249,7 @@ export function legalMovesFor(state, color) {
     if (allCaps.length > 0) return allCaps;
     // No captures: regular adjacent moves.
     for (let i = 0; i < 33; i++) {
-      if (state.board[i] !== 'black') continue;
+      if (state.board[i] !== 'white') continue;
       for (const nb of ADJACENCY[i]) {
         if (state.board[nb] === null) moves.push({ type: 'move', from: i, to: nb });
       }
@@ -257,11 +257,11 @@ export function legalMovesFor(state, color) {
     return moves;
   }
 
-  if (color === 'white') {
+  if (color === 'black') {
     // Pirates: forward (row increases) or sideways (row stays same), not backward.
     if (state.pendingJump !== null) return moves; // bulgar is mid-jump; not pirates' turn
     for (let i = 0; i < 33; i++) {
-      if (state.board[i] !== 'white') continue;
+      if (state.board[i] !== 'black') continue;
       const fromRow = COORDS[i].row;
       for (const nb of ADJACENCY[i]) {
         if (state.board[nb] === null && COORDS[nb].row >= fromRow) {
@@ -281,9 +281,9 @@ export function movePiece(state, pid, from, to) {
   const color = state.players[pid]?.color;
   if (!color) return { ok: false, error: 'No color assigned' };
 
-  // During pendingJump, only bulgar (black) may act.
+  // During pendingJump, only bulgar (white) may act.
   if (state.pendingJump !== null) {
-    if (color !== 'black')                 return { ok: false, error: 'Not your turn' };
+    if (color !== 'white')                 return { ok: false, error: 'Not your turn' };
     if (from !== state.pendingJump)        return { ok: false, error: 'Must continue jump from current position' };
   } else {
     if (color !== state.turn)              return { ok: false, error: 'Not your turn' };
@@ -298,14 +298,14 @@ export function movePiece(state, pid, from, to) {
 
   // Detect capture: bulgar moves 2 squares in a straight orthogonal line.
   let captured = false;
-  if (color === 'black') {
+  if (color === 'white') {
     const { col: bc, row: br } = COORDS[from];
     const { col: tc, row: tr } = COORDS[to];
     const dc = tc - bc;
     const dr = tr - br;
     if (Math.abs(dc) === 2 || Math.abs(dr) === 2) {
       const midIdx = _lookup(bc + dc / 2, br + dr / 2);
-      if (midIdx >= 0 && state.board[midIdx] === 'white') {
+      if (midIdx >= 0 && state.board[midIdx] === 'black') {
         state.board[midIdx] = null;
         state.piratesCaptured++;
         captured = true;
@@ -318,31 +318,27 @@ export function movePiece(state, pid, from, to) {
   state.lastMove = { type: 'move', from, to, color, captured };
   state.tick++;
 
-  if (color === 'black') {
+  if (color === 'white') {
     _afterBulgarMove(state, to, captured);
   } else {
     // Pirates: no captures, just advance turn.
-    state.turn = 'black';
+    state.turn = 'white';
     _checkWin(state);
   }
 
   return { ok: true };
 }
 
-/** End multi-jump (bulgars only). Only allowed when no further captures exist. */
+/** End multi-jump (bulgars only). */
 export function endJump(state, pid) {
   if (state.gameOver) return { ok: false, error: 'Game is over' };
   if (state.pendingJump === null) return { ok: false, error: 'No pending jump' };
   const color = state.players[pid]?.color;
-  if (color !== 'black') return { ok: false, error: 'Not your turn' };
-
-  // Forced capture: cannot end jump if captures remain.
-  const caps = _bulgarCaptures(state.board, state.pendingJump);
-  if (caps.length > 0) return { ok: false, error: 'Must continue capturing' };
+  if (color !== 'white') return { ok: false, error: 'Not your turn' };
 
   _pushSnapshot(state);
   state.pendingJump = null;
-  state.turn = 'white';
+  state.turn = 'black';
   state.tick++;
   _checkWin(state);
   return { ok: true };
@@ -363,9 +359,9 @@ export function undoMove(state) {
 
 export function redoMove(state) {
   if (!state.redoSnapshot) return { ok: false, error: 'Nothing to redo' };
+  const saved = state.redoSnapshot;
   _pushSnapshot(state);
-  const snap = JSON.parse(state.redoSnapshot);
-  state.redoSnapshot = null;
+  const snap = JSON.parse(saved);
   Object.assign(state, snap);
   state.tick++;
   return { ok: true };
