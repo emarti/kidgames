@@ -13,6 +13,86 @@ export const CLAIM_HIGHLIGHT_COLOR = 0xf1c40f;  // yellow ring on grabbed object
 export const FIXED_HIGHLIGHT_COLOR = 0x2c3e50;  // dark ring on fixed objects
 export const UI_DEPTH = 200;                     // Phaser depth for all UI elements
 
+// ── Sky / scenery drawing ─────────────────────────────────────────────────────
+
+/**
+ * Draw a gradient sky from skyTop to skyBottom over the given height.
+ * Uses horizontal strips for a smooth vertical gradient.
+ */
+export function drawSkyGradient(g, W, groundScreenY, skyTop = 0x5ba3d9, skyBottom = 0xb4daf7) {
+  const steps = 16;
+  const stripH = Math.ceil(groundScreenY / steps);
+  for (let i = 0; i < steps; i++) {
+    const t = i / (steps - 1);
+    const color = lerpColor(skyTop, skyBottom, t);
+    g.fillStyle(color);
+    g.fillRect(0, i * stripH, W, stripH + 1);
+  }
+}
+
+/**
+ * Draw a simple ground strip with a grass line on top.
+ */
+export function drawGround(g, W, H, groundScreenY) {
+  g.fillStyle(0x6b4e1f);
+  g.fillRect(0, groundScreenY, W, H - groundScreenY);
+  g.fillStyle(0x3a8c3f);
+  g.fillRect(0, groundScreenY, W, 5);
+  // Subtle dirt texture line
+  g.fillStyle(0x8b6914, 0.3);
+  g.fillRect(0, groundScreenY + 5, W, 2);
+}
+
+/**
+ * Draw decorative static clouds. Deterministic positions based on seed offsets.
+ */
+export function drawClouds(g, W, time, alpha = 0.5) {
+  const clouds = [
+    { x: 80, y: 28, w: 70, h: 22 },
+    { x: 250, y: 18, w: 55, h: 18 },
+    { x: 460, y: 34, w: 80, h: 24 },
+    { x: 620, y: 14, w: 60, h: 20 },
+    { x: 180, y: 48, w: 50, h: 16 },
+  ];
+  g.fillStyle(0xffffff, alpha);
+  const scaleX = W / 800;
+  for (const c of clouds) {
+    const cx = c.x * scaleX;
+    const drift = Math.sin(time / 8000 + c.x) * 12;
+    g.fillEllipse(cx + drift, c.y, c.w * scaleX, c.h);
+    g.fillEllipse(cx + drift + c.w * 0.3 * scaleX, c.y - 4, c.w * 0.5 * scaleX, c.h * 0.7);
+  }
+}
+
+/**
+ * Draw distant hill silhouettes along the horizon.
+ */
+export function drawHills(g, W, groundScreenY, color = 0x2d7a3a, alpha = 0.35) {
+  g.fillStyle(color, alpha);
+  const scaleX = W / 800;
+  const hills = [
+    { cx: 100, r: 90, h: 55 },
+    { cx: 300, r: 120, h: 70 },
+    { cx: 550, r: 100, h: 50 },
+    { cx: 720, r: 80, h: 45 },
+  ];
+  for (const hill of hills) {
+    const cx = hill.cx * scaleX;
+    const r = hill.r * scaleX;
+    g.fillEllipse(cx, groundScreenY - hill.h * 0.3, r * 2, hill.h);
+  }
+}
+
+/** Linear interpolation between two 0xRRGGBB colors. */
+export function lerpColor(c1, c2, t) {
+  const r1 = (c1 >> 16) & 0xff, g1 = (c1 >> 8) & 0xff, b1 = c1 & 0xff;
+  const r2 = (c2 >> 16) & 0xff, g2 = (c2 >> 8) & 0xff, b2 = c2 & 0xff;
+  const r = Math.round(r1 + (r2 - r1) * t);
+  const gr = Math.round(g1 + (g2 - g1) * t);
+  const b = Math.round(b1 + (b2 - b1) * t);
+  return (r << 16) | (gr << 8) | b;
+}
+
 // ── Typography / sizing constants ─────────────────────────────────────────────
 // Single source of truth for font sizes and button padding across all renderers.
 
@@ -76,6 +156,58 @@ export function createCommonUI(scene) {
   return { levelTitle, msgText, doorText, resetBtn, lvlBtn };
 }
 
+// ── Completion banner ─────────────────────────────────────────────────────────
+
+/**
+ * Draw a "LEVEL COMPLETE" banner when doorOpen is true.
+ * Rendered via Phaser Graphics (no persistent text objects needed).
+ * Call from renderState after all module-specific drawing.
+ */
+export function drawCompletionBanner(scene, g, state) {
+  if (!state.doorOpen) return;
+
+  const W = scene.scale.width;
+  const cx = W / 2;
+  const bannerY = 56;
+
+  // Banner background
+  g.fillStyle(0x1a5a1a, 0.85);
+  g.fillRoundedRect(cx - 150, bannerY, 300, 46, 10);
+  g.lineStyle(2, 0x2ecc71, 0.9);
+  g.strokeRoundedRect(cx - 150, bannerY, 300, 46, 10);
+
+  // Inner glow
+  g.fillStyle(0x27ae60, 0.15);
+  g.fillRoundedRect(cx - 146, bannerY + 2, 292, 42, 8);
+
+  // We need text — use a cached approach on scene
+  if (!scene._completionText) {
+    scene._completionText = scene.add.text(cx, bannerY + 23, '✨ LEVEL COMPLETE ✨', {
+      fontSize: '22px', color: '#fff', fontStyle: 'bold',
+      stroke: '#1a5a1a', strokeThickness: 2,
+    }).setOrigin(0.5).setDepth(UI_DEPTH + 10);
+  }
+  scene._completionText.setVisible(true);
+  scene._completionText.setPosition(cx, bannerY + 23);
+
+  // "Click 🚪 to continue" subtitle
+  if (!scene._completionSub) {
+    scene._completionSub = scene.add.text(cx, bannerY + 50, 'Tap 🚪 to continue', {
+      fontSize: '14px', color: '#bbb',
+    }).setOrigin(0.5).setDepth(UI_DEPTH + 10);
+  }
+  scene._completionSub.setVisible(true);
+  scene._completionSub.setPosition(cx, bannerY + 50);
+}
+
+/**
+ * Hide the completion banner (call when doorOpen becomes false / level resets).
+ */
+export function hideCompletionBanner(scene) {
+  if (scene._completionText) scene._completionText.setVisible(false);
+  if (scene._completionSub) scene._completionSub.setVisible(false);
+}
+
 // ── Door button state ─────────────────────────────────────────────────────────
 
 /**
@@ -109,6 +241,34 @@ export function cleanupObjectTexts(objectTexts, currentObjects) {
 }
 
 // ── Emoji + mass label caching ────────────────────────────────────────────────
+
+/**
+ * Draw a circular game object with shadow, highlight, and depth.
+ * Call this INSTEAD of manually drawing the circle + calling drawObjectEmojiCached.
+ */
+export function drawObjectWithDepth(scene, g, objectTexts, obj, x, y, radius, colorHex) {
+  const Phaser = scene.sys.game.constructor;
+  // Drop shadow
+  g.fillStyle(0x000000, 0.18);
+  g.fillEllipse(x + 2, y + 3, radius * 2, radius * 1.7);
+
+  // Main body
+  const color = typeof colorHex === 'number' ? colorHex
+    : Phaser?.Display?.Color?.HexStringToColor?.(colorHex)?.color ?? 0x999999;
+  g.fillStyle(color, 0.88);
+  g.fillCircle(x, y, radius);
+
+  // Rim
+  g.lineStyle(2, 0x333333, 0.4);
+  g.strokeCircle(x, y, radius);
+
+  // Specular highlight (small bright circle at upper-left)
+  g.fillStyle(0xffffff, 0.25);
+  g.fillCircle(x - radius * 0.3, y - radius * 0.3, radius * 0.35);
+
+  // Emoji + mass
+  drawObjectEmojiCached(scene, objectTexts, obj, x, y, radius);
+}
 
 /**
  * Create-or-update the cached Phaser Text objects (emoji + mass label) for a

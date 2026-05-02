@@ -15,8 +15,9 @@ import { tmpdir }                  from 'os';
 import { join }                    from 'path';
 
 const BOARD_SIZE  = 9;
-const GTP_LEVEL   = 5;
 const TIMEOUT_MS  = 5000;
+
+const GTP_LEVELS = { easy: 1, medium: 5, hard: 10 };
 
 // ─── Fallback: nearest-to-center empty intersection ──────────────────────────
 
@@ -69,8 +70,10 @@ function parseGTPCoord(coord) {
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 
-export function suggestMove(gameState) {
+export function suggestMove(gameState, level = 'medium') {
   if (gameState.gameOver) return Promise.resolve(null);
+
+  const gtpLevel = GTP_LEVELS[level] ?? GTP_LEVELS.medium;
 
   // Empty board → tengen (best opening for 9×9).
   const hasStones = gameState.board.some(row => row.some(c => c !== null));
@@ -101,7 +104,7 @@ export function suggestMove(gameState) {
       const gnugoPath = process.env.GNUGO_PATH || '/usr/games/gnugo';
       proc = spawn(gnugoPath, [
         '--mode', 'gtp',
-        '--level', String(GTP_LEVEL),
+        '--level', String(gtpLevel),
       ], { stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
       console.error('[go_hint] Failed to spawn gnugo:', e.message);

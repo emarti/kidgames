@@ -386,6 +386,12 @@ const foxgeeseRenderer = {
 
   showPassButton: false,
 
+  sideLabels: {
+    black: '🦊 Fox',
+    white: '🪿 Geese',
+    both:  '🦊🪿 Both',
+  },
+
   init(scene, config) {
     _scene    = scene;
     _bx       = config.boardX;

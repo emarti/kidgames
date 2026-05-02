@@ -128,10 +128,11 @@ function _computeLayout(N) {
   const wFactor = (N - 1) * sqrt3 * 1.5 + 2;
   const hFactor = 1.5 * (N - 1) + 2;
 
-  // Scale the Hex board up relative to the shared scene board box.
-  const span = _bs * 1.30;
-  const hsByW = span / wFactor;
-  const hsByH = span / hFactor;
+  // Size the board to 81% of screen height (clamped by width) — leaves room for side panel.
+  const screenW = _scene.scale.width;
+  const screenH = _scene.scale.height;
+  const hsByH = (screenH * 0.81) / hFactor;
+  const hsByW = (screenW * 0.855) / wFactor;
   _hexSize = Math.min(hsByW, hsByH);
 
   _hexW = sqrt3 * _hexSize;
@@ -141,8 +142,8 @@ function _computeLayout(N) {
   const actualW = (N - 1) * _hexW + (N - 1) * _offX + 2 * _hexSize;
   const actualH = (N - 1) * _hexH + 2 * _hexSize;
 
-  _ox = _bx + Math.round((_bs - actualW) / 2) + _hexSize;
-  _oy = _by + Math.round((_bs - actualH) / 2) + _hexSize;
+  _ox = Math.round((screenW - actualW) / 2) + _hexSize;
+  _oy = Math.round((screenH - actualH) / 2) + _hexSize;
 }
 
 // ─── Board building ──────────────────────────────────────────────────────────

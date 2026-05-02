@@ -186,6 +186,71 @@ export function passTurn(state, pid) {
   return { ok: true };
 }
 
+/**
+ * Place a stone as the computer (no player-ID validation).
+ * Places as `state.turn`, enforces Go rules (captures, suicide, Ko), alternates turn.
+ */
+export function computerPlaceStone(state, x, y) {
+  const color = state.turn;
+  if (state.gameOver) return { ok: false, error: 'Game is over.' };
+  const size = state.boardSize;
+  if (x < 0 || x >= size || y < 0 || y >= size) return { ok: false, error: 'Out of bounds' };
+  if (state.board[y][x] !== null) return { ok: false, error: 'Intersection occupied' };
+
+  const newBoard = copyBoard(state.board);
+  newBoard[y][x] = color;
+
+  const opponent = color === 'black' ? 'white' : 'black';
+  let captured = 0;
+  const capturedCells = [];
+  for (const [nx, ny] of neighbors(x, y, size)) {
+    if (newBoard[ny][nx] === opponent) {
+      const group = getGroup(newBoard, nx, ny, size);
+      if (group.liberties.size === 0) {
+        for (const stone of group.stones) {
+          newBoard[stone.y][stone.x] = null;
+          capturedCells.push({ x: stone.x, y: stone.y });
+          captured++;
+        }
+      }
+    }
+  }
+  const ownGroup = getGroup(newBoard, x, y, size);
+  if (ownGroup.liberties.size === 0 && captured === 0) return { ok: false, error: 'Suicide move not allowed' };
+  const newBoardStr = boardToString(newBoard);
+  if (state.history.length >= 1) {
+    const prev = state.history[state.history.length - 1];
+    if (prev.boardStr === newBoardStr) return { ok: false, error: 'Ko: cannot repeat a previous board position' };
+  }
+
+  _pushSnapshot(state);
+  state.board = newBoard;
+  state.captures[color] += captured;
+  state.lastMove = { x, y };
+  state.passCount = 0;
+  state.turn = opponent;
+  state.tick++;
+  return { ok: true, captured, capturedCells };
+}
+
+/**
+ * Pass a turn as the computer (no player-ID validation).
+ */
+export function computerPassTurn(state) {
+  if (state.gameOver) return { ok: false, error: 'Game is over.' };
+  _pushSnapshot(state);
+  const opponent = state.turn === 'black' ? 'white' : 'black';
+  state.lastMove = 'pass';
+  state.passCount++;
+  state.turn = opponent;
+  state.tick++;
+  if (state.passCount >= 2) {
+    state.gameOver = true;
+    state.score = estimateScore(state);
+  }
+  return { ok: true };
+}
+
 export function undoMove(state) {
   if (state.history.length === 0) return { ok: false, error: 'Nothing to undo' };
 

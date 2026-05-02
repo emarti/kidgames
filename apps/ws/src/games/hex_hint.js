@@ -9,8 +9,11 @@
 import { getNeighbors, checkWin } from './hex_sim.js';
 
 const C = 1.4;
-const MAX_ITER = 3000;
-const TIME_BUDGET_MS = 1500;
+function _budget(level) {
+  if (level === 'easy') return { maxIter: 200,  maxMs: 400  };
+  if (level === 'hard') return { maxIter: 8000, maxMs: 4000 };
+  return                       { maxIter: 3000, maxMs: 1500 };  // medium (default)
+}
 
 // ─── Lightweight state operations ────────────────────────────────────────────
 
@@ -121,10 +124,11 @@ export function suggestMove(state) {
   // MCTS nodes: one per empty cell.
   const nodes = empty.map((cellIdx) => ({ cellIdx, wins: 0, visits: 0 }));
   const rootColor = state.turn;
+  const { maxIter, maxMs } = _budget(state._computerLevel);
   const start = Date.now();
   let iter = 0;
 
-  while (iter < MAX_ITER && Date.now() - start < TIME_BUDGET_MS) {
+  while (iter < maxIter && Date.now() - start < maxMs) {
     // Select: UCT
     let best = null;
     let bestScore = -Infinity;

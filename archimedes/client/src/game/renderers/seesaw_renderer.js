@@ -12,10 +12,18 @@ import {
   updateDoorButton,
   cleanupObjectTexts,
   drawObjectEmojiCached,
+  drawObjectWithDepth,
   destroyCommonUI,
   updateConfetti,
   drawConfetti,
   shouldHandlePointer,
+  drawSkyGradient,
+  drawGround,
+  drawClouds as drawStaticClouds,
+  drawHills,
+  lerpColor,
+  drawCompletionBanner,
+  hideCompletionBanner,
   FONT_BODY,
   FONT_MASS,
 } from './renderer_utils.js';
@@ -106,29 +114,42 @@ export function renderState(scene, state) {
 
   // Finale: parallax sky shift
   const scroll = state.worldScroll || 0;
-  const skyBlue = scroll > 0
-    ? lerpColor(0x87ceeb, 0x4a90d9, Math.min(1, scroll / 200))
-    : 0x87ceeb;
-  g.fillStyle(skyBlue);
-  g.fillRect(0, 0, W, groundScreenY);
+  const skyTop = scroll > 0
+    ? lerpColor(0x5ba3d9, 0x3a6fb5, Math.min(1, scroll / 200))
+    : 0x5ba3d9;
+  const skyBottom = scroll > 0
+    ? lerpColor(0xb4daf7, 0x7ab8e8, Math.min(1, scroll / 200))
+    : 0xb4daf7;
+  drawSkyGradient(g, W, groundScreenY, skyTop, skyBottom);
 
-  // Finale clouds
+  // Clouds
+  const now = scene.time?.now || 0;
+  drawStaticClouds(g, W, now, 0.45);
+
+  // Hills behind the ground
+  drawHills(g, W, groundScreenY);
+
+  // Finale animated clouds
   if (state.level === 6 && scroll > 0) {
-    drawClouds(scene, scroll);
+    drawFinaleClouds(scene, scroll);
   }
 
   // ── 2. Ground strip ────────────────────────────────────────────────────
-  g.fillStyle(0x8b6914);
-  g.fillRect(0, groundScreenY, W, H - groundScreenY);
-  g.fillStyle(0x228b22);
-  g.fillRect(0, groundScreenY, W, 6);
+  drawGround(g, W, H, groundScreenY);
 
   // ── 3. Palette area ────────────────────────────────────────────────────
   const paletteY = sy(scene, (state.groundY || 430) + 10);
-  g.fillStyle(0x2c3e50, 0.3);
+  // Wooden shelf background
+  g.fillStyle(0x3e2f1c, 0.55);
   g.fillRect(0, paletteY, W, H - paletteY);
-  g.lineStyle(1, 0x7f8c8d, 0.5);
-  g.lineBetween(0, paletteY, W, paletteY);
+  // Top shelf edge
+  g.fillStyle(0x6b4e2a);
+  g.fillRect(0, paletteY, W, 4);
+  g.fillStyle(0x8b6b3d, 0.6);
+  g.fillRect(0, paletteY + 4, W, 2);
+  // "ITEMS" label
+  g.fillStyle(0xffffff, 0.4);
+  // (label rendered once via ensureUI)
 
   // ── 4. Pivot triangle ─────────────────────────────────────────────────
   const pivX = sx(scene, beam.pivotX);
@@ -163,6 +184,24 @@ export function renderState(scene, state) {
   // ── 5. Beam ────────────────────────────────────────────────────────────
   drawBeam(scene, state);
 
+  // Balance glow on beam
+  const bal = state.balance || {};
+  if (bal.balancedTicks >= 20 && !bal.wasUnbalanced) {
+    const pivXb = sx(scene, beam.pivotX);
+    const pivYb = sy(scene, beam.pivotY);
+    const leftArm = beamLeftArm(beam);
+    const rightArm = beamRightArm(beam);
+    const scaleXb = (sx(scene, 1) - sx(scene, 0)) || 1;
+    const beamLen = (leftArm + rightArm) * scaleXb;
+    const pulse = 0.4 + 0.3 * Math.sin((scene.time?.now || 0) / 200);
+    g.save();
+    g.translateCanvas(pivXb, pivYb);
+    g.rotateCanvas(beam.angle);
+    g.lineStyle(6, 0x27ae60, pulse);
+    g.strokeRect(-leftArm * scaleXb, -10, beamLen, 20);
+    g.restore();
+  }
+
   // ── 6. Baskets ─────────────────────────────────────────────────────────
   if (state.baskets && state.baskets.enabled) {
     drawBaskets(scene, state);
@@ -183,6 +222,26 @@ export function renderState(scene, state) {
   // ── 9. Confetti ────────────────────────────────────────────────────────
   updateConfetti(scene, d, state);
   drawConfetti(scene, d, state);
+
+  // "BALANCED!" text burst
+  if (state.confetti && d.confettiSeenAt != null) {
+    const elapsed = (scene.time?.now || 0) - d.confettiSeenAt;
+    if (elapsed < 1500) {
+      const alpha = Math.max(0, 1 - elapsed / 1500);
+      const rise = elapsed * 0.02;
+      const cx = sx(scene, state.confetti.x);
+      const cy = sy(scene, state.confetti.y) - 80 - rise;
+      if (!d._balancedText) {
+        d._balancedText = scene.add.text(cx, cy, '⚖️ BALANCED!', {
+          fontSize: '28px', color: '#27ae60', fontStyle: 'bold',
+          stroke: '#fff', strokeThickness: 3,
+        }).setOrigin(0.5).setDepth(300);
+      }
+      d._balancedText.setPosition(cx, cy).setAlpha(alpha).setVisible(true);
+    }
+  } else if (d._balancedText) {
+    d._balancedText.setVisible(false);
+  }
 
   // ── 11. Objects in palette / not on beam ────────────────────────────────
   for (const obj of state.objects) {
@@ -455,15 +514,12 @@ function drawObject(scene, d, obj, beam) {
     );
   } else if (!isEarth) {
     const color = Phaser.Display.Color.HexStringToColor(obj.color).color;
-    g.fillStyle(color, 0.85);
-    g.fillCircle(x, y, r);
-    g.lineStyle(2, 0x333333, 0.5);
-    g.strokeCircle(x, y, r);
+    drawObjectWithDepth(scene, g, d.objectTexts, obj, x, y, r, color);
+    return;
   }
 
   // Regular objects: shared emoji + mass caching
   if (!isEarth && !isArchimedes) {
-    drawObjectEmojiCached(scene, d.objectTexts, obj, x, y, r);
     return;
   }
 
@@ -487,9 +543,9 @@ function drawObject(scene, d, obj, beam) {
 
 // ── Confetti ─────────────────────────────────────────────────────────────────
 
-// ── Clouds (level 6 finale) ──────────────────────────────────────────────────
+// ── Clouds (level 6 finale — animated parallax) ─────────────────────────────
 
-function drawClouds(scene, scroll) {
+function drawFinaleClouds(scene, scroll) {
   const g = scene.graphics;
   const W = scene.scale.width;
   const now = scene.time?.now || Date.now();
@@ -501,17 +557,6 @@ function drawClouds(scene, scroll) {
     g.fillEllipse(baseX, baseY, 60 + i * 10, 20 + i * 3);
     g.fillEllipse(baseX + 30, baseY - 5, 40, 15);
   }
-}
-
-// ── Color lerp helper ────────────────────────────────────────────────────────
-
-function lerpColor(c1, c2, t) {
-  const r1 = (c1 >> 16) & 0xff, g1 = (c1 >> 8) & 0xff, b1 = c1 & 0xff;
-  const r2 = (c2 >> 16) & 0xff, g2 = (c2 >> 8) & 0xff, b2 = c2 & 0xff;
-  const r = Math.round(r1 + (r2 - r1) * t);
-  const gr = Math.round(g1 + (g2 - g1) * t);
-  const b = Math.round(b1 + (b2 - b1) * t);
-  return (r << 16) | (gr << 8) | b;
 }
 
 // ── UI ───────────────────────────────────────────────────────────────────────
@@ -531,6 +576,13 @@ function ensureUI(scene, d) {
   d.loadText = scene.add.text(12, 76, '', {
     fontSize: FONT_BODY, color: '#555',
   }).setDepth(200);
+
+  // Palette label
+  const H = scene.scale.height;
+  d.paletteLabel = scene.add.text(scene.scale.width / 2, H - 16, 'DRAG WEIGHTS', {
+    fontSize: '14px', color: '#c8b99a', fontStyle: 'bold',
+    stroke: '#3e2f1c', strokeThickness: 2,
+  }).setOrigin(0.5).setDepth(200).setAlpha(0.7);
 }
 
 function updateUI(scene, d, state) {
@@ -562,6 +614,13 @@ function updateUI(scene, d, state) {
   }
 
   updateDoorButton(d.doorText, state.doorOpen);
+
+  // Completion banner
+  if (state.doorOpen) {
+    drawCompletionBanner(scene, scene.graphics, state);
+  } else {
+    hideCompletionBanner(scene);
+  }
 }
 
 // ── Input handlers ───────────────────────────────────────────────────────────
@@ -628,7 +687,7 @@ export function destroy(scene) {
   }
   d.objectTexts.clear();
 
-  destroyCommonUI(d, ['progressText', 'loadText']);
+  destroyCommonUI(d, ['progressText', 'loadText', 'paletteLabel', '_balancedText']);
 
   sceneData.delete(scene);
 }

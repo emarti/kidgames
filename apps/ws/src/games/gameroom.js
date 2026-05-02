@@ -14,6 +14,7 @@ import * as MorrisSim from './morris_sim.js';
 import * as FoxGeeseSim from './foxgeese_sim.js';
 import * as PiratesBulgarsSim from './piratesbulgars_sim.js';
 import * as HexSim from './hex_sim.js';
+import * as CheckersSim from './checkers_sim.js';
 import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -46,7 +47,7 @@ import {
 // ─── Game registry ────────────────────────────────────────────────────────────
 
 const GAME_TYPES = ['go', 'checkers', 'chess', 'morris', 'cchk', 'foxgeese', 'hex', 'piratesbulgars'];
-const IMPLEMENTED = new Set(['go', 'morris', 'foxgeese', 'piratesbulgars', 'hex']);
+const IMPLEMENTED = new Set(['go', 'checkers', 'morris', 'foxgeese', 'piratesbulgars', 'hex']);
 
 // Build initial sim state for a given game type.
 function newGameSimState(gameType) {
@@ -55,6 +56,7 @@ function newGameSimState(gameType) {
   if (gameType === 'foxgeese')        return FoxGeeseSim.newGameState();
   if (gameType === 'piratesbulgars')  return PiratesBulgarsSim.newGameState();
   if (gameType === 'hex')             return HexSim.newGameState();
+  if (gameType === 'checkers')        return CheckersSim.newGameState();
   // Placeholder: other games return null until their sim modules are added.
   return null;
 }
@@ -71,6 +73,7 @@ function newRoomState() {
       3: { connected: false, side: null },
       4: { connected: false, side: null },
     },
+    computer: { color: null, level: 'medium' },  // null = off, 'black' or 'white'
     game: null,           // the active game's sim state
   };
 }
@@ -90,6 +93,117 @@ function withBothSide(room, ws, actingColor, actionFn) {
     return result;
   }
   return actionFn();
+}
+
+// ─── Computer auto-move (hex only for now) ────────────────────────────────────
+
+/**
+ * If the computer is enabled and it's the computer's turn, schedule an
+ * MCTS-powered move after a short UX delay.  A generation counter prevents
+ * stale results from being applied after undo / restart / toggle.
+ */
+function _actingColor(gameType, game) {
+  if (gameType === 'morris' && game.phase === 'removing') return game.pendingRemove;
+  if ((gameType === 'foxgeese' || gameType === 'piratesbulgars' || gameType === 'checkers') && game.pendingJump !== null) {
+    return gameType === 'foxgeese' ? 'black' : gameType === 'piratesbulgars' ? 'white' : game.turn;
+  }
+  return game.turn;
+}
+
+function maybeComputerMove(room) {
+  const gameType = room.state.gameType;
+  if (!['go', 'checkers', 'morris', 'foxgeese', 'piratesbulgars', 'hex'].includes(gameType)) return;
+  const comp = room.state.computer;
+  if (!comp || !comp.color) return;
+  const game = room.state.game;
+  if (!game || game.gameOver) return;
+  if (comp.color !== _actingColor(gameType, game)) return;
+
+  room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
+  const gen = room._computerMoveGen;
+
+  setTimeout(() => {
+    // Stale check — state may have changed during the delay.
+    if (room._computerMoveGen !== gen) return;
+    const g = room.state.game;
+    if (!g || g.gameOver) return;
+    if (room.state.computer?.color !== _actingColor(gameType, g)) return;
+
+    const level = room.state.computer?.level ?? 'medium';
+    const snap = JSON.parse(JSON.stringify(g));
+
+    if (gameType === 'go') {
+      // Go uses GNU Go subprocess directly (not a worker).
+      goHintSuggest(snap, level)
+        .then((move) => {
+          if (room._computerMoveGen !== gen) return;
+          const g2 = room.state.game;
+          if (!g2 || g2.gameOver) return;
+          if (room.state.computer?.color !== g2.turn) return;
+          const res = move
+            ? GoSim.computerPlaceStone(g2, move.x, move.y)
+            : GoSim.computerPassTurn(g2);
+          if (!res.ok) { console.error('[gameroom] computer go move failed:', res.error); return; }
+          room.state.tick++;
+          room.updatedAt = nowMs();
+          safeBroadcast(room, { type: 'state', state: room.state });
+          maybeComputerMove(room);
+        })
+        .catch((e) => { console.error('[gameroom] computer go hint error', e); });
+      return;
+    }
+
+    // MCTS worker for Morris, FoxGeese, PiratesBulgars, Hex.
+    snap._computerLevel = level;
+    const hintFile = gameType === 'morris'        ? './morris_hint.js'
+                   : gameType === 'foxgeese'       ? './foxgeese_hint.js'
+                   : gameType === 'piratesbulgars' ? './piratesbulgars_hint.js'
+                   : gameType === 'checkers'        ? './checkers_hint.js'
+                   : './hex_hint.js';
+
+    mctsInWorker(hintFile, snap)
+      .then((result) => {
+        // Stale check — undo/toggle may have happened while MCTS ran.
+        if (room._computerMoveGen !== gen) return;
+        const g2 = room.state.game;
+        if (!g2 || g2.gameOver) return;
+        if (room.state.computer?.color !== _actingColor(gameType, g2)) return;
+
+        const move = result.move;
+        let res;
+        if (gameType === 'hex') {
+          if (!move) return;
+          res = HexSim.computerPlaceStone(g2, move.row, move.col);
+        } else if (gameType === 'morris') {
+          if (!move) return;
+          if      (move.type === 'place')  res = MorrisSim.computerPlacePiece(g2, move.pointIndex);
+          else if (move.type === 'move')   res = MorrisSim.computerMovePiece(g2, move.from, move.to);
+          else if (move.type === 'remove') res = MorrisSim.computerRemovePiece(g2, move.pointIndex);
+          else return;
+        } else if (gameType === 'foxgeese') {
+          if (!move) return;
+          res = FoxGeeseSim.computerMovePiece(g2, move.from, move.to);
+        } else if (gameType === 'piratesbulgars') {
+          if (!move) {
+            // MCTS returned null during pendingJump — end the sequence early.
+            if (g2.pendingJump !== null) res = PiratesBulgarsSim.computerEndJump(g2);
+            else return;
+          } else {
+            res = PiratesBulgarsSim.computerMovePiece(g2, move.from, move.to);
+          }
+        } else if (gameType === 'checkers') {
+          if (!move) return;
+          res = CheckersSim.computerMovePiece(g2, move.from, move.to);
+        }
+        if (!res || !res.ok) { console.error('[gameroom] computer move failed:', res?.error); return; }
+        room.state.tick++;
+        room.updatedAt = nowMs();
+        safeBroadcast(room, { type: 'state', state: room.state });
+        // Chain — handles multi-step sequences (mill removal, multi-jump) automatically.
+        maybeComputerMove(room);
+      })
+      .catch((e) => { console.error(`[gameroom] computer ${gameType} MCTS error`, e); });
+  }, 500);
 }
 
 // ─── Host factory ─────────────────────────────────────────────────────────────
@@ -282,6 +396,7 @@ export function createGameRoomHost() {
         }
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
         break;
       }
 
@@ -295,7 +410,7 @@ export function createGameRoomHost() {
         room.state.players[ws.playerId].side = side;
         // Sync into the active sim's own player state.
         // 'both' is a room-level concept; the sim gets null (spectator/unset).
-        const _sideSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim, hex: HexSim };
+        const _sideSims = { go: GoSim, checkers: CheckersSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim, hex: HexSim };
         if (_sideSims[room.state.gameType]) {
           const simColor = (side === 'both') ? null : side;
           _sideSims[room.state.gameType].selectColor(room.state.game, ws.playerId, simColor);
@@ -316,9 +431,11 @@ export function createGameRoomHost() {
           MorrisSim.placePiece(room.state.game, ws.playerId, pointIndex)
         );
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
         break;
       }
 
@@ -342,13 +459,19 @@ export function createGameRoomHost() {
           result = withBothSide(room, ws, room.state.game.turn, () =>
             PiratesBulgarsSim.movePiece(room.state.game, ws.playerId, from, to)
           );
+        } else if (room.state.gameType === 'checkers') {
+          result = withBothSide(room, ws, room.state.game.turn, () =>
+            CheckersSim.movePiece(room.state.game, ws.playerId, from, to)
+          );
         } else {
           return;
         }
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
         break;
       }
 
@@ -361,9 +484,11 @@ export function createGameRoomHost() {
           MorrisSim.removePiece(room.state.game, ws.playerId, pointIndex)
         );
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
         break;
       }
 
@@ -390,9 +515,11 @@ export function createGameRoomHost() {
           return;
         }
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
         break;
       }
 
@@ -404,9 +531,11 @@ export function createGameRoomHost() {
           GoSim.passTurn(room.state.game, ws.playerId)
         );
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
         break;
       }
 
@@ -420,11 +549,14 @@ export function createGameRoomHost() {
         else if (room.state.gameType === 'foxgeese') result = FoxGeeseSim.undoMove(room.state.game);
         else if (room.state.gameType === 'piratesbulgars') result = PiratesBulgarsSim.undoMove(room.state.game);
         else if (room.state.gameType === 'hex')      result = HexSim.undoMove(room.state.game);
+        else if (room.state.gameType === 'checkers')  result = CheckersSim.undoMove(room.state.game);
         else result = { ok: false, error: 'Undo not yet implemented for this game' };
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
         break;
       }
 
@@ -438,11 +570,14 @@ export function createGameRoomHost() {
         else if (room.state.gameType === 'foxgeese') result = FoxGeeseSim.redoMove(room.state.game);
         else if (room.state.gameType === 'piratesbulgars') result = PiratesBulgarsSim.redoMove(room.state.game);
         else if (room.state.gameType === 'hex')      result = HexSim.redoMove(room.state.game);
+        else if (room.state.gameType === 'checkers')  result = CheckersSim.redoMove(room.state.game);
         else result = { ok: false, error: 'Redo not yet implemented for this game' };
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
         break;
       }
 
@@ -455,9 +590,12 @@ export function createGameRoomHost() {
         else if (room.state.gameType === 'foxgeese') FoxGeeseSim.resetGame(room.state.game);
         else if (room.state.gameType === 'piratesbulgars') PiratesBulgarsSim.resetGame(room.state.game);
         else if (room.state.gameType === 'hex')      HexSim.resetGame(room.state.game);
+        else if (room.state.gameType === 'checkers')  CheckersSim.resetGame(room.state.game);
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
         break;
       }
 
@@ -479,6 +617,43 @@ export function createGameRoomHost() {
         if (!room || room.state.gameType !== 'hex' || !room.state.game) return;
         const newSize = room.state.game.boardSize === 11 ? 9 : 11;
         HexSim.setBoardSize(room.state.game, newSize);
+        room.updatedAt = nowMs();
+        safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
+        break;
+      }
+
+      // ── Computer player ───────────────────────────────────────────────────────
+
+      case 'set_computer': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        const color = msg.color ?? null;
+        if (color !== null && color !== 'black' && color !== 'white') {
+          send(ws, { type: 'error', message: 'Invalid computer color' });
+          return;
+        }
+        room.state.computer.color = color;
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
+        room.state.tick++;
+        room.updatedAt = nowMs();
+        safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
+        break;
+      }
+
+      case 'set_computer_level': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (!room) return;
+        const level = msg.level;
+        if (level !== 'easy' && level !== 'medium' && level !== 'hard') {
+          send(ws, { type: 'error', message: 'Invalid level' });
+          return;
+        }
+        room.state.computer.level = level;
+        room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
         break;
@@ -516,6 +691,10 @@ export function createGameRoomHost() {
           mctsInWorker('./hex_hint.js', snap)
             .then((result) => { if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null }); })
             .catch((e) => { console.error('[gameroom] hex hint error', e); if (ws.room) safeBroadcast(room, { type: 'hint', move: null }); });
+        } else if (room.state.gameType === 'checkers') {
+          mctsInWorker('./checkers_hint.js', snap)
+            .then((result) => { if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null }); })
+            .catch((e) => { console.error('[gameroom] checkers hint error', e); if (ws.room) safeBroadcast(room, { type: 'hint', move: null }); });
         }
         break;
       }
@@ -528,9 +707,11 @@ export function createGameRoomHost() {
           PiratesBulgarsSim.endJump(room.state.game, ws.playerId)
         );
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;
         room.updatedAt = nowMs();
         safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
         break;
       }
 

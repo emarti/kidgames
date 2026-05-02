@@ -15,8 +15,13 @@ import {
   updateDoorButton,
   cleanupObjectTexts,
   drawObjectEmojiCached,
+  drawObjectWithDepth,
   destroyCommonUI,
   shouldHandlePointer,
+  drawSkyGradient,
+  drawClouds,
+  drawCompletionBanner,
+  hideCompletionBanner,
   FONT_BODY,
   FONT_SMALL,
   FONT_BTN_LG,
@@ -85,8 +90,9 @@ export function renderState(scene, state) {
   const waterScreenY = sy(scene, state.waterY);
 
   // ── 1. Sky ─────────────────────────────────────────────────────────────
-  g.fillStyle(0x87ceeb);
-  g.fillRect(0, 0, W, waterScreenY);
+  drawSkyGradient(g, W, waterScreenY);
+  const now = scene.time?.now || 0;
+  drawClouds(g, W, now, 0.4);
 
   // ── 2. Shores ──────────────────────────────────────────────────────────
   const leftX = sx(scene, state.leftShoreX);
@@ -150,7 +156,10 @@ export function renderState(scene, state) {
     if (obj.onShore) drawObject(scene, d, state, obj);
   }
 
-  // ── 7. UI updates ─────────────────────────────────────────────────────
+  // ── 7. Weight gauge bar ────────────────────────────────────────────────
+  drawWeightGauge(scene, g, state);
+
+  // ── 8. UI updates ─────────────────────────────────────────────────────
   updateUI(scene, d, state);
 }
 
@@ -296,12 +305,41 @@ function drawObject(scene, d, state, obj) {
   }
 
   const color = Phaser.Display.Color.HexStringToColor(obj.color).color;
-  g.fillStyle(color, 0.85);
-  g.fillCircle(x, y, r);
-  g.lineStyle(2, 0x333333, 0.5);
-  g.strokeCircle(x, y, r);
+  drawObjectWithDepth(scene, g, d.objectTexts, obj, x, y, r, color);
+}
 
-  drawObjectEmojiCached(scene, d.objectTexts, obj, x, y, r);
+// ── Weight gauge ────────────────────────────────────────────────────────────
+
+function drawWeightGauge(scene, g, state) {
+  const W = scene.scale.width;
+  const maxSafe = 18;
+  const cargo = state.cargoMass || 0;
+  const pct = Math.min(1, Math.abs(cargo) / maxSafe);
+
+  // Position: top-right area below the door
+  const barX = W - 140;
+  const barY = 78;
+  const barW = 120;
+  const barH = 14;
+
+  // Background
+  g.fillStyle(0x2c3e50, 0.6);
+  g.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+  g.fillStyle(0x34495e, 0.8);
+  g.fillRect(barX, barY, barW, barH);
+
+  // Fill color: green → orange → red
+  const fillColor = pct > 0.9 ? 0xe74c3c : pct > 0.6 ? 0xf39c12 : 0x27ae60;
+  g.fillStyle(fillColor, 0.9);
+  g.fillRect(barX, barY, barW * pct, barH);
+
+  // Danger line at 100%
+  g.lineStyle(2, 0xe74c3c, 0.6);
+  g.lineBetween(barX + barW, barY - 1, barX + barW, barY + barH + 1);
+
+  // Border
+  g.lineStyle(1, 0xbdc3c7, 0.5);
+  g.strokeRect(barX, barY, barW, barH);
 }
 
 // ── UI ──────────────────────────────────────────────────────────────────────
@@ -354,6 +392,13 @@ function updateUI(scene, d, state) {
   }
 
   updateDoorButton(d.doorText, state.doorOpen);
+
+  // Completion banner
+  if (state.doorOpen) {
+    drawCompletionBanner(scene, scene.graphics, state);
+  } else {
+    hideCompletionBanner(scene);
+  }
 
   const canGo = !state.boat.sailing && !state.boat.capsized && !state.gamePaused;
   d.goBtn.setAlpha(canGo ? 1 : 0.4);

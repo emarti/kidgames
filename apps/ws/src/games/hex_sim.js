@@ -238,6 +238,40 @@ export function redoMove(state) {
 
 // ─── Reset ───────────────────────────────────────────────────────────────────
 
+/**
+ * Place a stone as the computer (no player-ID / color validation).
+ * Places as `state.turn`, saves undo snapshot, checks win, alternates turn.
+ */
+export function computerPlaceStone(state, row, col) {
+  if (state.gameOver) return { ok: false, error: 'Game is over.' };
+  const size = state.boardSize;
+  if (row < 0 || row >= size || col < 0 || col >= size) {
+    return { ok: false, error: 'Out of bounds.' };
+  }
+  const i = row * size + col;
+  if (state.board[i] !== null) {
+    return { ok: false, error: 'Cell occupied.' };
+  }
+
+  _pushSnapshot(state);
+
+  state.board[i] = state.turn;
+  state.moveCount++;
+  state.lastMove = { row, col };
+
+  const path = checkWin(state.board, state.turn, size);
+  if (path) {
+    state.gameOver = true;
+    state.winner = state.turn;
+    state.winPath = path;
+  } else {
+    state.turn = state.turn === 'black' ? 'white' : 'black';
+  }
+
+  state.tick++;
+  return { ok: true };
+}
+
 export function resetGame(state) {
   const size = state.boardSize;
   state.board = new Array(size * size).fill(null);

@@ -411,41 +411,54 @@ New message (client → server):
 
 **Session plan:** Win detection is a flood-fill from one edge to the other.
 
-### Server sim: `apps/ws/src/games/gameroom_hex_sim.js`
+### Server sim: `apps/ws/src/games/hex_sim.js`
 
 Board: 11×11 rhombus grid (hex cells). Use offset or axial coordinates.
-- Red connects top to bottom; Blue connects left to right
+- Black connects top to bottom; White connects left to right
 - No draws possible
 
 Rules:
-- [ ] Place a stone on any empty hex — no captures, no removal
-- [ ] Win detection: flood-fill from Red's top row to bottom row, or Blue's left column to right column
+- [x] Place a stone on any empty hex — no captures, no removal
+- [x] Win detection: flood-fill from Black's top row to bottom row, or White's left column to right column
 - [ ] Pie rule (swap rule): after Black's first move, White may choose to swap sides (strongly recommended for fairness)
   - `swap_sides` message — swaps colors, converts the first stone to the new color
-- [ ] Undo: revert last stone (and undo any swap if applicable)
+- [x] Undo: revert last stone (and undo any swap if applicable)
 
 New messages:
-- `place_stone { q, r }` — or `{ x, y }` in offset coords (consistent with Go)
+- `place_stone { row, col }` — place at hex cell coordinate
 - `swap_sides` — available only on White's very first turn
 
 ### Client renderer: `gameroom/client/src/game/renderers/hex.js`
 
-- [ ] Draw 11×11 rhombus grid of hexagons (60° shear transform)
-- [ ] Color the two goal edges: Red on top/bottom bands, Blue on left/right bands
-- [ ] Stone: filled hex in player color
-- [ ] Winning chain: highlight the connected path after win
+- [x] Draw 11×11 rhombus grid of hexagons (pointy-top, board leans right)
+- [x] Color the two goal edges: Black on top/bottom bands, White on left/right bands
+- [x] Stone: filled hex in player color
+- [x] Winning chain: highlight the connected path after win
 
 ### Hints
-- [ ] `apps/ws/src/games/gameroom_hex_hint.js` — JS MCTS: place stone on any empty hex; evaluate terminal via flood-fill connectivity (same win check as game sim). Note: Hex is a perfect-information game with no draws — MCTS works well here.
-- [ ] Route `request_hint` for `gameType === 'hex'` in `gameroom.js`
+- [x] `apps/ws/src/games/hex_hint.js` — JS MCTS (UCT, C=1.4, 3000 iters / 1500ms): place stone on any empty hex; evaluate terminal via flood-fill connectivity (same win check as game sim).
+- [x] Route `request_hint` for `gameType === 'hex'` in `gameroom.js`
+
+### Computer player (collaborative vs. computer)
+
+Room state extended with `computer: { color: null, level: 'medium' }`.
+
+- [x] `set_computer { color }` — toggle computer on/off (`null`, `'black'`, or `'white'`); requires `ws.playerId`
+- [x] `set_computer_level { level }` — set difficulty (`'easy'`|`'medium'`|`'hard'`); requires `ws.playerId`
+- [x] `computerPlaceStone(state, row, col)` in `hex_sim.js` — places as `state.turn`, no player validation
+- [x] `maybeComputerMove(room)` in `gameroom.js` — after 500ms delay, runs MCTS via worker, applies move if generation counter still matches (stale moves discarded)
+- [x] Called after: `place_stone`, `undo_move`, `redo_move`, `restart`, `set_computer`, `select_game`, `toggle_hex_size`
+- [x] Computer settings persist across `restart` (room-level, not game-level)
+- [x] PlayScene side panel: COMPUTER section (⏹ Off / ⚫ Black / ⚪ White) + LEVEL section (🟢 Easy / 🟡 Medium / 🔴 Hard)
+- [ ] Difficulty levels not yet wired — all three use the same MCTS engine (3000 iters / 1500ms)
 
 ### Integration
-- [ ] Add `'hex'` to `IMPLEMENTED` in `gameroom.js`
-- [ ] `place_stone` handler (reuse message type): require `ws.playerId`; support `side: 'both'`
+- [x] Add `'hex'` to `IMPLEMENTED` in `gameroom.js`
+- [x] `place_stone` handler (reuse message type): require `ws.playerId`; support `side: 'both'`
 - [ ] `swap_sides` handler: require `ws.playerId`; available only on second player's very first turn
-- [ ] `undo_move` routes to hex sim; `selectColor(game, pid, color)` exposed
-- [ ] `request_hint` routes to `gameroom_hex_hint.js`
-- [ ] `join_room` auto-side; direct to PlayScene if game active
+- [x] `undo_move` routes to hex sim; `selectColor(game, pid, color)` exposed
+- [x] `request_hint` routes to `hex_hint.js`
+- [x] `join_room` auto-side; direct to PlayScene if game active
 - [ ] Write `docs/gameroom_hex_LLM.md`
 
 ---

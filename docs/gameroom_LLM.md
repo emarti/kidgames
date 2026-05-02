@@ -71,6 +71,12 @@ MenuScene
 - `undo_move` — undo last move; players only (requires `ws.playerId`)
 - `restart` — reset to new game, keep connections; players only
 
+### Computer player (collaborative vs. computer)
+- `set_computer { color }` — toggle computer opponent: `null` (off), `'black'`, or `'white'`. Requires `ws.playerId`. All human players cooperate against the computer.
+- `set_computer_level { level }` — set difficulty: `'easy'|'medium'|'hard'`. Requires `ws.playerId`. (Currently all levels use the same MCTS engine — not yet wired.)
+- Computer settings persist across `restart` (stored in room state, not game state).
+- When the computer is enabled and it's the computer's turn, the server auto-plays after a 500ms delay using the same MCTS hint engine. A generation counter prevents stale moves from being applied after undo/toggle/restart.
+
 ### Go-specific actions
 - `place_stone { x, y }` — place at board coordinate
 - `pass_turn` — pass the turn
@@ -104,6 +110,7 @@ MenuScene
     "3": { "connected": false, "side": null },
     "4": { "connected": false, "side": null }
   },
+  "computer": { "color": null, "level": "medium" },
   "game": { /* active sim state */ }
 }
 ```

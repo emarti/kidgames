@@ -54,6 +54,9 @@ The server broadcasts the full authoritative state each tick. Clients treat it a
 - `select_level` `{ level }`
 - `select_avatar` `{ avatar }`
 - `select_color` `{ color }`
+- `set_computer` `{ color }` — toggle computer opponent: `null` (off), `'black'`, or `'white'` (gameroom)
+- `set_computer_level` `{ level }` — set computer difficulty: `'easy'|'medium'|'hard'` (gameroom)
+- `select_color` `{ color }`
 - `next_level`
 
 ## Authority rules

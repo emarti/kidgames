@@ -35,9 +35,6 @@ export default class PlayScene extends Phaser.Scene {
         { n: 3, label: 'Level 3: Boulder Run', clr: '#9b59b6' },
       ],
     },
-    { type: 'gears', name: '⚙️ Gears', levels: [{ n: 1, label: 'Level 1', clr: '#34495e' }] },
-    { type: 'sail', name: '⛵ Sailing', levels: [{ n: 1, label: 'Level 1', clr: '#16a085' }] },
-    { type: 'pi', name: '🥧 Pi Jar', levels: [{ n: 1, label: 'Level 1', clr: '#8e44ad' }] },
     {
       type: 'seesaw',
       name: '⚖️ Seesaw Lab',
@@ -162,6 +159,29 @@ export default class PlayScene extends Phaser.Scene {
     if (next?.create) next.create(this);
   }
 
+  // ── Overlay instruction text per module ─────────────────────────────────────
+
+  static MODULE_INSTRUCTIONS = {
+    ferry:
+      'Drag items onto the boat\n' +
+      'Press GO to sail across\n' +
+      'Don\'t overload or it sinks!',
+    seesaw:
+      'Drag weights onto the beam\n' +
+      'Balance both sides to open the door\n' +
+      'Try different combinations!',
+    pulley:
+      'Grab the handle and pull down\n' +
+      'Lift the load to the top\n' +
+      'Add pulleys for more power!',
+  };
+
+  _updateOverlayInstructions(moduleType) {
+    const text = PlayScene.MODULE_INSTRUCTIONS[moduleType]
+      || 'Explore the physics toy!';
+    this.overlayInstructions.setText(text);
+  }
+
   // ── Overlays ───────────────────────────────────────────────────────────────
 
   createStartOverlay() {
@@ -188,13 +208,10 @@ export default class PlayScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.startContainer.add(this.overlayRoom);
 
-    const instructions = this.add.text(0, -5,
-      'Drag items onto the boat\n' +
-      'Press GO to sail across\n' +
-      'Don\'t overload or it sinks!', {
+    this.overlayInstructions = this.add.text(0, -5, '', {
       fontSize: '22px', color: '#ccc', align: 'center', lineSpacing: 8,
     }).setOrigin(0.5);
-    this.startContainer.add(instructions);
+    this.startContainer.add(this.overlayInstructions);
 
     const btn = this.add.text(0, 130, 'START', {
       fontSize: '34px', color: '#fff', backgroundColor: '#27ae60',
@@ -212,34 +229,26 @@ export default class PlayScene extends Phaser.Scene {
 
     this.levelContainer = this.add.container(cx, cy).setDepth(400).setVisible(false);
 
-    const bg = this.add.rectangle(0, 0, 400, 640, 0x1a1a2e, 0.95).setOrigin(0.5);
+    const bg = this.add.rectangle(0, 0, 420, 700, 0x1a1a2e, 0.95).setOrigin(0.5);
     this.levelContainer.add(bg);
 
-    this._levelSelectTitle = this.add.text(0, -298, 'SELECT MODULE + LEVEL', {
+    this._levelSelectTitle = this.add.text(0, -328, 'SELECT MODULE + LEVEL', {
       fontSize: '26px', color: '#fff', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.levelContainer.add(this._levelSelectTitle);
 
-    this._levelSelectSubtitle = this.add.text(0, -260, '', {
+    this._levelSelectSubtitle = this.add.text(0, -290, '', {
       fontSize: '17px', color: '#c7c7d1',
     }).setOrigin(0.5);
     this.levelContainer.add(this._levelSelectSubtitle);
 
-    this._levelSelectSectionModules = this.add.text(-180, -228, 'MODULES', {
-      fontSize: '16px', color: '#c7c7d1', fontStyle: 'bold',
-    }).setOrigin(0, 0.5);
-    this.levelContainer.add(this._levelSelectSectionModules);
-
-    this._levelSelectSectionLevels = this.add.text(-180, -58, 'LEVELS', {
-      fontSize: '16px', color: '#c7c7d1', fontStyle: 'bold',
-    }).setOrigin(0, 0.5);
-    this.levelContainer.add(this._levelSelectSectionLevels);
+    // Section headers removed — layout is self-explanatory with module/level grouping
 
     // Module buttons will be populated dynamically from state
     this._levelSelectButtons = [];
     this._levelSelectButtonMeta = [];
 
-    const close = this.add.text(0, 295, 'CLOSE', {
+    const close = this.add.text(0, 325, 'CLOSE', {
       fontSize: '22px', color: '#fff', backgroundColor: '#e74c3c',
       padding: { x: 20, y: 10 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
@@ -265,29 +274,27 @@ export default class PlayScene extends Phaser.Scene {
 
     const modules = PlayScene.MODULE_CATALOG;
 
-    // Modules grid (2 columns)
-    const x0 = -90;
+    // Modules — vertical list, full width, prominent
     const y0 = -195;
-    const dx = 180;
-    const dy = 46;
+    const dy = 56;
     for (let i = 0; i < modules.length; i++) {
       const m = modules[i];
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-
       const enabled = Boolean(PlayScene.RENDERERS[m.type]);
       const isSelected = m.type === selectedModule;
-      const bg = isSelected ? '#2c3e50' : '#34495e';
-      const alpha = enabled ? 1 : 0.35;
+      const bg = isSelected ? '#1a6b3a' : '#34495e';
 
-      const btn = this.add.text(x0 + col * dx, y0 + row * dy, m.name, {
-        fontSize: '18px', color: '#fff', backgroundColor: bg,
-        padding: { x: 12, y: 9 },
-      }).setOrigin(0.5).setAlpha(alpha);
+      const btn = this.add.text(0, y0 + i * dy, m.name, {
+        fontSize: '22px', color: '#fff', backgroundColor: bg,
+        padding: { x: 24, y: 12 },
+        fixedWidth: 320,
+        align: 'center',
+      }).setOrigin(0.5).setAlpha(enabled ? 1 : 0.35);
 
       if (enabled) {
         btn.setInteractive({ useHandCursor: true });
         btn.on('pointerdown', () => this.game.net.sendInput('set_module', { moduleType: m.type, subLevel: 1 }));
+        btn.on('pointerover', () => { if (m.type !== selectedModule) btn.setBackgroundColor('#4a6785'); });
+        btn.on('pointerout',  () => btn.setBackgroundColor(m.type === selectedModule ? '#1a6b3a' : '#34495e'));
       }
 
       this.levelContainer.add(btn);
@@ -295,20 +302,22 @@ export default class PlayScene extends Phaser.Scene {
       this._levelSelectButtonMeta.push({ kind: 'module', type: m.type, btn, enabled });
     }
 
-    // Levels list for selected module
+    // Levels list for selected module — positioned below modules
     const active = modules.find((m) => m.type === selectedModule) || modules[0];
     const enabledLevels = Boolean(PlayScene.RENDERERS[active.type]);
     const levels = Array.isArray(active.levels) ? active.levels : [];
+    const levelsStartY = y0 + modules.length * dy + 20;
     for (let i = 0; i < levels.length; i++) {
       const l = levels[i];
       const isSelected = Number(l.n) === selectedLevel;
-      const alpha = enabledLevels ? 1 : 0.35;
       const bg = isSelected ? '#1abc9c' : (l.clr || '#2ecc71');
 
-      const btn = this.add.text(0, -18 + i * 52, l.label, {
-        fontSize: '20px', color: '#fff', backgroundColor: bg,
-        padding: { x: 20, y: 10 },
-      }).setOrigin(0.5).setAlpha(alpha);
+      const btn = this.add.text(0, levelsStartY + i * 44, l.label, {
+        fontSize: '18px', color: '#fff', backgroundColor: bg,
+        padding: { x: 16, y: 8 },
+        fixedWidth: 280,
+        align: 'center',
+      }).setOrigin(0.5).setAlpha(enabledLevels ? 1 : 0.35);
 
       if (enabledLevels) {
         btn.setInteractive({ useHandCursor: true });
@@ -334,7 +343,7 @@ export default class PlayScene extends Phaser.Scene {
     for (const m of this._levelSelectButtonMeta || []) {
       if (m.kind === 'module') {
         const isSelected = m.type === selectedModule;
-        m.btn.setBackgroundColor(isSelected ? '#2c3e50' : '#34495e');
+        m.btn.setBackgroundColor(isSelected ? '#1a6b3a' : '#34495e');
       } else if (m.kind === 'level') {
         const isSelected = m.moduleType === selectedModule && m.level === selectedLevel;
         if (isSelected) m.btn.setBackgroundColor('#1abc9c');
@@ -397,6 +406,7 @@ export default class PlayScene extends Phaser.Scene {
     if (isLobby) {
       this.overlayLevel.setText(state.moduleName || state.levelName || '');
       this.overlayRoom.setText(`Room: ${this.game.net.roomId || '????'}  |  Player ${myId || '?'}`);
+      this._updateOverlayInstructions(state.moduleType);
     }
 
     // Rebuild level select buttons if module changed

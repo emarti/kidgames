@@ -32,7 +32,7 @@ const FONT = { fontFamily: 'monospace' };
 // icon: a short string drawn as "art" on the tile (emoji or ASCII art fallback)
 const GAMES = [
   { id: 'go',       label: 'Go',               icon: '⊕',  desc: '9×9 board · capture stones',    implemented: true  },
-  { id: 'checkers', label: 'Checkers',          icon: '◉',  desc: '8×8 board · jump and king',     implemented: false },
+  { id: 'checkers', label: 'Checkers',          icon: '◉',  desc: '8×8 board · jump and king',     implemented: true  },
   { id: 'chess',    label: 'Chess',             icon: '♞',  desc: '8×8 board · classic strategy',  implemented: false },
   { id: 'morris',   label: "Nine Men's Morris", icon: '⬡',  desc: 'mills and blocking',             implemented: true  },
   { id: 'cchk',     label: 'Chinese Checkers',  icon: '✦',  desc: 'star board · hop to the other side', implemented: false },

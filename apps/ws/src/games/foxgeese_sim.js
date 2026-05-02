@@ -311,6 +311,46 @@ export function movePiece(state, pid, from, to) {
   return { ok: true };
 }
 
+/**
+ * Move a piece as the computer (no player-ID validation).
+ * Acts as `state.pendingJump !== null ? 'black' : state.turn`.
+ */
+export function computerMovePiece(state, from, to) {
+  if (state.gameOver) return { ok: false, error: 'Game is over' };
+  const color = state.pendingJump !== null ? 'black' : state.turn;
+  const legal   = legalMovesFor(state, color);
+  const isLegal = legal.some((m) => m.from === from && m.to === to);
+  if (!isLegal) return { ok: false, error: 'Illegal move' };
+
+  _pushSnapshot(state);
+  let captured = false;
+  if (color === 'black') {
+    const { col: fc, row: fr } = COORDS[from];
+    const { col: tc, row: tr } = COORDS[to];
+    const dc = tc - fc;
+    const dr = tr - fr;
+    if (Math.abs(dc) === 2 || Math.abs(dr) === 2) {
+      const midIdx = _lookup(fc + dc / 2, fr + dr / 2);
+      if (midIdx >= 0 && state.board[midIdx] === 'white') {
+        state.board[midIdx] = null;
+        state.geeseCaptured++;
+        captured = true;
+      }
+    }
+  }
+  state.board[from] = null;
+  state.board[to]   = color;
+  state.lastMove = { type: 'move', from, to, color, captured };
+  state.tick++;
+  if (color === 'black') {
+    _afterFoxMove(state, to, captured);
+  } else {
+    state.turn = 'black';
+    _checkWin(state);
+  }
+  return { ok: true };
+}
+
 export function undoMove(state) {
   if (state.history.length === 0) return { ok: false, error: 'Nothing to undo' };
   state.redoSnapshot = JSON.stringify({

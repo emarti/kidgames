@@ -297,6 +297,75 @@ export function removePiece(state, pid, pointIndex) {
   return { ok: true };
 }
 
+/**
+ * Place a piece as the computer (no player-ID validation).
+ * Places as `state.turn`; handles mill detection and removal phase.
+ */
+export function computerPlacePiece(state, pointIndex) {
+  if (state.gameOver)                    return { ok: false, error: 'Game is over' };
+  if (state.phase !== 'placing')         return { ok: false, error: 'Not placing phase' };
+  const color = state.turn;
+  if (state.board[pointIndex] !== null)  return { ok: false, error: 'Point occupied' };
+  if (state.piecesInHand[color] <= 0)   return { ok: false, error: 'No pieces in hand' };
+  _pushSnapshot(state);
+  state.board[pointIndex] = color;
+  state.piecesInHand[color]--;
+  state.piecesOnBoard[color]++;
+  state.lastMove = { type: 'place', pointIndex, color };
+  state.tick++;
+  _afterPlace(state, color, pointIndex);
+  return { ok: true };
+}
+
+/**
+ * Move a piece as the computer (no player-ID validation).
+ * Moves as `state.turn`; handles mill detection and removal phase.
+ */
+export function computerMovePiece(state, from, to) {
+  if (state.gameOver)                    return { ok: false, error: 'Game is over' };
+  if (state.phase !== 'moving' && state.phase !== 'flying')
+                                         return { ok: false, error: 'Not moving phase' };
+  const color = state.turn;
+  if (state.board[from] !== color)       return { ok: false, error: 'Not your piece' };
+  if (state.board[to] !== null)          return { ok: false, error: 'Target occupied' };
+  if (state.phase === 'moving' && !state.flyingAlways && !ADJACENCY[from].includes(to)) {
+    return { ok: false, error: 'Not adjacent' };
+  }
+  _pushSnapshot(state);
+  state.board[from] = null;
+  state.board[to]   = color;
+  state.lastMove = { type: 'move', from, to, color };
+  state.tick++;
+  _afterPlace(state, color, to);
+  return { ok: true };
+}
+
+/**
+ * Remove an opponent piece as the computer after forming a mill (no player-ID validation).
+ * Acts as `state.pendingRemove`.
+ */
+export function computerRemovePiece(state, pointIndex) {
+  if (state.gameOver)                    return { ok: false, error: 'Game is over' };
+  if (state.phase !== 'removing')        return { ok: false, error: 'Not removing phase' };
+  const color = state.pendingRemove;
+  const opp = _opponent(color);
+  if (state.board[pointIndex] !== opp)   return { ok: false, error: 'Must remove opponent piece' };
+  if (_inMill(state.board, pointIndex) && !_allInMills(state.board, opp)) {
+    return { ok: false, error: 'Cannot remove piece in a mill' };
+  }
+  _pushSnapshot(state);
+  state.board[pointIndex] = null;
+  state.piecesOnBoard[opp]--;
+  state.captured[opp]++;
+  state.lastMove = { type: 'remove', pointIndex, color };
+  state.tick++;
+  state.turn = opp;
+  state.pendingRemove = null;
+  _updatePhase(state);
+  _checkWin(state, opp);
+  return { ok: true };
+}
+
 export function undoMove(state) {
   if (state.history.length === 0) return { ok: false, error: 'Nothing to undo' };
   state.redoSnapshot = JSON.stringify({

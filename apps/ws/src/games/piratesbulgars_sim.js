@@ -344,6 +344,61 @@ export function endJump(state, pid) {
   return { ok: true };
 }
 
+/**
+ * Move a piece as the computer (no player-ID validation).
+ * Acts as `state.pendingJump !== null ? 'white' : state.turn`.
+ */
+export function computerMovePiece(state, from, to) {
+  if (state.gameOver) return { ok: false, error: 'Game is over' };
+  const color = state.pendingJump !== null ? 'white' : state.turn;
+  const legal   = legalMovesFor(state, color);
+  const isLegal = legal.some((m) => m.from === from && m.to === to);
+  if (!isLegal) return { ok: false, error: 'Illegal move' };
+
+  _pushSnapshot(state);
+  let captured = false;
+  if (color === 'white') {
+    const { col: bc, row: br } = COORDS[from];
+    const { col: tc, row: tr } = COORDS[to];
+    const dc = tc - bc;
+    const dr = tr - br;
+    if (Math.abs(dc) === 2 || Math.abs(dr) === 2) {
+      const midIdx = _lookup(bc + dc / 2, br + dr / 2);
+      if (midIdx >= 0 && state.board[midIdx] === 'black') {
+        state.board[midIdx] = null;
+        state.piratesCaptured++;
+        captured = true;
+      }
+    }
+  }
+  state.board[from] = null;
+  state.board[to]   = color;
+  state.lastMove = { type: 'move', from, to, color, captured };
+  state.tick++;
+  if (color === 'white') {
+    _afterBulgarMove(state, to, captured);
+  } else {
+    state.turn = 'white';
+    _checkWin(state);
+  }
+  return { ok: true };
+}
+
+/**
+ * End a multi-jump sequence as the computer (no player-ID validation).
+ * Safety fallback when MCTS returns null during pendingJump.
+ */
+export function computerEndJump(state) {
+  if (state.gameOver) return { ok: false, error: 'Game is over' };
+  if (state.pendingJump === null) return { ok: false, error: 'No pending jump' };
+  _pushSnapshot(state);
+  state.pendingJump = null;
+  state.turn = 'black';
+  state.tick++;
+  _checkWin(state);
+  return { ok: true };
+}
+
 export function undoMove(state) {
   if (state.history.length === 0) return { ok: false, error: 'Nothing to undo' };
   state.redoSnapshot = JSON.stringify({

@@ -8,8 +8,11 @@
 import { legalMovesFor, COORDS, ADJACENCY } from './foxgeese_sim.js';
 
 const C              = 1.4;
-const MAX_ITER       = 2000;
-const TIME_BUDGET_MS = 1500;
+function _budget(level) {
+  if (level === 'easy') return { maxIter: 200,  maxMs: 400  };
+  if (level === 'hard') return { maxIter: 6000, maxMs: 4000 };
+  return                       { maxIter: 2000, maxMs: 1500 };  // medium (default)
+}
 const ROLLOUT_DEPTH  = 60;
 
 // ─── Local topology helpers ───────────────────────────────────────────────────
@@ -160,10 +163,11 @@ export function suggestMove(state) {
   if (rootMoves.length === 1) return { move: rootMoves[0] };
 
   const nodes = rootMoves.map((move) => ({ move, wins: 0, visits: 0 }));
+  const { maxIter, maxMs } = _budget(state._computerLevel);
   const start  = Date.now();
   let iter     = 0;
 
-  while (iter < MAX_ITER && Date.now() - start < TIME_BUDGET_MS) {
+  while (iter < maxIter && Date.now() - start < maxMs) {
     // UCT selection.
     let best      = null;
     let bestScore = -Infinity;

@@ -11,10 +11,17 @@ import {
   updateDoorButton,
   cleanupObjectTexts,
   drawObjectEmojiCached,
+  drawObjectWithDepth,
   destroyCommonUI,
   updateConfetti,
   drawConfetti,
   shouldHandlePointer,
+  drawSkyGradient,
+  drawGround,
+  drawClouds,
+  drawHills,
+  drawCompletionBanner,
+  hideCompletionBanner,
   FONT_BODY,
   FONT_SMALL,
   UI_DEPTH,
@@ -133,12 +140,11 @@ export function renderState(scene, state) {
   cleanupObjectTexts(d.objectTexts, liveObjects);
 
   // ── 1. Background ──────────────────────────────────────────────────────
-  g.fillStyle(0x87ceeb);
-  g.fillRect(0, 0, W, H * 0.75);
-  g.fillStyle(0x8b6914);
-  g.fillRect(0, H * 0.75, W, H * 0.25);
-  g.fillStyle(0x228b22);
-  g.fillRect(0, H * 0.75, W, 5);
+  const groundY = H * 0.75;
+  drawSkyGradient(g, W, groundY);
+  drawClouds(g, W, now, 0.4);
+  drawHills(g, W, groundY);
+  drawGround(g, W, H, groundY);
 
   // ── 2. Ceiling / anchor ────────────────────────────────────────────────
   const anchorSx = sx(scene, rig.anchorX);
@@ -202,12 +208,21 @@ export function renderState(scene, state) {
 // ── Rope drawing ──────────────────────────────────────────────────────────────
 
 function drawRopes(scene, g, rig, load) {
+  const anyPulling = rig.effortPoints.some(ep => ep.claimedBy);
+  const windlassPulling = rig.windlass?.claimedBy;
+
   for (const seg of rig.ropeSegments) {
     const a = resolveRopeEndpoint(seg.from, rig, load);
     const b = resolveRopeEndpoint(seg.to,   rig, load);
 
     if (!a || !b) continue;
-    g.lineStyle(3, 0xd4a017, 0.9);
+
+    // Thicker, brighter rope when actively pulling
+    if (anyPulling || windlassPulling) {
+      g.lineStyle(4, 0xe8c547, 1.0);
+    } else {
+      g.lineStyle(3, 0xd4a017, 0.9);
+    }
     g.lineBetween(
       sx(scene, a.x), sy(scene, a.y),
       sx(scene, b.x), sy(scene, b.y)
@@ -304,6 +319,18 @@ function drawEffortPoint(scene, g, ep, now) {
     g.lineTo(px + 10, arrowY);
     g.closePath();
     g.fillPath();
+  } else {
+    // Active pull: motion lines showing downward force
+    const lineAlpha = 0.4 + 0.3 * Math.sin(now / 150);
+    g.lineStyle(2, 0xf1c40f, lineAlpha);
+    for (let i = 0; i < 3; i++) {
+      const offsetX = (i - 1) * 14;
+      const lineY = py + 28 + i * 8;
+      g.lineBetween(px + offsetX, lineY, px + offsetX, lineY + 12);
+      // Small arrow tip
+      g.lineBetween(px + offsetX - 3, lineY + 9, px + offsetX, lineY + 12);
+      g.lineBetween(px + offsetX + 3, lineY + 9, px + offsetX, lineY + 12);
+    }
   }
 }
 
@@ -369,13 +396,12 @@ function drawLoad(scene, g, d, load) {
   g.strokeRect(barX, barY, barW, 8);
 
   // Load circle
-  g.fillStyle(0x7f8c8d, 0.85);
-  g.fillCircle(lx, ly, r);
-  g.lineStyle(3, load.atTop ? 0x27ae60 : 0x5d6d7e);
-  g.strokeCircle(lx, ly, r);
-
-  // Emoji + mass
-  drawObjectEmojiCached(scene, d.objectTexts, load, lx, ly, r);
+  drawObjectWithDepth(scene, g, d.objectTexts, load, lx, ly, r, 0x7f8c8d);
+  // Green ring when at top
+  if (load.atTop) {
+    g.lineStyle(3, 0x27ae60);
+    g.strokeCircle(lx, ly, r + 2);
+  }
 }
 
 function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
@@ -396,12 +422,7 @@ function drawCounterweight(scene, g, d, cw) {
   const cy = sy(scene, cw.y);
   const r  = 22 * (scene.scale.width / 800);
 
-  g.fillStyle(0x5d6d7e, 0.85);
-  g.fillCircle(cx, cy, r);
-  g.lineStyle(2, 0x2c3e50, 0.8);
-  g.strokeCircle(cx, cy, r);
-
-  drawObjectEmojiCached(scene, d.objectTexts, cw, cx, cy, r);
+  drawObjectWithDepth(scene, g, d.objectTexts, cw, cx, cy, r, 0x5d6d7e);
 }
 
 function drawCWPalette(scene, g, d, cw) {
@@ -425,7 +446,7 @@ function drawCWPalette(scene, g, d, cw) {
       g.strokeCircle(ix, iy, r + 4);
     }
 
-    drawObjectEmojiCached(scene, d.objectTexts, item, ix, iy, r);
+    drawObjectWithDepth(scene, g, d.objectTexts, item, ix, iy, r, 0x5d6d7e);
   }
 }
 
@@ -568,6 +589,13 @@ function updateUI(scene, d, state) {
   }
 
   updateDoorButton(d.doorText, state.doorOpen);
+
+  // Completion banner
+  if (state.doorOpen) {
+    drawCompletionBanner(scene, scene.graphics, state);
+  } else {
+    hideCompletionBanner(scene);
+  }
 }
 
 // ── Input ─────────────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import morrisRenderer from '../renderers/morris.js';
 import foxgeeseRenderer from '../renderers/foxgeese.js';
 import piratesbulgarsRenderer from '../renderers/piratesbulgars.js';
 import hexRenderer from '../renderers/hex.js';
+import checkersRenderer from '../renderers/checkers.js';
 import NetScene from './NetScene.js';
 
 // ─── Renderer registry ────────────────────────────────────────────────────────
@@ -12,6 +13,7 @@ const RENDERERS = {
   foxgeese:        foxgeeseRenderer,
   piratesbulgars:  piratesbulgarsRenderer,
   hex:             hexRenderer,
+  checkers:        checkersRenderer,
 };
 
 // ─── UI palette ───────────────────────────────────────────────────────────────
@@ -170,9 +172,15 @@ export default class PlayScene extends NetScene {
 
     const boardTop = this._boardY;
     const boardBot = this._boardY + (BOARD_SIZE - 1) * this._cellSize;
-    const totalH   = 16 + 3 * (bh + gap) + 14 + 16 + bh;
+    // YOUR SIDE (label + 3 btns) + COMPUTER (label + 3 btns) + LEVEL (label + 3 btns)
+    const totalH   = 16 + 3 * (bh + gap)    // YOUR SIDE section
+                   + 14                       // gap before COMPUTER
+                   + 16 + 3 * (bh + gap)     // COMPUTER section
+                   + 14                       // gap before LEVEL
+                   + 16 + 3 * (bh + gap);    // LEVEL section
     let   y        = Math.round((boardTop + boardBot) / 2 - totalH / 2);
 
+    // ── YOUR SIDE ──
     this.add.text(x, y, 'YOUR SIDE', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0.5).setDepth(20);
     y += 16;
 
@@ -207,11 +215,131 @@ export default class PlayScene extends NetScene {
       this._sidePanelDefLabels[opt.id] = opt.label;
       y += bh + gap;
     }
+
+    // ── COMPUTER ──
+    y += 14;
+    // Section header: small monitor icon + label drawn inline
+    const hdrGfx = this.add.graphics().setDepth(20);
+    const hdrY = y + 5;
+    // monitor body
+    hdrGfx.fillStyle(0x666677);
+    hdrGfx.fillRoundedRect(x - 26, hdrY - 5, 14, 10, 1);
+    hdrGfx.fillTriangle(x - 20, hdrY + 5, x - 23, hdrY + 9, x - 17, hdrY + 9);
+    hdrGfx.fillRect(x - 24, hdrY + 8, 8, 2);
+    this.add.text(x - 9, hdrY, 'COMPUTER', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0, 0.5).setDepth(20);
+    y += 16;
+
+    const computerOptions = [
+      { id: 'off',   color: null,    label: 'Off',   fill: 0x2a2a3a, stroke: 0x555566, fg: '#999999' },
+      { id: 'black', color: 'black', label: 'Black', fill: 0x1a1a1a, stroke: 0x555566, fg: '#dddddd' },
+      { id: 'white', color: 'white', label: 'White', fill: 0xcacaca, stroke: 0x888888, fg: '#111111' },
+    ];
+
+    this._computerBgs       = {};
+    this._computerTxts      = {};
+    this._computerFg        = {};
+    this._computerStroke    = {};
+    this._computerDefLabels = {};
+
+    for (const opt of computerOptions) {
+      const bg  = this.add.rectangle(x, y, bw, bh, opt.fill)
+        .setStrokeStyle(1, opt.stroke)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(20);
+
+      // Draw a tiny monitor icon to the left of the label text.
+      const iconGfx = this.add.graphics().setDepth(21);
+      const ix = x - bw / 2 + 8;  // left-aligned within button
+      const iy = y;
+      const iconColor = parseInt(opt.fg.replace('#', ''), 16);
+      if (opt.id === 'off') {
+        // Monitor with an X / power symbol
+        iconGfx.fillStyle(iconColor, 0.7);
+        iconGfx.fillRoundedRect(ix - 6, iy - 5, 12, 9, 1);
+        iconGfx.fillStyle(opt.fill === 0x2a2a3a ? 0x2a2a3a : 0xcacaca);
+        iconGfx.fillRect(ix - 2, iy - 3, 4, 5);   // "screen off"
+        iconGfx.fillStyle(iconColor, 0.7);
+        iconGfx.fillTriangle(ix, iy + 4, ix - 3, iy + 8, ix + 3, iy + 8);
+        iconGfx.fillRect(ix - 4, iy + 7, 8, 2);
+      } else {
+        // Monitor with a filled circle (black or white stone) on screen
+        iconGfx.fillStyle(iconColor, 1);
+        iconGfx.fillRoundedRect(ix - 6, iy - 5, 12, 9, 1);
+        const stoneColor = opt.id === 'black' ? 0x111111 : 0xffffff;
+        iconGfx.fillStyle(opt.fill);
+        iconGfx.fillRect(ix - 4, iy - 3, 8, 5);   // screen bg
+        iconGfx.fillStyle(stoneColor);
+        iconGfx.fillCircle(ix, iy - 1, 2);          // stone on screen
+        iconGfx.fillStyle(iconColor, 1);
+        iconGfx.fillTriangle(ix, iy + 4, ix - 3, iy + 8, ix + 3, iy + 8);
+        iconGfx.fillRect(ix - 4, iy + 7, 8, 2);
+      }
+
+      const lbl = this.add.text(x + 4, y, opt.label, {
+        ...FONT, fontSize: '12px', color: opt.fg, fontStyle: 'bold',
+      }).setOrigin(0.5).setDepth(21);
+      bg.on('pointerover',  () => { if (!this._computerSelected(opt.id)) bg.setStrokeStyle(2, 0xffd700); });
+      bg.on('pointerout',   () => { if (!this._computerSelected(opt.id)) bg.setStrokeStyle(1, opt.stroke); });
+      bg.on('pointerdown',  () => this.game.net.send('set_computer', { color: opt.color }));
+      lbl.on('pointerdown', () => this.game.net.send('set_computer', { color: opt.color }));
+      this._computerBgs[opt.id]       = bg;
+      this._computerTxts[opt.id]      = lbl;
+      this._computerFg[opt.id]        = opt.fg;
+      this._computerStroke[opt.id]    = opt.stroke;
+      this._computerDefLabels[opt.id] = opt.label;
+      y += bh + gap;
+    }
+
+    // ── LEVEL ──
+    y += 14;
+    this.add.text(x, y, 'LEVEL', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0.5).setDepth(20);
+    y += 16;
+
+    const levelOptions = [
+      { id: 'easy',   label: '🟢 Easy',   fill: 0x1a3a1a, stroke: 0x33aa33, fg: '#66dd66' },
+      { id: 'medium', label: '🟡 Medium', fill: 0x3a3a1a, stroke: 0xaaaa33, fg: '#dddd66' },
+      { id: 'hard',   label: '🔴 Hard',   fill: 0x3a1a1a, stroke: 0xaa3333, fg: '#dd6666' },
+    ];
+
+    this._levelBgs    = {};
+    this._levelTxts   = {};
+    this._levelFg     = {};
+    this._levelStroke = {};
+
+    for (const opt of levelOptions) {
+      const bg  = this.add.rectangle(x, y, bw, bh, opt.fill)
+        .setStrokeStyle(1, opt.stroke)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(20);
+      const lbl = this.add.text(x, y, opt.label, {
+        ...FONT, fontSize: '12px', color: opt.fg, fontStyle: 'bold',
+      }).setOrigin(0.5).setDepth(20);
+      bg.on('pointerover',  () => { if (!this._levelSelected(opt.id)) bg.setStrokeStyle(2, 0xffd700); });
+      bg.on('pointerout',   () => { if (!this._levelSelected(opt.id)) bg.setStrokeStyle(1, opt.stroke); });
+      bg.on('pointerdown',  () => this.game.net.send('set_computer_level', { level: opt.id }));
+      lbl.on('pointerdown', () => this.game.net.send('set_computer_level', { level: opt.id }));
+      this._levelBgs[opt.id]    = bg;
+      this._levelTxts[opt.id]   = lbl;
+      this._levelFg[opt.id]     = opt.fg;
+      this._levelStroke[opt.id] = opt.stroke;
+      y += bh + gap;
+    }
   }
 
   _sidePanelSelected(id) {
     const mySide = this.game.net.latestState?.players[this.game.net.playerId]?.side ?? null;
     return mySide === id;
+  }
+
+  _computerSelected(id) {
+    const comp = this.game.net.latestState?.computer;
+    if (!comp || !comp.color) return id === 'off';
+    return comp.color === id;
+  }
+
+  _levelSelected(id) {
+    const comp = this.game.net.latestState?.computer;
+    return (comp?.level ?? 'medium') === id;
   }
 
   _updateSidePanel(mySide) {
@@ -226,6 +354,35 @@ export default class PlayScene extends NetScene {
       lbl.setColor(sel ? '#ffd700' : this._sidePanelFg[id]);
       if (custom && custom[id]) lbl.setText(custom[id]);
       else lbl.setText(this._sidePanelDefLabels[id]);
+    }
+  }
+
+  _updateComputerPanel(state) {
+    if (!this._computerBgs) return;
+    const compColor = state?.computer?.color ?? null;
+    const custom = this._activeRenderer?.sideLabels;
+    for (const id of ['off', 'black', 'white']) {
+      const bg  = this._computerBgs[id];
+      const lbl = this._computerTxts[id];
+      if (!bg) continue;
+      const sel = (id === 'off' && !compColor) || (compColor === id);
+      bg.setStrokeStyle(sel ? 3 : 1, sel ? 0xffd700 : this._computerStroke[id]);
+      lbl.setColor(sel ? '#ffd700' : this._computerFg[id]);
+      if (custom && custom[id]) lbl.setText(custom[id]);
+      else lbl.setText(this._computerDefLabels[id]);
+    }
+  }
+
+  _updateLevelPanel(state) {
+    if (!this._levelBgs) return;
+    const level = state?.computer?.level ?? 'medium';
+    for (const id of ['easy', 'medium', 'hard']) {
+      const bg  = this._levelBgs[id];
+      const lbl = this._levelTxts[id];
+      if (!bg) continue;
+      const sel = level === id;
+      bg.setStrokeStyle(sel ? 3 : 1, sel ? 0xffd700 : this._levelStroke[id]);
+      lbl.setColor(sel ? '#ffd700' : this._levelFg[id]);
     }
   }
 
@@ -371,6 +528,8 @@ export default class PlayScene extends NetScene {
 
     // Side panel.
     this._updateSidePanel(mySide);
+    this._updateComputerPanel(state);
+    this._updateLevelPanel(state);
 
     // Button states.
     const hasHistory = gameState.history?.length > 0;
