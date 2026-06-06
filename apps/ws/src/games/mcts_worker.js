@@ -14,7 +14,7 @@ const { module: moduleUrl, state } = workerData;
 
 try {
   const mod = await import(moduleUrl);
-  const result = mod.suggestMove(state);
+  const result = await mod.suggestMove(state);
   parentPort.postMessage({ move: result?.move ?? null });
 } catch (err) {
   parentPort.postMessage({ error: String(err?.message ?? err) });

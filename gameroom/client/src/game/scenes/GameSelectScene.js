@@ -33,7 +33,7 @@ const FONT = { fontFamily: 'monospace' };
 const GAMES = [
   { id: 'go',       label: 'Go',               icon: '⊕',  desc: '9×9 board · capture stones',    implemented: true  },
   { id: 'checkers', label: 'Checkers',          icon: '◉',  desc: '8×8 board · jump and king',     implemented: true  },
-  { id: 'chess',    label: 'Chess',             icon: '♞',  desc: '8×8 board · classic strategy',  implemented: false },
+  { id: 'chess',    label: 'Chess',             icon: '♞',  desc: '8×8 board · classic strategy',  implemented: true },
   { id: 'morris',   label: "Nine Men's Morris", icon: '⬡',  desc: 'mills and blocking',             implemented: true  },
   { id: 'cchk',     label: 'Chinese Checkers',  icon: '✦',  desc: 'star board · hop to the other side', implemented: false },
   { id: 'foxgeese', label: 'Fox & Geese',       icon: '🦊', desc: 'asymmetric · fox vs geese',     implemented: true  },

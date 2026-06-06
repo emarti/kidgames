@@ -15,6 +15,8 @@ import * as FoxGeeseSim from './foxgeese_sim.js';
 import * as PiratesBulgarsSim from './piratesbulgars_sim.js';
 import * as HexSim from './hex_sim.js';
 import * as CheckersSim from './checkers_sim.js';
+import * as ChessSim from './chess_sim.js';
+import * as CchkSim from './cchk_sim.js';
 import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -47,16 +49,18 @@ import {
 // ─── Game registry ────────────────────────────────────────────────────────────
 
 const GAME_TYPES = ['go', 'checkers', 'chess', 'morris', 'cchk', 'foxgeese', 'hex', 'piratesbulgars'];
-const IMPLEMENTED = new Set(['go', 'checkers', 'morris', 'foxgeese', 'piratesbulgars', 'hex']);
+const IMPLEMENTED = new Set(['go', 'checkers', 'chess', 'morris', 'cchk', 'foxgeese', 'piratesbulgars', 'hex']);
 
 // Build initial sim state for a given game type.
-function newGameSimState(gameType) {
+function newGameSimState(gameType, opts = {}) {
   if (gameType === 'go')              return GoSim.newGameState();
   if (gameType === 'morris')          return MorrisSim.newGameState();
   if (gameType === 'foxgeese')        return FoxGeeseSim.newGameState();
   if (gameType === 'piratesbulgars')  return PiratesBulgarsSim.newGameState();
   if (gameType === 'hex')             return HexSim.newGameState();
   if (gameType === 'checkers')        return CheckersSim.newGameState();
+  if (gameType === 'chess')            return ChessSim.newGameState();
+  if (gameType === 'cchk')             return CchkSim.newGameState(opts.activeColors);
   // Placeholder: other games return null until their sim modules are added.
   return null;
 }
@@ -95,6 +99,35 @@ function withBothSide(room, ws, actingColor, actionFn) {
   return actionFn();
 }
 
+/**
+ * Execute a cchk action. Handles 'all'-side (move for any non-computer color)
+ * and blocks moves when it is a computer-controlled color's turn.
+ */
+function withCchkSide(room, ws, actionFn) {
+  const game    = room.state.game;
+  const config  = room.state.cchkConfig;
+  const actingColor = game.turn;
+  // Block human from moving on a computer's turn.
+  if (config?.computerColors?.includes(actingColor)) return { ok: false, error: 'Computer turn' };
+  const playerSide = room.state.players[ws.playerId]?.side;
+  if (playerSide === 'all') {
+    // Temporarily assign the acting color so the sim's player-color check passes.
+    const original = game.players[ws.playerId].color;
+    game.players[ws.playerId].color = actingColor;
+    const result = actionFn();
+    if (!result.ok) game.players[ws.playerId].color = original;
+    return result;
+  }
+  return actionFn();
+}
+
+/** Returns true if the computer should move next (works for all game types). */
+function _isComputerTurn(room, gameType, game) {
+  const act = _actingColor(gameType, game);
+  if (gameType === 'cchk') return room.state.cchkConfig?.computerColors?.includes(act) ?? false;
+  return room.state.computer?.color === act;
+}
+
 // ─── Computer auto-move (hex only for now) ────────────────────────────────────
 
 /**
@@ -112,12 +145,10 @@ function _actingColor(gameType, game) {
 
 function maybeComputerMove(room) {
   const gameType = room.state.gameType;
-  if (!['go', 'checkers', 'morris', 'foxgeese', 'piratesbulgars', 'hex'].includes(gameType)) return;
-  const comp = room.state.computer;
-  if (!comp || !comp.color) return;
+  if (!['go', 'checkers', 'chess', 'morris', 'cchk', 'foxgeese', 'piratesbulgars', 'hex'].includes(gameType)) return;
   const game = room.state.game;
   if (!game || game.gameOver) return;
-  if (comp.color !== _actingColor(gameType, game)) return;
+  if (!_isComputerTurn(room, gameType, game)) return;
 
   room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
   const gen = room._computerMoveGen;
@@ -127,7 +158,7 @@ function maybeComputerMove(room) {
     if (room._computerMoveGen !== gen) return;
     const g = room.state.game;
     if (!g || g.gameOver) return;
-    if (room.state.computer?.color !== _actingColor(gameType, g)) return;
+    if (!_isComputerTurn(room, gameType, g)) return;
 
     const level = room.state.computer?.level ?? 'medium';
     const snap = JSON.parse(JSON.stringify(g));
@@ -159,6 +190,8 @@ function maybeComputerMove(room) {
                    : gameType === 'foxgeese'       ? './foxgeese_hint.js'
                    : gameType === 'piratesbulgars' ? './piratesbulgars_hint.js'
                    : gameType === 'checkers'        ? './checkers_hint.js'
+                   : gameType === 'chess'            ? './chess_hint.js'
+                   : gameType === 'cchk'             ? './cchk_hint.js'
                    : './hex_hint.js';
 
     mctsInWorker(hintFile, snap)
@@ -167,7 +200,7 @@ function maybeComputerMove(room) {
         if (room._computerMoveGen !== gen) return;
         const g2 = room.state.game;
         if (!g2 || g2.gameOver) return;
-        if (room.state.computer?.color !== _actingColor(gameType, g2)) return;
+        if (!_isComputerTurn(room, gameType, g2)) return;
 
         const move = result.move;
         let res;
@@ -194,6 +227,12 @@ function maybeComputerMove(room) {
         } else if (gameType === 'checkers') {
           if (!move) return;
           res = CheckersSim.computerMovePiece(g2, move.from, move.to);
+        } else if (gameType === 'chess') {
+          if (!move) return;
+          res = ChessSim.computerMovePiece(g2, move.from, move.to, move.promotion ?? 'Q');
+        } else if (gameType === 'cchk') {
+          if (!move) return;
+          res = CchkSim.computerMovePiece(g2, move.from, move.path ?? [move.to]);
         }
         if (!res || !res.ok) { console.error('[gameroom] computer move failed:', res?.error); return; }
         room.state.tick++;
@@ -254,6 +293,8 @@ export function createGameRoomHost() {
         PiratesBulgarsSim.setPlayerConnected(room.state.game, ws.playerId, false);
       } else if (room.state.gameType === 'hex' && room.state.game) {
         HexSim.setPlayerConnected(room.state.game, ws.playerId, false);
+      } else if (room.state.gameType === 'chess' && room.state.game) {
+        ChessSim.setPlayerConnected(room.state.game, ws.playerId, false);
       }
     }
     room.updatedAt = nowMs();
@@ -337,16 +378,22 @@ export function createGameRoomHost() {
         }
 
         // Auto-assign a side if none is taken yet (player can always change it).
-        const _joinSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim, hex: HexSim };
-        if (_joinSims[room.state.gameType] && room.state.game) {
-          const Sim = _joinSims[room.state.gameType];
-          const playerList = Object.values(room.state.players);
-          const hasBlack = playerList.some(p => p.side === 'black');
-          const hasWhite = playerList.some(p => p.side === 'white');
-          const autoSide = !hasBlack ? 'black' : !hasWhite ? 'white' : null;
-          if (autoSide) {
-            room.state.players[pid].side = autoSide;
-            Sim.selectColor(room.state.game, pid, autoSide);
+        if (room.state.gameType === 'cchk' && room.state.game) {
+          // cchk uses 'all' side by default (player can change to a specific color).
+          room.state.players[pid].side = 'all';
+          CchkSim.selectColor(room.state.game, pid, null);
+        } else {
+          const _joinSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim, hex: HexSim };
+          if (_joinSims[room.state.gameType] && room.state.game) {
+            const Sim = _joinSims[room.state.gameType];
+            const playerList = Object.values(room.state.players);
+            const hasBlack = playerList.some(p => p.side === 'black');
+            const hasWhite = playerList.some(p => p.side === 'white');
+            const autoSide = !hasBlack ? 'black' : !hasWhite ? 'white' : null;
+            if (autoSide) {
+              room.state.players[pid].side = autoSide;
+              Sim.selectColor(room.state.game, pid, autoSide);
+            }
           }
         }
 
@@ -373,9 +420,26 @@ export function createGameRoomHost() {
           return;
         }
         room.state.gameType = gameType;
-        room.state.game = newGameSimState(gameType);
+        // cchk: initialize config and create game with active colors.
+        if (gameType === 'cchk') {
+          const cfg = { activeColors: CchkSim.CCHK_COLORS.slice(), computerColors: [] };
+          room.state.cchkConfig = cfg;
+          room.state.game = CchkSim.newGameState(cfg.activeColors);
+          // Auto-assign side='all' to first connected player.
+          for (const p of [1, 2, 3, 4]) {
+            if (room.state.players[p].connected) {
+              room.state.players[p].side = 'all';
+              CchkSim.selectColor(room.state.game, p, null);
+              break;
+            }
+          }
+        } else {
+          room.state.game = newGameSimState(gameType);
+        }
         // Reset all player sides when game changes.
-        for (const p of [1, 2, 3, 4]) room.state.players[p].side = null;
+        for (const p of [1, 2, 3, 4]) {
+          if (gameType !== 'cchk') room.state.players[p].side = null;
+        }
         // Re-sync player connections into the new sim.
         const _selectSims = { go: GoSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim, hex: HexSim };
         if (_selectSims[gameType]) {
@@ -402,6 +466,55 @@ export function createGameRoomHost() {
 
       // ── Side selection (generalises select_color) ────────────────────────────
 
+      case 'cchk_toggle_color': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (!room || room.state.gameType !== 'cchk') return;
+        const color = String(msg.color ?? '');
+        if (!['red','orange','blue','green','yellow','purple'].includes(color)) return;
+        const cfg = room.state.cchkConfig;
+        const idx = cfg.activeColors.indexOf(color);
+        if (idx >= 0) {
+          cfg.activeColors.splice(idx, 1);
+        } else {
+          // Insert in canonical order.
+          const order = ['red','orange','blue','green','yellow','purple'];
+          cfg.activeColors = order.filter(c => cfg.activeColors.includes(c) || c === color);
+        }
+        // Remove from computerColors if now inactive.
+        cfg.computerColors = cfg.computerColors.filter(c => cfg.activeColors.includes(c));
+        // Rebuild the game (resets board + turn cycling).
+        const players = room.state.game?.players;
+        room.state.game = CchkSim.newGameState(cfg.activeColors);
+        if (players) room.state.game.players = players;
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
+        room.state.tick++;
+        room.updatedAt = nowMs();
+        safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
+        break;
+      }
+
+      case 'cchk_toggle_computer': {
+        if (!ws.room || !ws.playerId) return;
+        const room = rooms.get(ws.room);
+        if (!room || room.state.gameType !== 'cchk') return;
+        const color = String(msg.color ?? '');
+        if (!['red','orange','blue','green','yellow','purple'].includes(color)) return;
+        const cfg = room.state.cchkConfig;
+        // Only allow toggling colors that are actually active.
+        if (!cfg.activeColors.includes(color)) return;
+        const idx = cfg.computerColors.indexOf(color);
+        if (idx >= 0) cfg.computerColors.splice(idx, 1);
+        else cfg.computerColors.push(color);
+        room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
+        room.state.tick++;
+        room.updatedAt = nowMs();
+        safeBroadcast(room, { type: 'state', state: room.state });
+        maybeComputerMove(room);
+        break;
+      }
+
       case 'select_side': {
         if (!ws.room || !ws.playerId) return;
         const room = rooms.get(ws.room);
@@ -409,10 +522,10 @@ export function createGameRoomHost() {
         const side = msg.side ?? null;
         room.state.players[ws.playerId].side = side;
         // Sync into the active sim's own player state.
-        // 'both' is a room-level concept; the sim gets null (spectator/unset).
-        const _sideSims = { go: GoSim, checkers: CheckersSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim, hex: HexSim };
+        // 'both'/'all' are room-level concepts; the sim gets null (spectator/unset).
+        const _sideSims = { go: GoSim, checkers: CheckersSim, chess: ChessSim, cchk: CchkSim, morris: MorrisSim, foxgeese: FoxGeeseSim, piratesbulgars: PiratesBulgarsSim, hex: HexSim };
         if (_sideSims[room.state.gameType]) {
-          const simColor = (side === 'both') ? null : side;
+          const simColor = (side === 'both' || side === 'all') ? null : side;
           _sideSims[room.state.gameType].selectColor(room.state.game, ws.playerId, simColor);
         }
         room.updatedAt = nowMs();
@@ -462,6 +575,16 @@ export function createGameRoomHost() {
         } else if (room.state.gameType === 'checkers') {
           result = withBothSide(room, ws, room.state.game.turn, () =>
             CheckersSim.movePiece(room.state.game, ws.playerId, from, to)
+          );
+        } else if (room.state.gameType === 'chess') {
+          const promotion = msg.promotion ?? 'Q';
+          result = withBothSide(room, ws, room.state.game.turn, () =>
+            ChessSim.movePiece(room.state.game, ws.playerId, from, to, promotion)
+          );
+        } else if (room.state.gameType === 'cchk') {
+          const path = Array.isArray(msg.path) ? msg.path : [msg.to];
+          result = withCchkSide(room, ws, () =>
+            CchkSim.movePiece(room.state.game, ws.playerId, from, path)
           );
         } else {
           return;
@@ -550,6 +673,8 @@ export function createGameRoomHost() {
         else if (room.state.gameType === 'piratesbulgars') result = PiratesBulgarsSim.undoMove(room.state.game);
         else if (room.state.gameType === 'hex')      result = HexSim.undoMove(room.state.game);
         else if (room.state.gameType === 'checkers')  result = CheckersSim.undoMove(room.state.game);
+        else if (room.state.gameType === 'chess')       result = ChessSim.undoMove(room.state.game);
+        else if (room.state.gameType === 'cchk')        result = CchkSim.undoMove(room.state.game);
         else result = { ok: false, error: 'Undo not yet implemented for this game' };
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
         room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
@@ -571,6 +696,8 @@ export function createGameRoomHost() {
         else if (room.state.gameType === 'piratesbulgars') result = PiratesBulgarsSim.redoMove(room.state.game);
         else if (room.state.gameType === 'hex')      result = HexSim.redoMove(room.state.game);
         else if (room.state.gameType === 'checkers')  result = CheckersSim.redoMove(room.state.game);
+        else if (room.state.gameType === 'chess')       result = ChessSim.redoMove(room.state.game);
+        else if (room.state.gameType === 'cchk')        result = CchkSim.redoMove(room.state.game);
         else result = { ok: false, error: 'Redo not yet implemented for this game' };
         if (!result.ok) { send(ws, { type: 'error', message: result.error }); return; }
         room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
@@ -591,6 +718,8 @@ export function createGameRoomHost() {
         else if (room.state.gameType === 'piratesbulgars') PiratesBulgarsSim.resetGame(room.state.game);
         else if (room.state.gameType === 'hex')      HexSim.resetGame(room.state.game);
         else if (room.state.gameType === 'checkers')  CheckersSim.resetGame(room.state.game);
+        else if (room.state.gameType === 'chess')       ChessSim.resetGame(room.state.game);
+        else if (room.state.gameType === 'cchk')        CchkSim.resetGame(room.state.game, room.state.cchkConfig?.activeColors);
         room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;
         room.updatedAt = nowMs();
@@ -695,6 +824,15 @@ export function createGameRoomHost() {
           mctsInWorker('./checkers_hint.js', snap)
             .then((result) => { if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null }); })
             .catch((e) => { console.error('[gameroom] checkers hint error', e); if (ws.room) safeBroadcast(room, { type: 'hint', move: null }); });
+        } else if (room.state.gameType === 'chess') {
+          snap._isHint = true;
+          mctsInWorker('./chess_hint.js', snap)
+            .then((result) => { if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null }); })
+            .catch((e) => { console.error('[gameroom] chess hint error', e); if (ws.room) safeBroadcast(room, { type: 'hint', move: null }); });
+        } else if (room.state.gameType === 'cchk') {
+          mctsInWorker('./cchk_hint.js', snap)
+            .then((result) => { if (ws.room) safeBroadcast(room, { type: 'hint', move: result.move ?? null }); })
+            .catch((e) => { console.error('[gameroom] cchk hint error', e); if (ws.room) safeBroadcast(room, { type: 'hint', move: null }); });
         }
         break;
       }

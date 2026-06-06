@@ -15,19 +15,29 @@ Browser (Phaser client)
   |  WebSocket: /games/gameroom/ws
   v
 Node WS backend
-  apps/ws/src/games/gameroom.js   (room host, message routing)
-  apps/ws/src/games/go_sim.js     (Go rules engine)
-  apps/ws/src/games/go_hint.js    (GNU Go GTP subprocess)
-  apps/ws/src/games/morris_sim.js (Nine Men's Morris rules engine)
-  apps/ws/src/games/morris_hint.js (UCT MCTS hint engine for Morris)  apps/ws/src/games/foxgeese_sim.js  (Fox & Geese rules engine)
-  apps/ws/src/games/foxgeese_hint.js (UCT MCTS hint engine for Fox & Geese)```
+  apps/ws/src/games/gameroom.js            (room host, message routing)
+  apps/ws/src/games/mcts_worker.js         (worker_threads wrapper for MCTS)
+  apps/ws/src/games/go_sim.js              (Go rules engine)
+  apps/ws/src/games/go_hint.js             (GNU Go GTP subprocess)
+  apps/ws/src/games/morris_sim.js          (Nine Men's Morris rules engine)
+  apps/ws/src/games/morris_hint.js         (UCT MCTS hint engine for Morris)
+  apps/ws/src/games/foxgeese_sim.js        (Fox & Geese rules engine)
+  apps/ws/src/games/foxgeese_hint.js       (UCT MCTS hint engine for Fox & Geese)
+  apps/ws/src/games/piratesbulgars_sim.js  (Pirates & Bulgars variant rules engine)
+  apps/ws/src/games/piratesbulgars_hint.js (UCT MCTS hint engine for Pirates & Bulgars)
+  apps/ws/src/games/hex_sim.js             (Hex rules engine)
+  apps/ws/src/games/hex_hint.js            (UCT MCTS hint engine for Hex)
+  apps/ws/src/games/checkers_sim.js        (American Checkers rules engine)
+  apps/ws/src/games/checkers_hint.js       (UCT MCTS hint engine for Checkers)
+```
 
 Room state shape (top-level, broadcast to all clients):
 ```json
 {
   "tick": 0,
-  "gameType": "go|checkers|chess|morris|cchk|foxgeese|hex|reversi|null",
+  "gameType": "go|checkers|chess|morris|cchk|foxgeese|hex|piratesbulgars|reversi|null",
   "players": { "1": { "connected": true, "side": "black|white|both|null" }, ... },
+  "computer": { "color": null, "level": "medium" },
   "game": { /* active game sim state */ }
 }
 ```
@@ -105,126 +115,177 @@ Messages (client → server):
 
 ---
 
-## Phase 3 — Checkers
+## Phase 3 — Checkers  ✅ DONE
 
-**Session plan:** Read this section + `docs/PROTOCOL.md`. Design sim state, then implement.
+### Server sim: `apps/ws/src/games/checkers_sim.js`
 
-### Server sim: `apps/ws/src/games/gameroom_checkers_sim.js`
+Board: 32-element flat array representing the 32 dark squares of an 8×8 board.
+- `cellToRC(idx)` / `rcToCell(row, col)` convert between cell index and grid coordinates.
+- Black pieces: rows 0–2 (cells 0–11), White pieces: rows 5–7 (cells 20–31). Black moves first.
 
 State shape:
 ```json
 {
-  "boardSize": 8,
-  "board": "8×8 array — null | { color: 'red'|'black', king: bool }",
-  "turn": "red|black",
-  "selected": null,
-  "legalMoves": [],
-  "captures": { "red": 0, "black": 0 },
-  "history": [],
+  "board": "Array(32) of null | { color: 'black'|'white', king: bool }",
+  "turn": "black|white",
+  "pendingJump": null,
+  "pendingMids": [],
+  "piecesLeft": { "black": 12, "white": 12 },
+  "players": { "1..4": { "connected": bool, "color": null } },
+  "lastMove": { "from": 0, "to": 9, "mid": 4, "color": "black", "captured": true },
   "gameOver": false,
   "winner": null,
-  "players": { "1..4": { "connected": bool, "color": null } }
+  "history": [],
+  "redoSnapshot": null,
+  "tick": 0
 }
 ```
 
-Rules to implement:
-- [ ] Standard 8×8 checkerboard (dark squares only: pieces on dark squares)
-- [ ] Initial setup: 12 red pieces (rows 0–2) and 12 black pieces (rows 5–7)
-- [ ] Simple diagonal moves: forward only, 1 step
-- [ ] Mandatory jump (capture): must capture if any capture is available
-- [ ] Multi-jump: if after a capture another capture is available with the same piece, must continue
-- [ ] King promotion: reach opponent's back rank → becomes king (moves in all 4 diagonals)
-- [ ] King captures: can jump in all 4 diagonal directions
-- [ ] Win: opponent has no pieces left OR opponent has no legal moves
-- [ ] `legalMovesFor(state, color)` — helper used to validate moves and detect win
-- [ ] Undo: store pre-move snapshot including `selected` and `legalMoves`
+Rules implemented:
+- [x] Standard 8×8 checkerboard (dark squares only via 32-cell flat array)
+- [x] Initial setup: 12 black pieces (rows 0–2) and 12 white pieces (rows 5–7)
+- [x] Simple diagonal moves: forward only, 1 step
+- [x] Mandatory jump (capture): must capture if any capture is available
+- [x] Multi-jump: `pendingJump` holds cell index during a multi-jump chain; `pendingMids` tracks captured cells to prevent re-capture
+- [x] King promotion: reach opponent's back rank → becomes king (moves in all 4 diagonals); promotion during multi-jump ends the turn
+- [x] King captures: can jump in all 4 diagonal directions
+- [x] Win: opponent has no pieces left OR opponent has no legal moves
+- [x] `legalMovesFor(state, color)` — exported; validates moves and detects win
+- [x] Undo/Redo: `undoMove()`, `redoMove()`, `resetGame()` exported; snapshot history capped at 300
+- [x] `computerMovePiece(state, from, to)` — plays as `state.turn`, no player validation
 
 New message (client → server):
-- `move_piece { from: {x,y}, to: {x,y} }` — handles both regular moves and multi-jump continuation
+- `move_piece { from, to }` — cell indices; handles both regular moves and multi-jump continuation
 
 ### Client renderer: `gameroom/client/src/game/renderers/checkers.js`
 
-- [ ] Draw 8×8 board (alternating light/dark squares; pieces only on dark)
-- [ ] Piece: filled circle (red or black), with a crown glyph for kings
-- [ ] Highlight selected piece and valid destination squares
-- [ ] Highlight mandatory captures in a distinct color (e.g. orange ring)
-- [ ] After a capture, if more captures are available, keep piece selected
-- [ ] Animate: brief scale-in on piece placement; captured piece fades out
+- [x] Draw 8×8 board (tan `0xf0d9b5` / brown `0xb58863`; pieces only on dark squares)
+- [x] Piece: filled circle (charcoal for black, crimson for white); kings shown with gold ring + center dot
+- [x] Click-click + drag interaction; 32 hit zones on dark squares
+- [x] Highlight selected piece (green ring) and valid destination squares (green overlay)
+- [x] `pendingJump` piece shown with gold ring; only capture destinations highlighted
+- [x] Hint: blue arrow from → to + blue ring on destination
+- [x] `sideLabels: { black: '⚫ Dark', white: '🔴 Red', both: '⚫🔴 Both' }`
 
 ### Hints
-- [ ] `apps/ws/src/games/gameroom_checkers_hint.js` — JS MCTS: `suggestMove(state, timeBudgetMs=1500)` → `{ from:{x,y}, to:{x,y} } | null`. Uses `legalMovesFor()` from sim; random playout until no pieces remain or move limit.
-- [ ] Route `request_hint` for `gameType === 'checkers'` in `gameroom.js`
+- [x] `apps/ws/src/games/checkers_hint.js` — UCT MCTS (C=1.4), 80-ply rollouts; difficulty budgets: easy=200iter/400ms, medium=2000iter/1500ms, hard=6000iter/4000ms
+- [x] Heuristic: weighted piece count (kings = 1.5)
+- [x] Route `request_hint` for `gameType === 'checkers'` in `gameroom.js`
 
 ### Integration
-- [ ] Add `'checkers'` to `IMPLEMENTED` set in `gameroom.js`
-- [ ] `move_piece` handler in `gameroom.js`: require `ws.playerId`; support `side: 'both'` override
-- [ ] `undo_move` handler already routes to active sim — ensure checkers sim exposes `undoMove()`
-- [ ] `request_hint` handler routes to `gameroom_checkers_hint.js` when `gameType === 'checkers'`
-- [ ] `select_side` handler: checkers sim exposes `selectColor(game, pid, color)`
-- [ ] Update `PlayScene` to delegate to checkers renderer when `state.gameType === 'checkers'`
-- [ ] `join_room` auto-side: first free color (red/black) assigned; direct to PlayScene if game active
-- [ ] Write `docs/gameroom_checkers_LLM.md`
+- [x] `'checkers'` added to `IMPLEMENTED` set in `gameroom.js`
+- [x] `move_piece` handler with `ws.playerId` guard and `side: 'both'` override via `withBothSide()`
+- [x] `undo_move` / `redo_move` route to `CheckersSim.undoMove()` / `CheckersSim.redoMove()`
+- [x] `restart` routes to `CheckersSim.resetGame()`
+- [x] `request_hint` routes to `checkers_hint.js` via `mctsInWorker()`
+- [x] `select_side` uses shared `_sideSims` map with `CheckersSim`
+- [x] `checkersRenderer` registered in `PlayScene` `RENDERERS` map
+- [x] `GameSelectScene`: checkers tile `implemented: true`
+- [x] `maybeComputerMove`: checkers supported; dispatches via MCTS worker → `CheckersSim.computerMovePiece()`
+- [x] `_actingColor()`: handles checkers pendingJump (returns `game.turn`)
 
 ---
 
 ## Phase 4 — Chess
 
-**Session plan:** Largest implementation. Plan carefully before coding.
+**Key decisions:**
+- Board: flat `Array(64)` indexed `row*8+col` (consistent with checkers). `from`/`to` in `move_piece` are integers. Optional `promotion` field ('Q'|'N'|'R'|'B', default 'Q').
+- File name: `chess_sim.js` (not `gameroom_chess_sim.js`) — consistent with all other sims.
+- White orientation: row 0 = black's back rank, row 7 = white's back rank (white plays "up").
+- Piece rendering: Phaser `Text` objects with Unicode glyphs (♔♕♖♗♘♙ / ♚♛♜♝♞♟), pooled per draw call.
+- Hints/computer: minimax with alpha-beta (depth 1/2/3 by level), material evaluation. Runs in existing `mcts_worker.js` thread.
+- No fifty-move draw triggered (clock tracked but draw not forced — kids version).
+- `sideLabels: { black:'♛ Black', white:'♔ White', both:'♔♛ Both' }`.
 
-### Server sim: `apps/ws/src/games/gameroom_chess_sim.js`
+### Server sim: `apps/ws/src/games/chess_sim.js`
 
 State shape:
 ```json
 {
-  "board": "8×8 array — null | { type: 'P'|'N'|'B'|'R'|'Q'|'K', color: 'white'|'black' }",
+  "board": "Array(64) — null | { type: 'P'|'N'|'B'|'R'|'Q'|'K', color: 'white'|'black' }",
   "turn": "white|black",
-  "castlingRights": { "white": { "kSide": bool, "qSide": bool }, "black": { ... } },
+  "castlingRights": { "white": { "kSide": true, "qSide": true }, "black": { "kSide": true, "qSide": true } },
   "enPassantTarget": null,
   "halfMoveClock": 0,
   "fullMoveNumber": 1,
   "inCheck": false,
   "checkmate": false,
   "stalemate": false,
-  "history": [],
   "lastMove": null,
+  "history": [],
+  "redoSnapshot": null,
   "gameOver": false,
-  "winner": null
+  "winner": null,
+  "players": { "1..4": { "connected": bool, "color": null } },
+  "tick": 0
 }
 ```
 
 Rules to implement:
-- [ ] All piece movement rules: P (+ en passant + promotion), N, B, R, Q, K
-- [ ] Castling (king-side and queen-side, with all prerequisite checks)
-- [ ] En passant
-- [ ] Pawn promotion (offer: Q, N, R, B — default to Q for kids)
-- [ ] Legal move generation: a move is illegal if it leaves own king in check
-- [ ] Check detection after every move
-- [ ] Checkmate detection (no legal moves + in check)
-- [ ] Stalemate detection (no legal moves + not in check)
-- [ ] Fifty-move rule (optional for kids version — flag `fiftyMoveRule: false` by default)
+- [x] Coordinate helpers: `idx(row,col)=row*8+col`, `toRC(idx)→{row,col}`
+- [x] `newGameState()` — standard starting position (white row 7, black row 0)
+- [x] `_pawnMoves(board, idx, color, enPassantTarget)` — forward 1/2, diagonal captures, en passant
+- [x] `_knightMoves(board, idx, color)` — 8 L-shapes
+- [x] `_slidingMoves(board, idx, color, dirs)` — shared for B/R/Q
+- [x] `_kingMoves(board, idx, color)` — 1-square + castling candidates
+- [x] `isInCheck(board, color)` — does any opponent piece attack the color's king?
+- [x] `legalMovesFor(state, color)` — pseudo-legal → simulate → filter leaving own king in check; validate castling (king not in check, path clear, no passing through attacked square). Returns `[{from, to, promotion?}]`
+- [x] `_applyMove(state, from, to, promotion)` — move piece; handle en passant capture; handle castling (rook also moves); handle promotion; update castlingRights on rook/king move; update enPassantTarget; update halfMoveClock/fullMoveNumber; set inCheck/checkmate/stalemate; set gameOver/winner
+- [x] `movePiece(state, pid, from, to, promotion='Q')` — validate color===turn, check legality, _pushSnapshot, _applyMove. Returns {ok, error}
+- [x] `computerMovePiece(state, from, to, promotion='Q')` — same without pid check
+- [x] `_pushSnapshot(state)` — JSON.stringify(board, turn, castlingRights, enPassantTarget, halfMoveClock, fullMoveNumber, inCheck, checkmate, stalemate, lastMove, gameOver, winner, tick); cap at 300
+- [x] `undoMove(state)` — save redoSnapshot, pop+restore. Returns {ok, error}
+- [x] `redoMove(state)` — push current to history, restore redoSnapshot. Returns {ok, error}
+- [x] `resetGame(state)` — fresh state, preserve players
+- [x] `setPlayerConnected(state, pid, connected)` / `selectColor(state, pid, color)`
 
 New message (client → server):
-- `move_piece { from: {x,y}, to: {x,y}, promotion?: 'Q'|'N'|'R'|'B' }`
+- `move_piece { from, to, promotion? }` — integer indices; promotion only needed when pawn reaches back rank
 
 ### Client renderer: `gameroom/client/src/game/renderers/chess.js`
 
-- [ ] 8×8 board with alternating cream/brown squares (classic chess look)
-- [ ] Piece glyphs: Unicode chess symbols (♔♕♖♗♘♙ / ♚♛♜♝♞♟)
-- [ ] Highlight selected piece, legal destinations
-- [ ] Highlight king square in red when in check
-- [ ] Promotion dialog: small overlay with 4 piece choices
-- [ ] "Check!" banner shown prominently
+- [x] Coordinate helpers mirroring sim: `_idx(row,col)`, `_toRC(idx)`, `_px(idx)→{x,y}`
+- [x] Graphics layers: `_boardGfx` (depth 10), `_markerGfx` (depth 11), `_checkGfx` (depth 9), `_hintGfx` (depth 13), `_dragGfx` (depth 16); promotion overlay depth 20
+- [x] `_drawBoard(highlightCells)` — 8×8 all squares, `LIGHT_SQ=0xf0d9b5` / `DARK_SQ=0xb58863`, border, green tint on legal destinations
+- [x] `_drawCheckHighlight(state)` — red tint on king square when `state.inCheck`
+- [x] `_drawLastMoveMarker(lastMove)` — tint from/to squares with color-coded alpha
+- [x] Piece text pool: `_pieceTexts=[]` Phaser Text objects, recycled each `draw()`. Symbols: `{white:{K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙'}, black:{K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'}}`. White pieces: white fill + dark shadow. Black pieces: near-black fill + light shadow. Font: `'Arial, "Segoe UI Symbol", "Noto Chess", sans-serif'`
+- [x] 64 hit zones (all squares), depth 15; `_onZoneDown(idx)` handles click-click + drag
+- [x] `_computeLegalDests(gameState, fromIdx)` — client-side pseudo-legal move mirror for highlighting; server re-validates anyway
+- [x] Pawn-to-back-rank triggers `_showPromoDialog(from, to)` before sending `move_piece`; dialog: 4 Phaser Text buttons (Q/N/R/B), depth 20, closed after selection
+- [x] Drag: pointermove/pointerup pattern identical to checkers
+- [x] `showHint(hintMsg)` — arrow from `_px(move.from)` to `_px(move.to)` + ring on dest; same as checkers
+- [x] `clearHint()`, `resetSelection()`, `shutdown()` — same pattern as checkers
+- [x] `formatTurnText(state)` — "Check!" suffix; stalemate → "DRAW"; checkmate → winner
+- [x] `formatTurnColor(state)` — white→`'#ffffff'`, black→`'#aaaaaa'`, check→`'#ff4444'`, game over→`'#ffd700'`
+- [x] `formatCaptureText(state)` — empty string
+- [x] `getGameOverInfo(state)` — checkmate→winner text, stalemate→"DRAW"; buttons: New Game + Continue
+- [x] `showPassButton: false`
+- [x] `sideLabels: { black:'♛ Black', white:'♔ White', both:'♔♛ Both' }`
 
-### Hints
-- [ ] Chess hints deferred — JS MCTS is too weak without an evaluation function. Future option: Stockfish WASM (separate decision, adds ~8 MB to client bundle).
+### Hints / computer: `apps/ws/src/games/chess_hint.js`
+
+- [x] Material values: P=100, N=320, B=330, R=500, Q=900, K=20000
+- [x] `_evaluate(board, color)` — sum material + piece-square table bonus for color minus opponent
+- [x] `_minimax(state, depth, alpha, beta, maximizing, rootColor)` — alpha-beta; depth 0 → return `_evaluate`; uses `legalMovesFor` + cloned state + `_applyMove`
+- [x] `suggestMove(state)` (exported) — reads `state._computerLevel`; easy=depth 1 (random legal move), medium=depth 2, hard=depth 3 with 4s hard timeout returning best-found-so-far. Returns `{ move: {from, to, promotion?} | null }`
 
 ### Integration
-- [ ] Add `'chess'` to `IMPLEMENTED` in `gameroom.js`
-- [ ] `move_piece` handler: require `ws.playerId`; support `side: 'both'` override
-- [ ] `undo_move` routes to chess sim `undoMove()`; chess sim exposes `selectColor(game, pid, color)`
-- [ ] `request_hint` routes to chess hint engine (deferred — Stockfish WASM or basic MCTS)
-- [ ] `join_room` auto-side: white/black; direct to PlayScene if game active
-- [ ] Write `docs/gameroom_chess_LLM.md`
+
+- [x] `import * as ChessSim from './chess_sim.js'` in `gameroom.js`
+- [x] Add `'chess'` to `IMPLEMENTED` set in `gameroom.js`
+- [x] `newGameSimState`: add chess branch → `ChessSim.newGameState()`
+- [x] `onClose`: add `else if (gameType === 'chess') ChessSim.setPlayerConnected(...)`
+- [x] `_sideSims`: add `chess: ChessSim`
+- [x] `move_piece` case: add chess branch with `promotion` field → `withBothSide(...)` → `ChessSim.movePiece(game, pid, from, to, promotion)`
+- [x] `undo_move` case: add `else if (gameType === 'chess') result = ChessSim.undoMove(game)`
+- [x] `redo_move` case: add chess branch → `ChessSim.redoMove(game)`
+- [x] `restart` case: add `else if (gameType === 'chess') ChessSim.resetGame(game)`
+- [x] `request_hint` case: add chess branch → `mctsInWorker('./chess_hint.js', snap)` → broadcast
+- [x] `maybeComputerMove`: add `'chess'` to allowed list; chess branch → `mctsInWorker('./chess_hint.js', snap)` → `ChessSim.computerMovePiece(g2, move.from, move.to, move.promotion ?? 'Q')`
+- [x] `PlayScene.js`: `import chessRenderer from '../renderers/chess.js'`; add `chess: chessRenderer` to `RENDERERS`
+- [x] `GameSelectScene.js`: chess tile `implemented: true`
+- [x] `join_room` auto-side: white/black; direct to PlayScene if game active (no change needed — generic path handles it)
 
 ---
 
@@ -387,9 +448,10 @@ New message (client → server):
 - [x] `formatCaptureText` → "Bulgars captured: N  remaining: M"
 - [x] `getGameOverInfo` → overlay with winner + New Game button
 - [x] `showPassButton = false`
+- [x] `sideLabels: { black: '🦊 Fox', white: '🪿 Geese', both: '🦊🪿 Both' }`
 
 ### Hints
-- [x] `apps/ws/src/games/foxgeese_hint.js` — UCT MCTS (C=1.4), 2000 iter / 1500ms, 60-ply rollouts
+- [x] `apps/ws/src/games/foxgeese_hint.js` — UCT MCTS (C=1.4), 60-ply rollouts; difficulty budgets: easy=200iter/400ms, medium=2000iter/1500ms, hard=6000iter/4000ms
   - Fox heuristic: proportion of Bulgars captured
   - Geese heuristic: fox mobility (fewer moves = better for geese)
 - [x] `request_hint` for `gameType === 'foxgeese'` routes to `foxgeeseHintSuggest` in `gameroom.js`
@@ -450,7 +512,7 @@ Room state extended with `computer: { color: null, level: 'medium' }`.
 - [x] Called after: `place_stone`, `undo_move`, `redo_move`, `restart`, `set_computer`, `select_game`, `toggle_hex_size`
 - [x] Computer settings persist across `restart` (room-level, not game-level)
 - [x] PlayScene side panel: COMPUTER section (⏹ Off / ⚫ Black / ⚪ White) + LEVEL section (🟢 Easy / 🟡 Medium / 🔴 Hard)
-- [ ] Difficulty levels not yet wired — all three use the same MCTS engine (3000 iters / 1500ms)
+- [x] Difficulty levels wired via `_budget(level)` in each hint file: easy=200iter/400ms, medium=2000–3000iter/1500ms, hard=6000–8000iter/4000ms
 
 ### Integration
 - [x] Add `'hex'` to `IMPLEMENTED` in `gameroom.js`
@@ -542,9 +604,9 @@ These conventions apply to **every game** in Game Room. They were established du
 
 ### Hints
 - All games provide a `request_hint` message. The server computes the suggestion and broadcasts it to the whole room.
-- Go: GNU Go via GTP subprocess (`/usr/games/gnugo`; use GTP `loadsgf` command, not `--loadsgf` flag).
-- All other games: JS MCTS in `gameroom_<game>_hint.js` — UCT, C=1.4, ~1.5 s budget, uses the sim's `legalMovesFor()`.
-- Client UX: hint button grays + "thinking…" while pending; green dot on suggested cell; clears on next move.
+- Go: GNU Go via GTP subprocess (`/usr/games/gnugo`; use GTP `loadsgf` command, not `--loadsgf` flag). Difficulty via GTP level: easy=1, medium=5, hard=10.
+- All other games: JS MCTS in `<game>_hint.js` — UCT, C=1.4, time-budgeted via `_budget(level)`. Runs in a `worker_threads` Worker via `mcts_worker.js` to avoid blocking the main event loop.
+- Client UX: hint button grays + "thinking…" while pending; marker on suggested cell; clears on next move.
 
 ### Undo
 - Every sim maintains a `history` array of snapshots pushed **before** each commit (pre-commit snapshots).
@@ -564,8 +626,37 @@ These conventions apply to **every game** in Game Room. They were established du
 ### Security guards on game actions
 - `place_stone`, `move_piece`, `pass_turn`, `undo_move`, `restart`, `select_side`, `request_hint` all require `ws.playerId`. Spectators can watch but not act.
 
+### Computer player (collaborative vs. computer)
+- Room state: `computer: { color: null|'black'|'white', level: 'easy'|'medium'|'hard' }` — persists across `restart`.
+- `set_computer { color }` / `set_computer_level { level }` — require `ws.playerId`.
+- `maybeComputerMove(room)` — called after any state-changing action. After 500ms delay, runs the game's hint engine (MCTS worker or GNU Go), then applies the move if the generation counter (`room._computerMoveGen`) still matches.
+- Generation counter prevents stale moves after undo/toggle/restart.
+- `_actingColor(gameType, game)` — determines whose turn it is, handling Morris `pendingRemove`, FoxGeese/PiratesBulgars/Checkers `pendingJump`.
+- Multi-step turns (multi-jump, post-mill removal): after applying a step, `maybeComputerMove(room)` is called recursively to continue the sequence.
+- Each sim exposes `computerMovePiece()` / `computerPlaceStone()` / `computerRemovePiece()` — these act as `state.turn` without player ID validation.
+- Supported for all 6 implemented games: Go, Morris, Fox & Geese, Pirates & Bulgars, Hex, Checkers.
+
 ### Renderer pattern
-Each game's client rendering is a module in `gameroom/client/src/game/renderers/<game>.js` with `init(scene, state)`, `draw(scene, state, helpers)`, `shutdown(scene)`. `PlayScene` owns the side panel, button row, hint marker, score overlay, and pause menu — the renderer only draws the board.
+Each game's client rendering is a module in `gameroom/client/src/game/renderers/<game>.js`:
+
+```js
+export default {
+  showPassButton: false,          // whether PlayScene shows a Pass button
+  sideLabels: { black, white, both },  // optional custom labels for side + computer panels
+  init(scene, config),            // config: { boardX, boardY, boardSize, onAction }
+  draw(gameState, ctx),           // ctx: { myPid, mySide, canMove }
+  showHint(hintMsg),
+  clearHint(),
+  resetSelection(),
+  shutdown(),
+  formatTurnText(state),
+  formatTurnColor(state),
+  formatCaptureText(state),
+  getGameOverInfo(state),
+};
+```
+
+`PlayScene` owns the side panel, button row, score overlay, pause menu, and computer/level panels. The renderer only draws the board and pieces. When a renderer exports `sideLabels`, both the side panel and computer panel buttons use them (e.g. "🏴‍☠️ Pirates" instead of "Black").
 
 ### State broadcast
 Every server-side mutation ends with `safeBroadcast(room, { type: 'state', state: room.state })`. No partial updates.

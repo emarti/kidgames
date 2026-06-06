@@ -4,6 +4,8 @@ import foxgeeseRenderer from '../renderers/foxgeese.js';
 import piratesbulgarsRenderer from '../renderers/piratesbulgars.js';
 import hexRenderer from '../renderers/hex.js';
 import checkersRenderer from '../renderers/checkers.js';
+import chessRenderer from '../renderers/chess.js';
+import cchkRenderer, { CCHK_PALETTE } from '../renderers/cchk.js';
 import NetScene from './NetScene.js';
 
 // ─── Renderer registry ────────────────────────────────────────────────────────
@@ -14,6 +16,8 @@ const RENDERERS = {
   piratesbulgars:  piratesbulgarsRenderer,
   hex:             hexRenderer,
   checkers:        checkersRenderer,
+  chess:           chessRenderer,
+  cchk:            cchkRenderer,
 };
 
 // ─── UI palette ───────────────────────────────────────────────────────────────
@@ -165,6 +169,15 @@ export default class PlayScene extends NetScene {
   // ─── Side panel ─────────────────────────────────────────────────────────────
 
   _buildSidePanel() {
+    // cchk gets a completely custom panel (6 colors, per-color computer toggles).
+    // We always build both panels; show/hide in _renderState via _updatePanelVisibility.
+    this._buildStandardSidePanel();
+    this._buildCchkPanel();
+  }
+
+  _buildStandardSidePanel() {
+    this._standardPanelObjects = [];
+    const _track = (obj) => { this._standardPanelObjects.push(obj); return obj; };
     const x   = this._sidePanelX;
     const bw  = this._sidePanelBtnW;
     const bh  = 32;
@@ -181,7 +194,7 @@ export default class PlayScene extends NetScene {
     let   y        = Math.round((boardTop + boardBot) / 2 - totalH / 2);
 
     // ── YOUR SIDE ──
-    this.add.text(x, y, 'YOUR SIDE', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0.5).setDepth(20);
+    _track(this.add.text(x, y, 'YOUR SIDE', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0.5).setDepth(20));
     y += 16;
 
     const sideOptions = [
@@ -197,13 +210,13 @@ export default class PlayScene extends NetScene {
     this._sidePanelDefLabels = {};
 
     for (const opt of sideOptions) {
-      const bg  = this.add.rectangle(x, y, bw, bh, opt.fill)
+      const bg  = _track(this.add.rectangle(x, y, bw, bh, opt.fill)
         .setStrokeStyle(1, opt.stroke)
         .setInteractive({ useHandCursor: true })
-        .setDepth(20);
-      const lbl = this.add.text(x, y, opt.label, {
+        .setDepth(20));
+      const lbl = _track(this.add.text(x, y, opt.label, {
         ...FONT, fontSize: '12px', color: opt.fg, fontStyle: 'bold',
-      }).setOrigin(0.5).setDepth(20);
+      }).setOrigin(0.5).setDepth(20));
       bg.on('pointerover',  () => { if (!this._sidePanelSelected(opt.id)) bg.setStrokeStyle(2, 0xffd700); });
       bg.on('pointerout',   () => { if (!this._sidePanelSelected(opt.id)) bg.setStrokeStyle(1, opt.stroke); });
       bg.on('pointerdown',  () => this.game.net.send('select_side', { side: opt.id }));
@@ -219,14 +232,14 @@ export default class PlayScene extends NetScene {
     // ── COMPUTER ──
     y += 14;
     // Section header: small monitor icon + label drawn inline
-    const hdrGfx = this.add.graphics().setDepth(20);
+    const hdrGfx = _track(this.add.graphics().setDepth(20));
     const hdrY = y + 5;
     // monitor body
     hdrGfx.fillStyle(0x666677);
     hdrGfx.fillRoundedRect(x - 26, hdrY - 5, 14, 10, 1);
     hdrGfx.fillTriangle(x - 20, hdrY + 5, x - 23, hdrY + 9, x - 17, hdrY + 9);
     hdrGfx.fillRect(x - 24, hdrY + 8, 8, 2);
-    this.add.text(x - 9, hdrY, 'COMPUTER', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0, 0.5).setDepth(20);
+    _track(this.add.text(x - 9, hdrY, 'COMPUTER', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0, 0.5).setDepth(20));
     y += 16;
 
     const computerOptions = [
@@ -242,13 +255,13 @@ export default class PlayScene extends NetScene {
     this._computerDefLabels = {};
 
     for (const opt of computerOptions) {
-      const bg  = this.add.rectangle(x, y, bw, bh, opt.fill)
+      const bg  = _track(this.add.rectangle(x, y, bw, bh, opt.fill)
         .setStrokeStyle(1, opt.stroke)
         .setInteractive({ useHandCursor: true })
-        .setDepth(20);
+        .setDepth(20));
 
       // Draw a tiny monitor icon to the left of the label text.
-      const iconGfx = this.add.graphics().setDepth(21);
+      const iconGfx = _track(this.add.graphics().setDepth(21));
       const ix = x - bw / 2 + 8;  // left-aligned within button
       const iy = y;
       const iconColor = parseInt(opt.fg.replace('#', ''), 16);
@@ -275,9 +288,9 @@ export default class PlayScene extends NetScene {
         iconGfx.fillRect(ix - 4, iy + 7, 8, 2);
       }
 
-      const lbl = this.add.text(x + 4, y, opt.label, {
+      const lbl = _track(this.add.text(x + 4, y, opt.label, {
         ...FONT, fontSize: '12px', color: opt.fg, fontStyle: 'bold',
-      }).setOrigin(0.5).setDepth(21);
+      }).setOrigin(0.5).setDepth(21));
       bg.on('pointerover',  () => { if (!this._computerSelected(opt.id)) bg.setStrokeStyle(2, 0xffd700); });
       bg.on('pointerout',   () => { if (!this._computerSelected(opt.id)) bg.setStrokeStyle(1, opt.stroke); });
       bg.on('pointerdown',  () => this.game.net.send('set_computer', { color: opt.color }));
@@ -292,7 +305,7 @@ export default class PlayScene extends NetScene {
 
     // ── LEVEL ──
     y += 14;
-    this.add.text(x, y, 'LEVEL', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0.5).setDepth(20);
+    _track(this.add.text(x, y, 'LEVEL', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0.5).setDepth(20));
     y += 16;
 
     const levelOptions = [
@@ -307,13 +320,13 @@ export default class PlayScene extends NetScene {
     this._levelStroke = {};
 
     for (const opt of levelOptions) {
-      const bg  = this.add.rectangle(x, y, bw, bh, opt.fill)
+      const bg  = _track(this.add.rectangle(x, y, bw, bh, opt.fill)
         .setStrokeStyle(1, opt.stroke)
         .setInteractive({ useHandCursor: true })
-        .setDepth(20);
-      const lbl = this.add.text(x, y, opt.label, {
+        .setDepth(20));
+      const lbl = _track(this.add.text(x, y, opt.label, {
         ...FONT, fontSize: '12px', color: opt.fg, fontStyle: 'bold',
-      }).setOrigin(0.5).setDepth(20);
+      }).setOrigin(0.5).setDepth(20));
       bg.on('pointerover',  () => { if (!this._levelSelected(opt.id)) bg.setStrokeStyle(2, 0xffd700); });
       bg.on('pointerout',   () => { if (!this._levelSelected(opt.id)) bg.setStrokeStyle(1, opt.stroke); });
       bg.on('pointerdown',  () => this.game.net.send('set_computer_level', { level: opt.id }));
@@ -323,6 +336,215 @@ export default class PlayScene extends NetScene {
       this._levelFg[opt.id]     = opt.fg;
       this._levelStroke[opt.id] = opt.stroke;
       y += bh + gap;
+    }
+    // _standardPanelObjects already populated via _track() above.
+  }
+
+  // ─── cchk custom panel ───────────────────────────────────────────────────────
+
+  _buildCchkPanel() {
+    const x   = this._sidePanelX;
+    const bw  = this._sidePanelBtnW;
+    const cbW = 20;  // checkbox width
+    const bh  = 26;
+    const gap = 3;
+    const colors = ['red', 'orange', 'blue', 'green', 'yellow', 'purple'];
+
+    this._cchkPanelObjects = [];
+    const _track = (obj) => { this._cchkPanelObjects.push(obj); obj.setVisible(false); return obj; };
+
+    const boardTop = this._boardY;
+    const boardBot = this._boardY + (BOARD_SIZE - 1) * this._cellSize;
+    // Estimate total height: header + 6 rows + gap + 6 rows + gap + LEVEL header + 3 rows
+    const totalH = 14 + 7 * (bh + gap)   // YOUR COLORS (6 + All button)
+                 + 14                      // gap + COMPUTER header
+                 + 6 * (bh + gap)          // COMPUTER rows
+                 + 14                      // gap + LEVEL header
+                 + 3 * (bh + gap);         // LEVEL rows
+    let y = Math.round((boardTop + boardBot) / 2 - totalH / 2);
+
+    // ── YOUR COLORS ──
+    _track(this.add.text(x, y, 'YOUR COLORS', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0.5).setDepth(20));
+    y += 14;
+
+    // Color rows: [checkbox (active)] [colored button (I play this)]
+    this._cchkColorActive = {};  // color → checkbox bg
+    this._cchkColorBtn    = {};  // color → side-select button
+    const cbX = x - bw / 2 + cbW / 2 + 1;
+    const btnX = x + cbW / 2 + 2;
+    const btnW = bw - cbW - 4;
+
+    for (const color of colors) {
+      const pal = CCHK_PALETTE[color];
+
+      // Checkbox background (active toggle).
+      const cb = _track(this.add.rectangle(cbX, y, cbW, bh, 0x222233)
+        .setStrokeStyle(1, 0x555566)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(20));
+      const cbMark = _track(this.add.text(cbX, y, '✓', { ...FONT, fontSize: '12px', color: pal.fg })
+        .setOrigin(0.5).setDepth(21).setVisible(false));
+      cb.on('pointerdown', () => this.game.net.send('cchk_toggle_color', { color }));
+      cbMark.on('pointerdown', () => this.game.net.send('cchk_toggle_color', { color }));
+
+      // Side-select button (colored).
+      const btn = _track(this.add.rectangle(btnX, y, btnW, bh, pal.fill)
+        .setStrokeStyle(1, pal.stroke)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(20));
+      const btnLbl = _track(this.add.text(btnX, y, pal.label, { ...FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold' })
+        .setOrigin(0.5).setDepth(21));
+      btn.on('pointerdown', () => this.game.net.send('select_side', { side: color }));
+      btnLbl.on('pointerdown', () => this.game.net.send('select_side', { side: color }));
+      btn.on('pointerover', () => btn.setStrokeStyle(2, 0xffd700));
+      btn.on('pointerout',  () => this._updateCchkPanelItem(color));
+
+      this._cchkColorActive[color] = { cb, cbMark };
+      this._cchkColorBtn[color]    = { btn, btnLbl };
+      y += bh + gap;
+    }
+
+    // "All" button (play all active non-computer colors).
+    const allBtn = _track(this.add.rectangle(x, y, bw, bh, 0x1e1e3a)
+      .setStrokeStyle(1, 0x6633aa)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(20));
+    const allLbl = _track(this.add.text(x, y, '▶ All', { ...FONT, fontSize: '12px', color: '#ccaaff', fontStyle: 'bold' })
+      .setOrigin(0.5).setDepth(21));
+    allBtn.on('pointerdown', () => this.game.net.send('select_side', { side: 'all' }));
+    allLbl.on('pointerdown', () => this.game.net.send('select_side', { side: 'all' }));
+    allBtn.on('pointerover', () => allBtn.setStrokeStyle(2, 0xffd700));
+    allBtn.on('pointerout',  () => {
+      const sel = (this.game.net.latestState?.players[this.game.net.playerId]?.side === 'all');
+      allBtn.setStrokeStyle(sel ? 3 : 1, sel ? 0xffd700 : 0x6633aa);
+    });
+    this._cchkAllBtn = allBtn;
+    this._cchkAllLbl = allLbl;
+    y += bh + gap;
+
+    // ── COMPUTER ──
+    y += 6;
+    _track(this.add.text(x, y, 'COMPUTER', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0.5).setDepth(20));
+    y += 14;
+
+    this._cchkComputer = {};  // color → { cb, cbMark }
+    for (const color of colors) {
+      const pal = CCHK_PALETTE[color];
+
+      // Checkbox.
+      const cb = _track(this.add.rectangle(cbX, y, cbW, bh, 0x222233)
+        .setStrokeStyle(1, 0x555566)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(20));
+      const cbMark = _track(this.add.text(cbX, y, '✓', { ...FONT, fontSize: '12px', color: '#aaaaaa' })
+        .setOrigin(0.5).setDepth(21).setVisible(false));
+      cb.on('pointerdown', () => this.game.net.send('cchk_toggle_computer', { color }));
+      cbMark.on('pointerdown', () => this.game.net.send('cchk_toggle_computer', { color }));
+
+      // Label.
+      const lbl = _track(this.add.text(btnX, y, pal.label, { ...FONT, fontSize: '11px', color: '#666677' })
+        .setOrigin(0.5).setDepth(20));
+
+      this._cchkComputer[color] = { cb, cbMark, lbl };
+      y += bh + gap;
+    }
+
+    // ── LEVEL ──
+    y += 6;
+    _track(this.add.text(x, y, 'LEVEL', { ...FONT, fontSize: '10px', color: '#666677' }).setOrigin(0.5).setDepth(20));
+    y += 14;
+
+    const levelOptions = [
+      { id: 'easy',   label: '🟢 Easy',   fill: 0x1a3a1a, stroke: 0x33aa33, fg: '#66dd66' },
+      { id: 'medium', label: '🟡 Medium', fill: 0x3a3a1a, stroke: 0xaaaa33, fg: '#dddd66' },
+      { id: 'hard',   label: '🔴 Hard',   fill: 0x3a1a1a, stroke: 0xaa3333, fg: '#dd6666' },
+    ];
+
+    this._cchkLevelBgs    = {};
+    this._cchkLevelTxts   = {};
+    this._cchkLevelFg     = {};
+    this._cchkLevelStroke = {};
+
+    for (const opt of levelOptions) {
+      const bg = _track(this.add.rectangle(x, y, bw, bh, opt.fill)
+        .setStrokeStyle(1, opt.stroke)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(20));
+      const lbl = _track(this.add.text(x, y, opt.label, { ...FONT, fontSize: '12px', color: opt.fg, fontStyle: 'bold' })
+        .setOrigin(0.5).setDepth(20));
+      bg.on('pointerover',  () => { if (!this._levelSelected(opt.id)) bg.setStrokeStyle(2, 0xffd700); });
+      bg.on('pointerout',   () => { if (!this._levelSelected(opt.id)) bg.setStrokeStyle(1, opt.stroke); });
+      bg.on('pointerdown',  () => this.game.net.send('set_computer_level', { level: opt.id }));
+      lbl.on('pointerdown', () => this.game.net.send('set_computer_level', { level: opt.id }));
+      this._cchkLevelBgs[opt.id]    = bg;
+      this._cchkLevelTxts[opt.id]   = lbl;
+      this._cchkLevelFg[opt.id]     = opt.fg;
+      this._cchkLevelStroke[opt.id] = opt.stroke;
+      y += bh + gap;
+    }
+  }
+
+  _updateCchkPanelItem(color) {
+    const state  = this.game.net.latestState;
+    const cfg    = state?.cchkConfig;
+    const mySide = state?.players[this.game.net.playerId]?.side;
+    const isActive   = cfg?.activeColors?.includes(color);
+    const isComputer = cfg?.computerColors?.includes(color);
+    const pal = CCHK_PALETTE[color];
+
+    // Active checkbox.
+    const ac = this._cchkColorActive?.[color];
+    if (ac) {
+      ac.cb.setStrokeStyle(1, isActive ? pal.stroke : 0x555566);
+      ac.cb.setFillStyle(isActive ? 0x334433 : 0x222233);
+      ac.cbMark.setVisible(!!isActive);
+    }
+
+    // Side-select button.
+    const btn = this._cchkColorBtn?.[color];
+    if (btn) {
+      const sel = mySide === color;
+      btn.btn.setStrokeStyle(sel ? 3 : 1, sel ? 0xffd700 : pal.stroke);
+      btn.btn.setAlpha(isActive ? 1 : 0.3);
+      btn.btnLbl.setAlpha(isActive ? 1 : 0.3);
+      btn.btnLbl.setColor(sel ? '#ffd700' : '#ffffff');
+    }
+
+    // Computer checkbox.
+    const comp = this._cchkComputer?.[color];
+    if (comp) {
+      comp.cb.setStrokeStyle(1, isComputer ? 0xaaaaaa : 0x555566);
+      comp.cb.setFillStyle(isComputer ? 0x3a3a2a : 0x222233);
+      comp.cbMark.setVisible(!!isComputer);
+      comp.lbl.setAlpha(isActive ? 1 : 0.3);
+      comp.lbl.setColor(isActive ? pal.fg : '#444455');
+    }
+  }
+
+  _updateCchkPanel(state) {
+    if (!this._cchkColorActive) return;
+    const mySide = state?.players[this.game.net.playerId]?.side;
+
+    // Update All button.
+    if (this._cchkAllBtn) {
+      const sel = mySide === 'all';
+      this._cchkAllBtn.setStrokeStyle(sel ? 3 : 1, sel ? 0xffd700 : 0x6633aa);
+      this._cchkAllLbl?.setColor(sel ? '#ffd700' : '#ccaaff');
+    }
+
+    for (const color of Object.keys(CCHK_PALETTE)) {
+      this._updateCchkPanelItem(color);
+    }
+
+    // Level.
+    const level = state?.computer?.level ?? 'medium';
+    for (const id of ['easy', 'medium', 'hard']) {
+      const bg  = this._cchkLevelBgs?.[id];
+      const lbl = this._cchkLevelTxts?.[id];
+      if (!bg) continue;
+      const sel = level === id;
+      bg.setStrokeStyle(sel ? 3 : 1, sel ? 0xffd700 : this._cchkLevelStroke[id]);
+      lbl?.setColor(sel ? '#ffd700' : this._cchkLevelFg[id]);
     }
   }
 
@@ -340,6 +562,17 @@ export default class PlayScene extends NetScene {
   _levelSelected(id) {
     const comp = this.game.net.latestState?.computer;
     return (comp?.level ?? 'medium') === id;
+  }
+
+  _updatePanelVisibility(isCchk) {
+    const showStd  = !isCchk;
+    const showCchk = isCchk;
+    for (const obj of this._standardPanelObjects ?? []) {
+      if (obj?.setVisible) obj.setVisible(showStd);
+    }
+    for (const obj of this._cchkPanelObjects ?? []) {
+      if (obj?.setVisible) obj.setVisible(showCchk);
+    }
   }
 
   _updateSidePanel(mySide) {
@@ -502,7 +735,7 @@ export default class PlayScene extends NetScene {
     const actingColor = (gameType === 'morris' && gameState.phase === 'removing')
       ? gameState.pendingRemove
       : gameState.turn;
-    const canMove = (mySide === 'both' || mySide === actingColor) && !gameState.gameOver;
+    const canMove = (mySide === 'both' || mySide === 'all' || mySide === actingColor) && !gameState.gameOver;
     const ctx = { myPid, mySide, canMove };
 
     // Clear hint on new tick.
@@ -526,10 +759,16 @@ export default class PlayScene extends NetScene {
       this._playersText.setText(`${n} player${n !== 1 ? 's' : ''} connected`);
     }
 
-    // Side panel.
-    this._updateSidePanel(mySide);
-    this._updateComputerPanel(state);
-    this._updateLevelPanel(state);
+    // Side panel — show the right panel for this game type.
+    const isCchk = (gameType === 'cchk');
+    this._updatePanelVisibility(isCchk);
+    if (isCchk) {
+      this._updateCchkPanel(state);
+    } else {
+      this._updateSidePanel(mySide);
+      this._updateComputerPanel(state);
+      this._updateLevelPanel(state);
+    }
 
     // Button states.
     const hasHistory = gameState.history?.length > 0;

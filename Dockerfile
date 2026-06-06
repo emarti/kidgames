@@ -10,7 +10,7 @@
 FROM node:20-slim AS games-backend
 
 WORKDIR /app
-RUN apt-get update && apt-get install -y gnugo && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y gnugo stockfish && rm -rf /var/lib/apt/lists/*
 COPY apps/ws/package.json ./
 RUN npm install --no-audit --no-fund
 
@@ -210,6 +210,28 @@ RUN cd alphabet/client && npm run build
 
 
 ########################
+# Pacfriends client build
+########################
+FROM node:20-slim AS pacfriends-client-build
+
+WORKDIR /repo
+
+# Touch controls package (local dep)
+COPY packages/touch-controls/ ./packages/touch-controls/
+
+# Install deps (cache-friendly)
+COPY pacfriends/client/package*.json ./pacfriends/client/
+RUN cd pacfriends/client && npm install --no-audit --no-fund
+
+# App source
+COPY pacfriends/client/ ./pacfriends/client/
+
+# Host pacfriends under /games/pacfriends/
+ENV VITE_BASE=/games/pacfriends/
+RUN cd pacfriends/client && npm run build
+
+
+########################
 # Gateway (Caddy) image
 ########################
 FROM caddy:2-alpine AS gateway
@@ -257,6 +279,10 @@ COPY --from=gameroom-client-build /repo/gameroom/client/dist/ /srv/games/gameroo
 # Alphabet client build output lives at /games/alphabet/
 RUN mkdir -p /srv/games/alphabet
 COPY --from=alphabet-client-build /repo/alphabet/client/dist/ /srv/games/alphabet/
+
+# Pacfriends client build output lives at /games/pacfriends/
+RUN mkdir -p /srv/games/pacfriends
+COPY --from=pacfriends-client-build /repo/pacfriends/client/dist/ /srv/games/pacfriends/
 
 # Caddy config
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile
