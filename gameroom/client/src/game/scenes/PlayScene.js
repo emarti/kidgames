@@ -695,11 +695,13 @@ export default class PlayScene extends NetScene {
 
     const cs = this._cellSize;
     const boardPx = cs * (BOARD_SIZE - 1);
+    // cchk uses its own internal sizing; give it 20% more room so the star is larger.
+    const effectiveBoardPx = gameType === 'cchk' ? boardPx * 1.08 : boardPx;
 
     renderer.init(this, {
       boardX:    this._boardX,
       boardY:    this._boardY,
-      boardSize: boardPx,
+      boardSize: effectiveBoardPx,
       onAction:  (type, payload) => this.game.net.send(type, payload),
     });
 

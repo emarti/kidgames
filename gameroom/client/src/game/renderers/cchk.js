@@ -22,17 +22,16 @@
 
 const HEX_DIRS = [[1,0],[-1,0],[0,1],[0,-1],[1,-1],[-1,1]];
 
-// Arms derived by repeated 60° rotation (q,r)→(-r, q+r) of the right arm.
-// Right arm rows are along constant (q+r); all 6 arms have 4+3+2+1=10 cells.
-// Apex positions: top(0,-8), topRight(8,-8), right(8,0),
-//                bottom(0,8), bottomLeft(-8,8), left(-8,0).
+// Arms for POINTY-TOP hex layout (x=√3·(q+r/2), y=1.5·r).
+// Derived by 60° rotation (q,r)→(-r,q+r) of the top arm.
+// Each arm: 4+3+2+1 = 10 cells. All 6 apexes at ±30°/±90°/±150° — proper Star of David.
 const _ARM_QR = {
-  top:        [[0,-5],[-1,-5],[-2,-5],[-3,-5],[0,-6],[-1,-6],[-2,-6],[0,-7],[-1,-7],[0,-8]],
-  topRight:   [[5,-5],[5,-6],[5,-7],[5,-8],[6,-6],[6,-7],[6,-8],[7,-7],[7,-8],[8,-8]],
-  right:      [[5,0],[6,-1],[7,-2],[8,-3],[6,0],[7,-1],[8,-2],[7,0],[8,-1],[8,0]],
-  bottom:     [[0,5],[1,5],[2,5],[3,5],[0,6],[1,6],[2,6],[0,7],[1,7],[0,8]],
-  bottomLeft: [[-5,5],[-5,6],[-5,7],[-5,8],[-6,6],[-6,7],[-6,8],[-7,7],[-7,8],[-8,8]],
-  left:       [[-5,0],[-6,1],[-7,2],[-8,3],[-6,0],[-7,1],[-8,2],[-7,0],[-8,1],[-8,0]],
+  top:        [[1,-5],[2,-5],[3,-5],[4,-5],[2,-6],[3,-6],[4,-6],[3,-7],[4,-7],[4,-8]],
+  topRight:   [[5,-4],[5,-3],[5,-2],[5,-1],[6,-4],[6,-3],[6,-2],[7,-4],[7,-3],[8,-4]],
+  right:      [[4,1],[3,2],[2,3],[1,4],[4,2],[3,3],[2,4],[4,3],[3,4],[4,4]],
+  bottom:     [[-1,5],[-2,5],[-3,5],[-4,5],[-2,6],[-3,6],[-4,6],[-3,7],[-4,7],[-4,8]],
+  bottomLeft: [[-5,4],[-5,3],[-5,2],[-5,1],[-6,4],[-6,3],[-6,2],[-7,4],[-7,3],[-8,4]],
+  left:       [[-4,-1],[-3,-2],[-2,-3],[-1,-4],[-4,-2],[-3,-3],[-2,-4],[-4,-3],[-3,-4],[-4,-4]],
 };
 
 // Build flat POSITIONS array and QR→index lookup (same logic as cchk_sim.js).
@@ -77,22 +76,12 @@ for (const [name, qrList] of Object.entries(_ARM_QR)) {
   _ARM_IDX[name] = qrList.map(([q, r]) => _QR_TO_IDX[`${q},${r}`]).filter((i) => i !== undefined);
 }
 
-// The star spans q from -8 to +8, r from -8 to +8.
-// We use flat-top hexagon layout:
-//   x = HEX_SIZE * (3/2 * q)
-//   y = HEX_SIZE * (sqrt(3)/2 * q + sqrt(3) * r)
-// (This is the flat-top formula: x depends on q, y on both.)
-// The bounding box of the star in these coords:
-//   q range: -8 to 8  → x range: -12 to +12 × HEX_SIZE
-//   r range: -8 to 8  → y range roughly ±16 × HEX_SIZE (approx)
-//
-// We scale HEX_SIZE so the star fits in boardSize with padding.
-// Star bounding box: the extreme cells are at q=±8, r=±8 (arm tips).
-// Max pixel extents with flat-top:
-//   x_max = 1.5 * 8 * HEX_SIZE = 12 * HEX_SIZE
-//   y_max = sqrt(3) * (0.5 * 8 + 8) * HEX_SIZE = sqrt(3) * 12 * HEX_SIZE ≈ 20.8 * HEX_SIZE
-// So height is the limiting dimension. We set 2 * 20.8 * HEX_SIZE ≈ boardSize.
-// HEX_SIZE ≈ boardSize / (2 * 20.8) ≈ boardSize / 41.6
+// We use POINTY-TOP hexagon layout:
+//   x = HEX_SIZE * sqrt(3) * (q + r/2)
+//   y = HEX_SIZE * 1.5 * r
+// Star bounding box: top apex (4,-8) → y=-12·hs, bottom apex (-4,8) → y=+12·hs.
+// Height = 24·hs is the limiting dimension (width = 12√3·hs ≈ 20.8·hs < 24·hs).
+// Set hs = boardSize / 24.
 
 const SQRT3 = Math.sqrt(3);
 
@@ -130,27 +119,25 @@ let _lastCtx       = null;
 // ─── Layout helpers ───────────────────────────────────────────────────────────
 
 function _hexSize() {
-  // With corrected arms, the star's full height is 2×8×sqrt(3)×hs = 16×sqrt(3)×hs
-  // (top tip at (0,−8), bottom tip at (0,8)).  Width is 24×hs < height, so
-  // height is the limiting dimension.  Set 16×sqrt(3)×hs = boardSize to fill.
-  return _bs / (SQRT3 * 16);
+  // Pointy-top star height = 24*hs (y from -12*hs to +12*hs). Height is limiting.
+  return _bs / 24;
 }
 
 function _pieceR() {
-  return Math.max(6, Math.round(_hexSize() * 0.42));
+  return Math.max(6, Math.round(_hexSize() * 0.70));
 }
 
 function _hitR() {
   return Math.max(10, Math.round(_hexSize() * 0.52));
 }
 
-/** Pixel center of position index i (flat-top hex layout, centered in board). */
+/** Pixel center of position index i (pointy-top hex layout, centered in board). */
 function _px(i) {
   const { q, r } = POSITIONS[i];
   const hs = _hexSize();
   return {
-    x: _bx + hs * 1.5 * q,
-    y: _by + hs * SQRT3 * (r + q * 0.5),
+    x: _bx + hs * SQRT3 * (q + r * 0.5),
+    y: _by + hs * 1.5 * r,
   };
 }
 
@@ -184,7 +171,7 @@ function _drawBoard(highlightIdxs) {
   gfx.clear();
 
   const hs   = _hexSize();
-  const cr   = hs * 0.48;  // cell radius (flat-top: distance center to corner = hs; inradius = hs*sqrt(3)/2)
+  const cr   = hs * 0.90;  // cell circumradius (near full tiling, ~2× previous)
 
   // Build arm index sets for fast lookup.
   const armOfIdx = new Map();

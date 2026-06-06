@@ -14,6 +14,7 @@ import { createAlphabetHost } from './games/alphabet.js';
 import { createGoHost } from './games/go.js';
 import { createGameRoomHost } from './games/gameroom.js';
 import { createPacfriendsHost } from './games/pacfriends.js';
+import { debugBoard as cchkDebugBoard } from './games/cchk_sim.js';
 
 const port = Number.parseInt(process.env.PORT ?? '8080', 10);
 if (!Number.isFinite(port) || port <= 0) throw new Error(`Invalid PORT: ${process.env.PORT}`);
@@ -122,4 +123,5 @@ setInterval(() => {
 
 server.listen(port, () => {
   console.log(`Games WS server listening on port ${port}`);
+  cchkDebugBoard();
 });

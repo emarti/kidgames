@@ -105,7 +105,7 @@ function applyMove(s, from, to) {
   s.board[to] = piece;
   // Check win.
   const goalCells = goalArmCells(piece.color);
-  if (goalCells && goalCells.every((i) => s.board[i]?.color === piece.color)) {
+  if (goalCells && goalCells.every((i) => s.board[i] !== null)) {
     if (!s.winners) s.winners = [];
     if (!s.winners.includes(piece.color)) s.winners.push(piece.color);
     const remaining = s.activeColors.filter(c => !s.winners.includes(c));
@@ -118,6 +118,12 @@ function applyMove(s, from, to) {
 }
 
 // ─── UCT MCTS ─────────────────────────────────────────────────────────────────
+//
+// Per-player value tracking: each node stores a wins map { color: cumulative }
+// so UCT at each node uses the CURRENT PLAYER's win rate, not the root's.
+// This is correct for any number of players:
+//   2-player: opponent maximises their own rate = minimises root's. ✓
+//   N-player: each player selfishly maximises their own rate. ✓
 
 class Node {
   constructor(state, move, parent) {
@@ -126,23 +132,25 @@ class Node {
     this.parent   = parent;
     this.children = [];
     this.visits   = 0;
-    this.wins     = 0;       // from root color's perspective
-    this.untriedMoves = null; // lazily populated
+    this.wins     = {};      // wins[color] = cumulative value for that color
+    this.untriedMoves = null;
   }
 
   isFullyExpanded() {
     return this.untriedMoves !== null && this.untriedMoves.length === 0;
   }
 
-  uct(totalVisits, rootColor) {
+  /** UCT from `color`'s perspective (used by the player who is to move). */
+  uct(totalVisits, color) {
     if (this.visits === 0) return Infinity;
-    const exploit = this.wins / this.visits;
+    const exploit = (this.wins[color] ?? 0) / this.visits;
     const explore = C * Math.sqrt(Math.log(totalVisits) / this.visits);
     return exploit + explore;
   }
 }
 
-function _rollout(state, rootColor, depth) {
+/** Run a random rollout and return per-color values { color: 0..1 }. */
+function _rollout(state, activeColors, depth) {
   const s = cloneState(state);
   for (let d = 0; d < depth; d++) {
     if (s.gameOver) break;
@@ -151,19 +159,26 @@ function _rollout(state, rootColor, depth) {
     const m = moves[Math.floor(Math.random() * moves.length)];
     applyMove(s, m.from, m.to);
   }
-  if (s.gameOver) {
-    return s.winner === rootColor ? 1 : 0;
+  const results = {};
+  for (const color of activeColors) {
+    if (s.gameOver) {
+      results[color] = s.winner === color ? 1 : 0;
+    } else {
+      results[color] = _evaluate(s.board, color);
+    }
   }
-  return _evaluate(s.board, rootColor);
+  return results;
 }
 
-function _select(node, rootColor) {
+function _select(node) {
   let cur = node;
   while (cur.children.length > 0 && cur.isFullyExpanded()) {
+    // The player about to move at this node picks the child maximising their own value.
+    const color = cur.state.turn;
     let best = null;
     let bestVal = -Infinity;
     for (const child of cur.children) {
-      const val = child.uct(cur.visits, rootColor);
+      const val = child.uct(cur.visits, color);
       if (val > bestVal) { bestVal = val; best = child; }
     }
     cur = best;
@@ -186,30 +201,32 @@ function _expand(node) {
   return child;
 }
 
-function _backprop(node, result) {
+function _backprop(node, results) {
   let cur = node;
   while (cur) {
     cur.visits++;
-    cur.wins += result;
-    result = 1 - result; // flip: alternating players
+    for (const [color, val] of Object.entries(results)) {
+      cur.wins[color] = (cur.wins[color] ?? 0) + val;
+    }
     cur = cur.parent;
   }
 }
 
 function mcts(state, maxIter, maxMs) {
-  const rootColor = state.turn;
+  const rootColor  = state.turn;
+  const activeColors = state.activeColors ?? ['red', 'orange'];
   const root = new Node(cloneState(state), null, null);
   const deadline = Date.now() + maxMs;
 
   for (let i = 0; i < maxIter; i++) {
     if (Date.now() > deadline) break;
-    const selected = _select(root, rootColor);
+    const selected = _select(root);
     const expanded = _expand(selected);
-    const result   = _rollout(expanded.state, rootColor, ROLLOUT_DEPTH);
-    _backprop(expanded, result);
+    const results  = _rollout(expanded.state, activeColors, ROLLOUT_DEPTH);
+    _backprop(expanded, results);
   }
 
-  // Pick child with most visits.
+  // Pick the root child with the most visits (standard robust child criterion).
   if (root.children.length === 0) return null;
   let best = root.children[0];
   for (const child of root.children) {

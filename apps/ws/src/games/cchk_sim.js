@@ -23,13 +23,18 @@ const HEX_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1]];
 // Right arm rows are along constant (q+r); all 6 arms have 4+3+2+1=10 cells.
 // Apex positions: top(0,-8), topRight(8,-8), right(8,0),
 //                bottom(0,8), bottomLeft(-8,8), left(-8,0).
+// Arms for POINTY-TOP hex layout (x=√3·(q+r/2), y=1.5·r).
+// Derived by repeated 60° rotation (q,r)→(-r,q+r) of the top arm.
+// Each arm: 4+3+2+1 = 10 cells, base-row nearest center, apex farthest.
+// All 6 apexes at pixel angles ±30°, ±90°, ±150° — proper Star of David.
+// top apex (4,-8): (0,-12) = straight up; bottom (-4,8): (0,+12) = straight down.
 const _ARM_QR = {
-  top:        [[0,-5],[-1,-5],[-2,-5],[-3,-5],[0,-6],[-1,-6],[-2,-6],[0,-7],[-1,-7],[0,-8]],
-  topRight:   [[5,-5],[5,-6],[5,-7],[5,-8],[6,-6],[6,-7],[6,-8],[7,-7],[7,-8],[8,-8]],
-  right:      [[5,0],[6,-1],[7,-2],[8,-3],[6,0],[7,-1],[8,-2],[7,0],[8,-1],[8,0]],
-  bottom:     [[0,5],[1,5],[2,5],[3,5],[0,6],[1,6],[2,6],[0,7],[1,7],[0,8]],
-  bottomLeft: [[-5,5],[-5,6],[-5,7],[-5,8],[-6,6],[-6,7],[-6,8],[-7,7],[-7,8],[-8,8]],
-  left:       [[-5,0],[-6,1],[-7,2],[-8,3],[-6,0],[-7,1],[-8,2],[-7,0],[-8,1],[-8,0]],
+  top:        [[1,-5],[2,-5],[3,-5],[4,-5],[2,-6],[3,-6],[4,-6],[3,-7],[4,-7],[4,-8]],
+  topRight:   [[5,-4],[5,-3],[5,-2],[5,-1],[6,-4],[6,-3],[6,-2],[7,-4],[7,-3],[8,-4]],
+  right:      [[4,1],[3,2],[2,3],[1,4],[4,2],[3,3],[2,4],[4,3],[3,4],[4,4]],
+  bottom:     [[-1,5],[-2,5],[-3,5],[-4,5],[-2,6],[-3,6],[-4,6],[-3,7],[-4,7],[-4,8]],
+  bottomLeft: [[-5,4],[-5,3],[-5,2],[-5,1],[-6,4],[-6,3],[-6,2],[-7,4],[-7,3],[-8,4]],
+  left:       [[-4,-1],[-3,-2],[-2,-3],[-1,-4],[-4,-2],[-3,-3],[-2,-4],[-4,-3],[-3,-4],[-4,-4]],
 };
 
 // Build flat position list and q,r → index lookup.
@@ -201,7 +206,8 @@ function _validatePath(board, from, path) {
       const midIdx = _QR_TO_IDX[`${fq + dq / 2},${fr + dr / 2}`];
       if (midIdx !== undefined && board[midIdx] !== null && board[to] === null) return true;
     }
-    return false;
+    // Multi-hop: client only sends the destination; verify via BFS reachability.
+    return _hopReachable(board, from).has(to);
   }
 
   // Chain: every step must be a hop.
@@ -232,7 +238,12 @@ function _validatePath(board, from, path) {
 
 function _checkWin(state, movedColor) {
   const goalCells = _ARM_CELLS[CCHK_GOAL_ARM_OF[movedColor]];
-  if (goalCells && goalCells.every((i) => state.board[i]?.color === movedColor)) {
+  // Win when every goal cell is occupied by your piece OR by an opponent's piece
+  // (blocking slots count as filled — you can't do better than that).
+  // A cell with your own color counts only if it actually moved there (not if it
+  // never left your start arm — but since the goal arm ≠ start arm for any color,
+  // any piece of movedColor in the goal arm got there legitimately).
+  if (goalCells && goalCells.every((i) => state.board[i] !== null)) {
     if (!state.winners) state.winners = [];
     if (!state.winners.includes(movedColor)) state.winners.push(movedColor);
     // Game is over when only one active color hasn't won yet (they're last place).
@@ -373,6 +384,42 @@ export function redoMove(state) {
 }
 
 /**
+ * Add a color to a live game without resetting the board.
+ * Places pieces in the color's start arm (overwriting any pieces there).
+ * No-op if already active.
+ */
+export function addColor(state, color) {
+  if (state.activeColors.includes(color)) return;
+  const arm = CCHK_ARM_OF[color];
+  if (!arm) return;
+  for (const i of _ARM_CELLS[arm]) state.board[i] = { color };
+  // Insert in canonical order.
+  state.activeColors = CCHK_COLORS.filter(c => state.activeColors.includes(c) || c === color);
+  state.tick++;
+}
+
+/**
+ * Remove a color from a live game without resetting the board.
+ * Clears all pieces of that color; advances turn if it was their turn.
+ * No-op if not active.
+ */
+export function removeColor(state, color) {
+  const idx = state.activeColors.indexOf(color);
+  if (idx < 0) return;
+  // Remove pieces.
+  for (let i = 0; i < state.board.length; i++) {
+    if (state.board[i]?.color === color) state.board[i] = null;
+  }
+  // Remove from winners list if present.
+  if (state.winners) state.winners = state.winners.filter(c => c !== color);
+  // Remove from activeColors.
+  state.activeColors.splice(idx, 1);
+  // Advance turn if it was this color's turn.
+  if (state.turn === color) state.turn = _nextTurn(state);
+  state.tick++;
+}
+
+/**
  * @param {string[]} [activeColors] — if provided, overrides the current activeColors.
  */
 export function resetGame(state, activeColors) {
@@ -383,4 +430,77 @@ export function resetGame(state, activeColors) {
   for (const pid of [1, 2, 3, 4]) {
     if (players[pid]) state.players[pid] = { ...players[pid] };
   }
+}
+
+// ─── Debug: print board layout ────────────────────────────────────────────────
+
+export function debugBoard() {
+  // Pointy-top hex → pixel:  x = sqrt(3)*(q + r/2),  y = 1.5*r
+  const SQRT3 = Math.sqrt(3);
+  const ARM_LABEL = {
+    top: 'R', topRight: 'B', right: 'Y',
+    bottom: 'O', bottomLeft: 'G', left: 'P',
+  };
+
+  // Build label lookup from QR to single char
+  const cellLabel = {};
+  for (const [arm, qrList] of Object.entries(_ARM_QR)) {
+    for (const [q, r] of qrList) cellLabel[`${q},${r}`] = ARM_LABEL[arm];
+  }
+
+  // Pixel positions for all 121 cells
+  const cells = POSITIONS.map(({ q, r }, i) => {
+    const x = SQRT3 * (q + r * 0.5);
+    const y = 1.5 * r;
+    const label = cellLabel[`${q},${r}`] ?? '.';
+    return { i, q, r, x, y, label };
+  });
+
+  // Print arm apex pixel positions
+  const apexes = {
+    top: [4,-8], topRight: [8,-4], right: [4,4],
+    bottom: [-4,8], bottomLeft: [-8,4], left: [-4,-4],
+  };
+  console.log('[cchk] Arm apex positions (pointy-top hex: x=√3(q+r/2), y=1.5r):');
+  for (const [arm, [q, r]] of Object.entries(apexes)) {
+    const x = (SQRT3 * (q + r * 0.5)).toFixed(2);
+    const y = (1.5 * r).toFixed(2);
+    const ang = (Math.atan2(parseFloat(y), parseFloat(x)) * 180 / Math.PI).toFixed(0);
+    const lbl = ARM_LABEL[arm];
+    console.log(`  ${lbl} ${arm.padEnd(11)} apex (${String(q).padStart(3)},${String(r).padStart(3)})  px=(${String(x).padStart(7)}, ${String(y).padStart(7)})  ${ang}°`);
+  }
+
+  // Verify cell count + overlaps
+  const seen = new Set();
+  let problems = 0;
+  for (const [arm, qrList] of Object.entries(_ARM_QR)) {
+    const dupes = qrList.filter(([q,r]) => seen.has(`${q},${r}`));
+    const inCenter = qrList.filter(([q,r]) => Math.max(Math.abs(q),Math.abs(r),Math.abs(q+r)) <= 4);
+    qrList.forEach(([q,r]) => seen.add(`${q},${r}`));
+    if (dupes.length || inCenter.length) {
+      console.log(`  ⚠ ${arm}: dupes=${JSON.stringify(dupes)} centerOverlap=${JSON.stringify(inCenter)}`);
+      problems++;
+    }
+  }
+  console.log(`[cchk] Total cells: ${POSITIONS.length} (expect 121), problems: ${problems}`);
+
+  // ASCII grid: quantise pixel coords to character grid
+  const xs = cells.map(c => c.x);
+  const ys = cells.map(c => c.y);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const SX = 2.0 / 1.5;       // chars per x-unit (hex step = 1.5)
+  const SY = 1.0 / SQRT3;     // chars per y-unit (hex step = √3)
+  const COLS = Math.round((xMax - xMin) * SX) + 4;
+  const ROWS = Math.round((yMax - yMin) * SY) + 4;
+  const grid = Array.from({ length: ROWS }, () => Array(COLS).fill(' '));
+  for (const c of cells) {
+    const col = Math.round((c.x - xMin) * SX) + 1;
+    const row = Math.round((c.y - yMin) * SY) + 1;
+    if (row >= 0 && row < ROWS && col >= 0 && col < COLS) grid[row][col] = c.label;
+  }
+  console.log('[cchk] ASCII board (R=red top, O=orange bottom, B=blue topRight, G=green bottomLeft, Y=yellow right, P=purple left):');
+  console.log('  ' + '─'.repeat(COLS));
+  for (const row of grid) console.log('  |' + row.join('') + '|');
+  console.log('  ' + '─'.repeat(COLS));
 }

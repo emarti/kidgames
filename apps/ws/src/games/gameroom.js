@@ -483,10 +483,12 @@ export function createGameRoomHost() {
         }
         // Remove from computerColors if now inactive.
         cfg.computerColors = cfg.computerColors.filter(c => cfg.activeColors.includes(c));
-        // Rebuild the game (resets board + turn cycling).
-        const players = room.state.game?.players;
-        room.state.game = CchkSim.newGameState(cfg.activeColors);
-        if (players) room.state.game.players = players;
+        // Add/remove color on the live board without resetting.
+        if (idx >= 0) {
+          CchkSim.removeColor(room.state.game, color);
+        } else {
+          CchkSim.addColor(room.state.game, color);
+        }
         room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;
         room.updatedAt = nowMs();
