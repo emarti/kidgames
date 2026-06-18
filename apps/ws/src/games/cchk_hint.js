@@ -7,7 +7,7 @@
  * Heuristic: average axial distance of each piece from its destination arm center.
  */
 
-import { legalMovesFor, POSITIONS, goalArmCells, CCHK_COLORS, CCHK_GOAL_ARM_OF } from './cchk_sim.js';
+import { legalMovesFor, POSITIONS, goalArmCells, hasCompletedGoal, CCHK_COLORS } from './cchk_sim.js';
 
 const C = 1.4;
 
@@ -105,9 +105,7 @@ function applyMove(s, from, to) {
   const piece = s.board[from];
   s.board[from] = null;
   s.board[to] = piece;
-  // Check win.
-  const goalCells = goalArmCells(piece.color);
-  if (goalCells && goalCells.every((i) => s.board[i]?.color === piece.color)) {
+  if (hasCompletedGoal(s, piece.color)) {
     if (!s.winners) s.winners = [];
     if (!s.winners.includes(piece.color)) s.winners.push(piece.color);
     const remaining = s.activeColors.filter(c => !s.winners.includes(c));

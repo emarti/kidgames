@@ -119,6 +119,19 @@ export function startArmCells(color) {
   return _ARM_CELLS[CCHK_ARM_OF[color]];
 }
 
+export function hasCompletedGoal(state, color) {
+  const goalCells = goalArmCells(color);
+  if (!goalCells) return false;
+
+  let hasOwnPiece = false;
+  for (const i of goalCells) {
+    const piece = state.board[i];
+    if (!piece) return false;
+    if (piece.color === color) hasOwnPiece = true;
+  }
+  return hasOwnPiece;
+}
+
 // ─── Legal move generation ────────────────────────────────────────────────────
 
 /**
@@ -237,11 +250,7 @@ function _validatePath(board, from, path) {
 // ─── State mutation ───────────────────────────────────────────────────────────
 
 function _checkWin(state, movedColor) {
-  // "Available spaces" rule: player wins when at least one piece reaches the goal.
-  // This is an anti-spoiling rule that prevents games from becoming unwinnable
-  // due to pieces being blocked or captured.
-  const goalCells = _ARM_CELLS[CCHK_GOAL_ARM_OF[movedColor]];
-  if (goalCells && goalCells.some((i) => state.board[i]?.color === movedColor)) {
+  if (hasCompletedGoal(state, movedColor)) {
     if (!state.winners) state.winners = [];
     if (!state.winners.includes(movedColor)) state.winners.push(movedColor);
     // Game is over when only one active color hasn't won yet (they're last place).
