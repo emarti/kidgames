@@ -91,9 +91,11 @@ function cloneState(state) {
 
 function _nextTurn(state) {
   const active = state.activeColors;
+  if (active.length === 0) return null;
   const idx = active.indexOf(state.turn);
+  const start = idx >= 0 ? idx : -1;
   for (let i = 1; i <= active.length; i++) {
-    const next = active[(idx + i) % active.length];
+    const next = active[(start + i) % active.length];
     if (!(state.winners ?? []).includes(next)) return next;
   }
   return state.turn;
@@ -105,7 +107,7 @@ function applyMove(s, from, to) {
   s.board[to] = piece;
   // Check win.
   const goalCells = goalArmCells(piece.color);
-  if (goalCells && goalCells.every((i) => s.board[i] !== null)) {
+  if (goalCells && goalCells.every((i) => s.board[i]?.color === piece.color)) {
     if (!s.winners) s.winners = [];
     if (!s.winners.includes(piece.color)) s.winners.push(piece.color);
     const remaining = s.activeColors.filter(c => !s.winners.includes(c));

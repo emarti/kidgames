@@ -64,8 +64,8 @@ for (const cells of Object.values(_ARM_QR)) {
 
 // ─── Color → arm mappings ──────────────────────────────────────────────────────
 
-// The 6 standard Chinese Checkers colors, in turn order.
-export const CCHK_COLORS = ['red', 'orange', 'blue', 'green', 'yellow', 'purple'];
+// The 6 standard Chinese Checkers colors, in turn order (clockwise from top).
+export const CCHK_COLORS = ['red', 'blue', 'yellow', 'orange', 'green', 'purple'];
 
 // Which arm each color starts in.
 export const CCHK_ARM_OF = {
@@ -237,13 +237,11 @@ function _validatePath(board, from, path) {
 // ─── State mutation ───────────────────────────────────────────────────────────
 
 function _checkWin(state, movedColor) {
+  // "Available spaces" rule: player wins when at least one piece reaches the goal.
+  // This is an anti-spoiling rule that prevents games from becoming unwinnable
+  // due to pieces being blocked or captured.
   const goalCells = _ARM_CELLS[CCHK_GOAL_ARM_OF[movedColor]];
-  // Win when every goal cell is occupied by your piece OR by an opponent's piece
-  // (blocking slots count as filled — you can't do better than that).
-  // A cell with your own color counts only if it actually moved there (not if it
-  // never left your start arm — but since the goal arm ≠ start arm for any color,
-  // any piece of movedColor in the goal arm got there legitimately).
-  if (goalCells && goalCells.every((i) => state.board[i] !== null)) {
+  if (goalCells && goalCells.some((i) => state.board[i]?.color === movedColor)) {
     if (!state.winners) state.winners = [];
     if (!state.winners.includes(movedColor)) state.winners.push(movedColor);
     // Game is over when only one active color hasn't won yet (they're last place).
@@ -258,9 +256,11 @@ function _checkWin(state, movedColor) {
 /** Advance turn to next active, non-won color. */
 function _nextTurn(state) {
   const active = state.activeColors ?? CCHK_COLORS;
+  if (active.length === 0) return null;
   const idx = active.indexOf(state.turn);
+  const start = idx >= 0 ? idx : -1;
   for (let i = 1; i <= active.length; i++) {
-    const next = active[(idx + i) % active.length];
+    const next = active[(start + i) % active.length];
     if (!state.winners?.includes(next)) return next;
   }
   return state.turn; // fallback (shouldn't happen)
@@ -272,9 +272,9 @@ function _applyMove(state, from, path) {
   const to = path[path.length - 1];
   state.board[to] = piece;
   state.lastMove = { from, to, path: path.slice(), color: piece.color };
-  state.turn = _nextTurn(state);
   state.tick++;
   _checkWin(state, piece.color);
+  state.turn = _nextTurn(state);
 }
 
 function _pushSnapshot(state) {
@@ -350,6 +350,7 @@ export function computerMovePiece(state, from, path) {
   if (state.gameOver) return { ok: false, error: 'Game is over' };
   if (from < 0 || from >= 121) return { ok: false, error: 'Invalid from' };
   if (!Array.isArray(path) || path.length === 0) return { ok: false, error: 'Invalid path' };
+  if (state.board[from]?.color !== state.turn) return { ok: false, error: 'Not computer turn piece' };
   if (!_validatePath(state.board, from, path)) return { ok: false, error: 'Illegal move' };
   _pushSnapshot(state);
   _applyMove(state, from, path);

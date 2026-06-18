@@ -22,8 +22,7 @@
 // ─── Symbols ──────────────────────────────────────────────────────────────────
 
 const SYMBOLS = {
-  white: { K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '♙' },
-  black: { K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞', P: '♟' },
+  K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞', P: '♟',
 };
 
 // ─── Coordinate helpers (mirrors chess_sim.js) ────────────────────────────────
@@ -43,6 +42,7 @@ let _boardGfx  = null;
 let _checkGfx  = null;
 let _markerGfx = null;
 let _hintGfx   = null;
+let _explainGfx = null;
 let _hitZones  = [];
 
 let _pieceTexts = [];  // Phaser Text objects pooled for piece glyphs
@@ -67,18 +67,37 @@ let _promoTo         = null;
 
 let _lastGameState = null;
 let _lastCtx       = null;
+let _flipped       = false;
+let _explainActive = false;
+
+let _explainTexts  = [];  // Phaser Text objects pooled for explain labels
 
 // ─── Layout helpers ───────────────────────────────────────────────────────────
 
 function _cellSize()    { return _bs / 8; }
 function _hitHalfSize() { return Math.max(16, Math.round(_cellSize() * 0.49)); }
-function _pieceFont()   { return Math.max(14, Math.round(_cellSize() * 0.7)); }
+function _pieceFont()   { return Math.max(20, Math.round(_cellSize() * 0.945)); }
+
+function _displayRC(row, col) {
+  if (!_flipped) return { row, col };
+  return { row: 7 - row, col: 7 - col };
+}
+
+function _squareRect(i) {
+  const { row, col } = _toRC(i);
+  const view = _displayRC(row, col);
+  const cs = _cellSize();
+  return {
+    x: _bx + view.col * cs,
+    y: _by + view.row * cs,
+    size: cs,
+  };
+}
 
 /** Pixel center of board cell index. */
 function _px(i) {
-  const { row, col } = _toRC(i);
-  const cs = _cellSize();
-  return { x: _bx + col * cs + cs / 2, y: _by + row * cs + cs / 2 };
+  const rect = _squareRect(i);
+  return { x: rect.x + rect.size / 2, y: rect.y + rect.size / 2 };
 }
 
 // ─── Board drawing ────────────────────────────────────────────────────────────
@@ -109,11 +128,11 @@ function _drawBoard(highlightCells) {
   // Highlighted destination squares (legal moves)
   if (highlightCells) {
     for (const i of highlightCells) {
-      const { row, col } = _toRC(i);
+      const rect = _squareRect(i);
       gfx.fillStyle(0x44ff88, 0.35);
-      gfx.fillRect(_bx + col * cs, _by + row * cs, cs, cs);
+      gfx.fillRect(rect.x, rect.y, rect.size, rect.size);
       gfx.lineStyle(2, 0x00ff66, 0.7);
-      gfx.strokeRect(_bx + col * cs + 1, _by + row * cs + 1, cs - 2, cs - 2);
+      gfx.strokeRect(rect.x + 1, rect.y + 1, rect.size - 2, rect.size - 2);
     }
   }
 }
@@ -124,14 +143,13 @@ function _drawLastMoveMarker(lastMove) {
   const gfx = _markerGfx;
   gfx.clear();
   if (!lastMove) return;
-  const cs = _cellSize();
-  const { row: fr, col: fc } = _toRC(lastMove.from);
-  const { row: tr, col: tc } = _toRC(lastMove.to);
   const alpha = 0.35;
-  const col   = lastMove.color === 'white' ? 0x4488ff : 0xff8844;
-  gfx.fillStyle(col, alpha);
-  gfx.fillRect(_bx + fc * cs, _by + fr * cs, cs, cs);
-  gfx.fillRect(_bx + tc * cs, _by + tr * cs, cs, cs);
+  const tint  = lastMove.color === 'white' ? 0x4488ff : 0xff8844;
+  const fromRect = _squareRect(lastMove.from);
+  const toRect = _squareRect(lastMove.to);
+  gfx.fillStyle(tint, alpha);
+  gfx.fillRect(fromRect.x, fromRect.y, fromRect.size, fromRect.size);
+  gfx.fillRect(toRect.x, toRect.y, toRect.size, toRect.size);
 }
 
 // ─── Check highlight ──────────────────────────────────────────────────────────
@@ -142,15 +160,14 @@ function _drawCheckHighlight(board, inCheck, turn) {
   if (!inCheck) return;
   // Find king of the side that is in check (it's `turn`'s king — after the move, opponent is in check)
   // Actually inCheck means it's `turn`'s turn and they're in check
-  const cs = _cellSize();
   for (let i = 0; i < 64; i++) {
     const p = board[i];
     if (p && p.type === 'K' && p.color === turn) {
-      const { row, col } = _toRC(i);
+      const rect = _squareRect(i);
       gfx.fillStyle(0xff2222, 0.45);
-      gfx.fillRect(_bx + col * cs, _by + row * cs, cs, cs);
+      gfx.fillRect(rect.x, rect.y, rect.size, rect.size);
       gfx.lineStyle(3, 0xff4444, 0.9);
-      gfx.strokeRect(_bx + col * cs + 1, _by + row * cs + 1, cs - 2, cs - 2);
+      gfx.strokeRect(rect.x + 1, rect.y + 1, rect.size - 2, rect.size - 2);
       break;
     }
   }
@@ -165,7 +182,6 @@ function _clearPieceTexts() {
 function _drawPieces(board, selected, dragging) {
   _clearPieceTexts();
   let poolIdx = 0;
-  const cs   = _cellSize();
   const fs   = _pieceFont();
 
   for (let i = 0; i < 64; i++) {
@@ -173,10 +189,8 @@ function _drawPieces(board, selected, dragging) {
     if (!piece) continue;
     if (i === dragging) continue; // drawn separately while dragging
 
-    const { row, col } = _toRC(i);
-    const px = _bx + col * cs + cs / 2;
-    const py = _by + row * cs + cs / 2;
-    const glyph = SYMBOLS[piece.color]?.[piece.type] ?? '?';
+    const pos = _px(i);
+    const glyph = SYMBOLS[piece.type] ?? '?';
     const alpha = (i === selected) ? 0.45 : 1;
 
     // Reuse or create
@@ -205,11 +219,11 @@ function _drawPieces(board, selected, dragging) {
       fontFamily: 'Arial, "Segoe UI Symbol", "Noto Chess", sans-serif',
       fontSize:   `${fs}px`,
       color:      isWhite ? '#f8f8f8' : '#111111',
-      stroke:     isWhite ? '#333333' : '#cccccc',
-      strokeThickness: Math.max(1, Math.round(fs * 0.08)),
+      stroke:     isWhite ? '#2c2c2c' : '#dddddd',
+      strokeThickness: Math.max(1, Math.round(fs * 0.06)),
     });
     txt.setText(glyph);
-    txt.setPosition(px, py);
+    txt.setPosition(pos.x, pos.y);
     txt.setAlpha(alpha);
     txt.setVisible(true);
     txt.setDepth(12);
@@ -229,10 +243,175 @@ function _drawSelectionRing(selected) {
   // Instead, we add to boardGfx at the end of _drawBoard — pass selected index too.
   // Simpler: _boardGfx is already cleared before each draw call, so add ring there.
   if (selected === null) return;
-  const cs  = _cellSize();
-  const { row, col } = _toRC(selected);
+  const rect = _squareRect(selected);
   _boardGfx.lineStyle(3, 0x44ff88, 0.9);
-  _boardGfx.strokeRect(_bx + col * cs + 2, _by + row * cs + 2, cs - 4, cs - 4);
+  _boardGfx.strokeRect(rect.x + 2, rect.y + 2, rect.size - 4, rect.size - 4);
+}
+
+function _drawArrow(gfx, from, to, color, alpha = 0.85, width = 3) {
+  const start = _px(from);
+  const end = _px(to);
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return;
+
+  const ux = dx / len;
+  const uy = dy / len;
+  const head = Math.max(10, Math.round(_cellSize() * 0.22));
+  const bodyEndX = end.x - ux * head;
+  const bodyEndY = end.y - uy * head;
+  const perpX = -uy;
+  const perpY = ux;
+
+  gfx.lineStyle(width, color, alpha);
+  gfx.beginPath();
+  gfx.moveTo(start.x, start.y);
+  gfx.lineTo(bodyEndX, bodyEndY);
+  gfx.strokePath();
+
+  gfx.fillStyle(color, alpha);
+  gfx.beginPath();
+  gfx.moveTo(end.x, end.y);
+  gfx.lineTo(bodyEndX + perpX * head * 0.45, bodyEndY + perpY * head * 0.45);
+  gfx.lineTo(bodyEndX - perpX * head * 0.45, bodyEndY - perpY * head * 0.45);
+  gfx.closePath();
+  gfx.fillPath();
+}
+
+function _drawSquarePulse(gfx, square, color, alpha = 0.28, inset = 5) {
+  const rect = _squareRect(square);
+  gfx.fillStyle(color, alpha);
+  gfx.fillRect(rect.x + inset, rect.y + inset, rect.size - inset * 2, rect.size - inset * 2);
+}
+
+function _drawExplainOverlay(gameState) {
+  if (!_explainGfx) return;
+  _explainGfx.clear();
+  _clearExplainTexts();
+
+  const analysis = gameState.analysis;
+  if (!analysis) return;
+
+  const showTerminal = !!gameState.gameOver;
+  const showCheckExplain = _explainActive && !!gameState.inCheck;
+  const showGeneralExplain = _explainActive && !gameState.inCheck && !gameState.gameOver;
+
+  if (showTerminal) {
+    if (gameState.checkmate) {
+      for (const arrow of analysis.checkAttackers ?? []) {
+        _drawArrow(_explainGfx, arrow.from, arrow.to, 0xff4444, 0.92, 4);
+      }
+      _drawSquarePulse(_explainGfx, analysis.kingSquare, 0xff4444, 0.22, 8);
+      _placeExplainLabel(analysis.kingSquare, 'Checkmate!', 0xff4444);
+    }
+    if (gameState.stalemate) {
+      for (const arrow of analysis.stalematePressure ?? []) {
+        _drawArrow(_explainGfx, arrow.from, arrow.to, 0xffbb44, 0.8, 3);
+      }
+      if (analysis.kingSquare !== null && analysis.kingSquare !== undefined) {
+        _drawSquarePulse(_explainGfx, analysis.kingSquare, 0xffbb44, 0.18, 8);
+        _placeExplainLabel(analysis.kingSquare, 'Stalemate', 0xffbb44);
+      }
+    }
+    return;
+  }
+
+  if (showCheckExplain) {
+    for (const arrow of analysis.checkAttackers ?? []) {
+      _drawArrow(_explainGfx, arrow.from, arrow.to, 0xff4444, 0.92, 4);
+    }
+    _placeExplainLabel(analysis.kingSquare, 'Check!', 0xff4444);
+    for (const move of analysis.kingEscapes ?? []) {
+      _drawArrow(_explainGfx, move.from, move.to, 0x55dd88, 0.82, 3);
+      _drawSquarePulse(_explainGfx, move.to, 0x55dd88, 0.18, 10);
+    }
+    for (const move of analysis.checkResponses ?? []) {
+      const color = move.kind === 'capture' ? 0xffcc55 : 0x66bbff;
+      _drawArrow(_explainGfx, move.from, move.to, color, 0.78, 2);
+    }
+    return;
+  }
+
+  if (!showGeneralExplain) return;
+
+  // ── Tactics-based explain (forks, pins, hanging, last-move) ──
+  const tactics = analysis.tactics ?? [];
+  if (tactics.length > 0) {
+    for (const tactic of tactics) {
+      const tColor = tactic.color ?? 0xffcc55;
+      // Draw arrows
+      for (const arrow of tactic.arrows ?? []) {
+        const aColor = arrow.support ? 0x55aadd : tColor;
+        const aAlpha = arrow.support ? 0.7 : 0.85;
+        _drawArrow(_explainGfx, arrow.from, arrow.to, aColor, aAlpha, 3);
+      }
+      // Draw pulses on highlighted squares
+      for (const sq of tactic.pulses ?? []) {
+        _drawSquarePulse(_explainGfx, sq, tColor, 0.2, 8);
+      }
+      // Place label near the first pulse square (or first arrow target)
+      const labelSquare = (tactic.pulses ?? [])[0] ?? (tactic.arrows ?? [])[0]?.to;
+      if (labelSquare !== undefined && tactic.label) {
+        _placeExplainLabel(labelSquare, tactic.label, tColor);
+      }
+    }
+  }
+
+}
+
+// ─── Explain label helpers ────────────────────────────────────────────────────
+
+function _clearExplainTexts() {
+  for (const t of _explainTexts) if (t && t.active) t.setVisible(false);
+}
+
+function _placeExplainLabel(square, text, tint) {
+  const pos = _px(square);
+  const cs = _cellSize();
+  // Offset label above the square; if near the top edge, place below instead
+  const above = pos.y - cs * 0.6 > _by;
+  const lx = pos.x;
+  const ly = above ? pos.y - cs * 0.55 : pos.y + cs * 0.55;
+  const fs = Math.max(10, Math.round(cs * 0.22));
+
+  // Convert tint hex to CSS color string
+  const r = (tint >> 16) & 0xff;
+  const g = (tint >> 8)  & 0xff;
+  const b = tint          & 0xff;
+  const cssColor = `rgb(${r},${g},${b})`;
+
+  let txt;
+  // Reuse from pool
+  const poolIdx = _explainTexts.findIndex((t) => t && t.active && !t.visible);
+  if (poolIdx >= 0) {
+    txt = _explainTexts[poolIdx];
+  } else {
+    txt = _scene.add.text(0, 0, '', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize:   `${fs}px`,
+      fontStyle:  'bold',
+      color:      '#ffffff',
+      stroke:     '#000000',
+      strokeThickness: 3,
+      padding:    { x: 3, y: 1 },
+    }).setOrigin(0.5, 0.5).setDepth(15);
+    _explainTexts.push(txt);
+  }
+
+  txt.setStyle({
+    fontFamily: 'Arial, sans-serif',
+    fontSize:   `${fs}px`,
+    fontStyle:  'bold',
+    color:      cssColor,
+    stroke:     '#000000',
+    strokeThickness: 3,
+    padding:    { x: 3, y: 1 },
+  });
+  txt.setText(text);
+  txt.setPosition(lx, ly);
+  txt.setVisible(true);
+  txt.setDepth(15);
 }
 
 // ─── Hit zones ────────────────────────────────────────────────────────────────
@@ -435,10 +614,10 @@ function _updateDrag(px, py) {
     fontFamily:       'Arial, "Segoe UI Symbol", "Noto Chess", sans-serif',
     fontSize:         `${fs}px`,
     color:            isWhite ? '#f8f8f8' : '#111111',
-    stroke:           isWhite ? '#333333' : '#cccccc',
-    strokeThickness:  Math.max(1, Math.round(fs * 0.08)),
+    stroke:           isWhite ? '#2c2c2c' : '#dddddd',
+    strokeThickness:  Math.max(1, Math.round(fs * 0.06)),
   });
-  _dragText.setText(SYMBOLS[piece.color]?.[piece.type] ?? '?');
+  _dragText.setText(SYMBOLS[piece.type] ?? '?');
   _dragText.setPosition(px, py);
   _dragText.setVisible(true);
 }
@@ -510,7 +689,7 @@ function _showPromoDialog(from, to) {
 
   for (let t = 0; t < 4; t++) {
     const type  = types[t];
-    const glyph = SYMBOLS[color][type];
+    const glyph = SYMBOLS[type];
     const btnX  = overlayX + overlayW / 2;
     const btnY  = overlayY + cs * 0.6 + t * cs * 1.05;
     const isWhite = color === 'white';
@@ -520,8 +699,8 @@ function _showPromoDialog(from, to) {
       fontFamily:      'Arial, "Segoe UI Symbol", "Noto Chess", sans-serif',
       fontSize:        `${fs}px`,
       color:           isWhite ? '#f8f8f8' : '#111111',
-      stroke:          isWhite ? '#333333' : '#cccccc',
-      strokeThickness: Math.max(1, Math.round(fs * 0.08)),
+      stroke:          isWhite ? '#2c2c2c' : '#dddddd',
+      strokeThickness: Math.max(1, Math.round(fs * 0.06)),
       backgroundColor: '#444444',
       padding:         { x: 6, y: 4 },
     })
@@ -579,11 +758,14 @@ const chessRenderer = {
     _promoContainer = null;
     _lastGameState = null;
     _lastCtx       = null;
+    _flipped       = false;
+    _explainActive = false;
 
     _checkGfx  = scene.add.graphics().setDepth(9);
     _boardGfx  = scene.add.graphics().setDepth(10);
     _markerGfx = scene.add.graphics().setDepth(11);
     _hintGfx   = scene.add.graphics().setDepth(13);
+    _explainGfx = scene.add.graphics().setDepth(14);
     _dragGfx   = scene.add.graphics().setDepth(16);
 
     _drawBoard(null);
@@ -626,6 +808,7 @@ const chessRenderer = {
     _drawLastMoveMarker(gameState.lastMove);
     _drawCheckHighlight(gameState.board, gameState.inCheck, gameState.turn);
     _drawPieces(gameState.board, _selected, _dragFrom);
+    _drawExplainOverlay(gameState);
   },
 
   showHint(hintMsg) {
@@ -654,12 +837,44 @@ const chessRenderer = {
     if (_hintGfx) _hintGfx.clear();
   },
 
+  clearExplain() {
+    _explainActive = false;
+    if (_explainGfx) _explainGfx.clear();
+    _clearExplainTexts();
+    if (_lastGameState && _lastCtx) _redraw();
+  },
+
+  toggleExplain() {
+    _explainActive = !_explainActive;
+    if (_lastGameState && _lastCtx) _redraw();
+    return _explainActive;
+  },
+
+  isExplainActive() {
+    return _explainActive;
+  },
+
   resetSelection() {
     _selected    = null;
     _pendingDrag = null;
     _isDragging  = false;
     _cancelDrag();
     _closePromoDialog();
+  },
+
+  setFlipped(flipped) {
+    _flipped = !!flipped;
+    if (_lastGameState && _lastCtx) _redraw();
+  },
+
+  toggleFlipped() {
+    _flipped = !_flipped;
+    if (_lastGameState && _lastCtx) _redraw();
+    return _flipped;
+  },
+
+  isFlipped() {
+    return _flipped;
   },
 
   formatTurnText(gameState) {
@@ -686,28 +901,7 @@ const chessRenderer = {
   },
 
   getGameOverInfo(gameState) {
-    if (!gameState.gameOver) return null;
-    if (gameState.stalemate) {
-      return {
-        title:   'DRAW',
-        winner:  'Stalemate — no legal moves',
-        lines:   [],
-        buttons: [
-          { label: 'New Game', actions: ['restart'] },
-          { label: 'Continue', actions: ['undo_move'] },
-        ],
-      };
-    }
-    const w = gameState.winner;
-    return {
-      title:   'CHECKMATE',
-      winner:  w === 'white' ? '♔ WHITE wins!' : '♛ BLACK wins!',
-      lines:   [],
-      buttons: [
-        { label: 'New Game', actions: ['restart'] },
-        { label: 'Continue', actions: ['undo_move'] },
-      ],
-    };
+    return null;
   },
 
   shutdown() {
@@ -722,12 +916,16 @@ const chessRenderer = {
     for (const t of _pieceTexts) if (t && t.destroy) t.destroy();
     _pieceTexts = [];
 
+    for (const t of _explainTexts) if (t && t.destroy) t.destroy();
+    _explainTexts = [];
+
     _closePromoDialog();
 
     if (_boardGfx)  { _boardGfx.destroy();  _boardGfx  = null; }
     if (_checkGfx)  { _checkGfx.destroy();  _checkGfx  = null; }
     if (_markerGfx) { _markerGfx.destroy(); _markerGfx = null; }
     if (_hintGfx)   { _hintGfx.destroy();   _hintGfx   = null; }
+    if (_explainGfx){ _explainGfx.destroy(); _explainGfx = null; }
     if (_dragGfx)   { _dragGfx.destroy();   _dragGfx   = null; }
     if (_dragText)  { _dragText.destroy();   _dragText  = null; }
 
@@ -739,6 +937,8 @@ const chessRenderer = {
     _dragFrom      = null;
     _pendingDrag   = null;
     _isDragging    = false;
+    _flipped       = false;
+    _explainActive = false;
   },
 };
 

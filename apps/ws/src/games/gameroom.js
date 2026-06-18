@@ -720,7 +720,7 @@ export function createGameRoomHost() {
         else if (room.state.gameType === 'piratesbulgars') PiratesBulgarsSim.resetGame(room.state.game);
         else if (room.state.gameType === 'hex')      HexSim.resetGame(room.state.game);
         else if (room.state.gameType === 'checkers')  CheckersSim.resetGame(room.state.game);
-        else if (room.state.gameType === 'chess')       ChessSim.resetGame(room.state.game);
+        else if (room.state.gameType === 'chess')       ChessSim.resetGame(room.state.game, msg.preset ?? undefined);
         else if (room.state.gameType === 'cchk')        CchkSim.resetGame(room.state.game, room.state.cchkConfig?.activeColors);
         room._computerMoveGen = (room._computerMoveGen ?? 0) + 1;
         room.state.tick++;

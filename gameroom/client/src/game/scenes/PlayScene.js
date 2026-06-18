@@ -35,6 +35,33 @@ const FONT = { fontFamily: 'monospace' };
 
 const BOARD_SIZE = 9; // used only for layout geometry
 
+// ─── Chess preset menu helpers ────────────────────────────────────────────────
+
+const _BACK_RANK = ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'];
+
+function _standardMiniPieces() {
+  const pieces = [];
+  for (let col = 0; col < 8; col++) {
+    pieces.push({ type: _BACK_RANK[col], row: 0, col, color: 'black' });
+    pieces.push({ type: 'P', row: 1, col, color: 'black' });
+    pieces.push({ type: 'P', row: 6, col, color: 'white' });
+    pieces.push({ type: _BACK_RANK[col], row: 7, col, color: 'white' });
+  }
+  return pieces;
+}
+
+function _redrawMiniBoard(gfx, bx, by, thumbSize, cellSz) {
+  gfx.fillStyle(0x5a3a1a, 1);
+  gfx.fillRect(bx - 2, by - 2, thumbSize + 4, thumbSize + 4);
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const isDark = (r + c) % 2 === 1;
+      gfx.fillStyle(isDark ? 0xb58863 : 0xf0d9b5, 1);
+      gfx.fillRect(bx + c * cellSz, by + r * cellSz, cellSz, cellSz);
+    }
+  }
+}
+
 export default class PlayScene extends NetScene {
   constructor() {
     super({ key: 'PlayScene' });
@@ -47,6 +74,11 @@ export default class PlayScene extends NetScene {
     this._celebrationTimer    = null;
     this._celebrationParticles = [];
     this._pendingGoInfo       = null;
+    this._chessPanelObjects   = [];
+    this._chessFirstLoadInSession = false;  // Only show preset menu on very first load
+    this._chessPresetChosenForSession = false;
+    this._chessPresetOpenPending = false;
+    this._chessPresetOpenTimer = null;
   }
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
@@ -145,11 +177,14 @@ export default class PlayScene extends NetScene {
     const by = this._botBarY;
     const sp = Math.min(118, this._W * 0.22);
 
+    this._chessNewGameBtn = this._btn(cx - sp * 3, by, 'New Game', BTN_RESTART_BG, BTN_RESTART_HOV, () => this._onChessNewGame());
     this._undoBtn = this._btn(cx - sp * 2, by, '↩ UNDO',  BTN_UNDO_BG,  BTN_UNDO_HOV,  () => this._onUndo());
     this._redoBtn = this._btn(cx - sp * 1, by, '↪ REDO',  BTN_PASS_BG,  BTN_PASS_HOV,  () => this._onRedo());
     this._passBtn = this._btn(cx,          by, 'PASS',     BTN_PASS_BG,  BTN_PASS_HOV,  () => this._onPass());
     this._hintBtn = this._btn(cx + sp * 1, by, '💡 HINT',  '#1a3a6a',    '#2a5a9a',     () => this._onHint());
-    this._menuBtn = this._btn(cx + sp * 2, by, '⏸ PAUSE',  BTN_MENU_BG,  BTN_MENU_HOV,  () => this._openOverlay('pause'));
+    this._menuBtn = this._btn(cx + sp * 2, by, '⏸ PAUSE',  BTN_MENU_BG,  BTN_MENU_HOV,  () => this._onMenuAction());
+    this._chessNewGameBtn.setDepth(20);
+    this._chessNewGameBtn.setVisible(false);
     this._undoBtn.setDepth(20);
     this._redoBtn.setDepth(20);
     this._redoBtn.setAlpha(0.4);
@@ -172,7 +207,196 @@ export default class PlayScene extends NetScene {
     // cchk gets a completely custom panel (6 colors, per-color computer toggles).
     // We always build both panels; show/hide in _renderState via _updatePanelVisibility.
     this._buildStandardSidePanel();
+    this._buildChessPanel();
     this._buildCchkPanel();
+  }
+
+  _buildChessPanel() {
+    this._chessPanelObjects = [];
+    this._chessPresetOverlay = [];  // separate array for the preset menu
+    const track = (obj) => { this._chessPanelObjects.push(obj); obj.setVisible(false); return obj; };
+    const x = this._sidePanelX;
+    const top = this._boardY + 6;
+
+    this._chessFlipBtn = track(this.add.text(x, top, 'SIDE', {
+      ...FONT, fontSize: '14px', color: '#ffffff', align: 'center',
+      backgroundColor: '#1f3558', padding: { x: 12, y: 8 },
+    }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true }));
+    this._chessFlipBtn.on('pointerover', () => this._chessFlipBtn.setBackgroundColor('#2d4f88'));
+    this._chessFlipBtn.on('pointerout', () => this._chessFlipBtn.setBackgroundColor('#1f3558'));
+    this._chessFlipBtn.on('pointerdown', () => {
+      if (this._activeGameType !== 'chess' || !this._activeRenderer?.toggleFlipped) return;
+      this._activeRenderer.toggleFlipped();
+    });
+  }
+
+  // ─── Chess preset selection menu ────────────────────────────────────────────
+
+  _showChessPresetMenu() {
+    this._hideChessPresetMenu();
+    this._chessPresetOpenPending = true;
+
+    const { width: W, height: H } = this.scale;
+    const cx = W / 2;
+    const cy = H / 2;
+
+    const PRESETS = [
+      { id: 'standard', label: 'Standard',
+        pieces: _standardMiniPieces() },
+      { id: 'kqq_vs_k', label: 'K+2Q vs K',
+        pieces: [
+          { type: 'K', row: 6, col: 4, color: 'white' },
+          { type: 'Q', row: 5, col: 3, color: 'white' },
+          { type: 'Q', row: 5, col: 5, color: 'white' },
+          { type: 'K', row: 1, col: 4, color: 'black' },
+        ]},
+      { id: 'krr_vs_k', label: 'K+2R vs K',
+        pieces: [
+          { type: 'K', row: 6, col: 4, color: 'white' },
+          { type: 'R', row: 7, col: 0, color: 'white' },
+          { type: 'R', row: 7, col: 7, color: 'white' },
+          { type: 'K', row: 1, col: 4, color: 'black' },
+        ]},
+      { id: 'krq_vs_k', label: 'K+R+Q vs K',
+        pieces: [
+          { type: 'K', row: 6, col: 4, color: 'white' },
+          { type: 'R', row: 7, col: 0, color: 'white' },
+          { type: 'Q', row: 5, col: 3, color: 'white' },
+          { type: 'K', row: 1, col: 4, color: 'black' },
+        ]},
+      { id: 'kq_vs_k', label: 'K+Q vs K',
+        pieces: [
+          { type: 'K', row: 6, col: 4, color: 'white' },
+          { type: 'Q', row: 5, col: 3, color: 'white' },
+          { type: 'K', row: 1, col: 4, color: 'black' },
+        ]},
+    ];
+
+    const SYMBOLS = { K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞', P: '♟' };
+
+    // Overlay background
+    const overlayBg = this.add.rectangle(cx, cy, W, H, 0x000000, 0.7)
+      .setDepth(30).setInteractive();
+    this._chessPresetOverlay.push(overlayBg);
+
+    // Board thumbnails — row 1: standard (larger), row 2: 4 endgame boards
+    const smThumb = 80;   // endgame board size
+    const lgThumb = 110;  // standard board size
+    const smCell  = smThumb / 8;
+    const lgCell  = lgThumb / 8;
+    const gap = 16;
+
+    const LIGHT_SQ = 0xf0d9b5;
+    const DARK_SQ  = 0xb58863;
+
+    // Row 1 — Standard (centered)
+    const lgX = cx - lgThumb / 2;
+    const lgY = cy - lgThumb - gap - 20;
+
+    // Row 2 — 4 endgame boards
+    const row2W = smThumb * 4 + gap * 3;
+    const row2X = cx - row2W / 2;
+    const row2Y = cy + 14;
+
+    // Title — above the standard board
+    const title = this.add.text(cx, lgY - 24, 'Choose Starting Position', {
+      ...FONT, fontSize: '18px', color: '#ffd700', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(31);
+    this._chessPresetOverlay.push(title);
+
+    // Sub-label above the endgame row
+    const subLabel = this.add.text(cx, row2Y - 16, 'Endgame Practice', {
+      ...FONT, fontSize: '13px', color: '#999999',
+    }).setOrigin(0.5).setDepth(31);
+    this._chessPresetOverlay.push(subLabel);
+
+    for (let i = 0; i < PRESETS.length; i++) {
+      const preset = PRESETS[i];
+      const isStandard = i === 0;
+      const thumbSize = isStandard ? lgThumb : smThumb;
+      const cellSz    = isStandard ? lgCell  : smCell;
+
+      let bx, by;
+      if (isStandard) {
+        bx = lgX;
+        by = lgY;
+      } else {
+        const ei = i - 1; // endgame index 0-3
+        bx = row2X + ei * (smThumb + gap);
+        by = row2Y;
+      }
+
+      // Board squares
+      const gfx = this.add.graphics().setDepth(31);
+      gfx.fillStyle(0x5a3a1a, 1);
+      gfx.fillRect(bx - 2, by - 2, thumbSize + 4, thumbSize + 4);
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const isDark = (r + c) % 2 === 1;
+          gfx.fillStyle(isDark ? DARK_SQ : LIGHT_SQ, 1);
+          gfx.fillRect(bx + c * cellSz, by + r * cellSz, cellSz, cellSz);
+        }
+      }
+      this._chessPresetOverlay.push(gfx);
+
+      // Pieces
+      const pieceFontSz = Math.max(8, Math.round(cellSz * 0.9));
+      for (const p of preset.pieces) {
+        const px = bx + p.col * cellSz + cellSz / 2;
+        const py = by + p.row * cellSz + cellSz / 2;
+        const glyph = SYMBOLS[p.type] ?? '?';
+        const isWhite = p.color === 'white';
+        const txt = this.add.text(px, py, glyph, {
+          fontFamily: 'Arial, "Segoe UI Symbol", sans-serif',
+          fontSize: `${pieceFontSz}px`,
+          color: isWhite ? '#f8f8f8' : '#111111',
+          stroke: isWhite ? '#2c2c2c' : '#cccccc',
+          strokeThickness: 1,
+        }).setOrigin(0.5, 0.5).setDepth(32);
+        this._chessPresetOverlay.push(txt);
+      }
+
+      // Label
+      const label = this.add.text(bx + thumbSize / 2, by + thumbSize + 8, preset.label, {
+        ...FONT, fontSize: '11px', color: '#cccccc',
+      }).setOrigin(0.5, 0).setDepth(31);
+      this._chessPresetOverlay.push(label);
+
+      // Invisible hit zone over the whole thumbnail + label area
+      const hitZone = this.add.rectangle(
+        bx + thumbSize / 2, by + thumbSize / 2,
+        thumbSize + 4, thumbSize + 20, 0x000000, 0
+      ).setDepth(33).setInteractive({ useHandCursor: true });
+      hitZone.on('pointerover', () => gfx.lineStyle(2, 0xffd700, 1).strokeRect(bx - 3, by - 3, thumbSize + 6, thumbSize + 6));
+      hitZone.on('pointerout',  () => { gfx.clear(); _redrawMiniBoard(gfx, bx, by, thumbSize, cellSz); });
+      hitZone.on('pointerdown', () => {
+        this._selectChessPreset(preset.id);
+      });
+      this._chessPresetOverlay.push(hitZone);
+
+      // Store gfx reference for redraw on pointerout
+      hitZone._miniGfx = gfx;
+      hitZone._bx = bx;
+      hitZone._by = by;
+    }
+  }
+
+  _hideChessPresetMenu() {
+    for (const obj of this._chessPresetOverlay ?? []) {
+      if (obj && obj.destroy) obj.destroy();
+    }
+    this._chessPresetOverlay = [];
+  }
+
+  _selectChessPreset(presetId) {
+    this._chessPresetChosenForSession = true;
+    this._chessPresetOpenPending = false;
+    if (this._chessPresetOpenTimer) {
+      this._chessPresetOpenTimer.remove(false);
+      this._chessPresetOpenTimer = null;
+    }
+    this._hideChessPresetMenu();
+    this.game.net.send('restart', { preset: presetId });
   }
 
   _buildStandardSidePanel() {
@@ -575,6 +799,22 @@ export default class PlayScene extends NetScene {
     }
   }
 
+  _updateChessPanel(state) {
+    const isChess = state?.gameType === 'chess';
+    for (const obj of this._chessPanelObjects ?? []) {
+      if (obj?.setVisible) obj.setVisible(isChess);
+    }
+    // Update the bottom-bar New Game button visibility for chess
+    if (this._chessNewGameBtn) {
+      this._chessNewGameBtn.setVisible(isChess && !state?.game?.gameOver);
+      if (isChess && !state?.game?.gameOver) {
+        this._chessNewGameBtn.setInteractive({ useHandCursor: true });
+      } else {
+        this._chessNewGameBtn.disableInteractive();
+      }
+    }
+  }
+
   _updateSidePanel(mySide) {
     if (!this._sidePanelBgs) return;
     const custom = this._activeRenderer?.sideLabels;
@@ -637,7 +877,23 @@ export default class PlayScene extends NetScene {
     this.input.keyboard.on('keydown-U', () => this._onUndo());
     this.input.keyboard.on('keydown-R', () => this._onRedo());
     this.input.keyboard.on('keydown-P', () => this._onPass());
-    this.input.keyboard.on('keydown-ESC', () => this._openOverlay('pause'));
+    this.input.keyboard.on('keydown-ESC', () => {
+      if (this._activeGameType === 'chess') {
+        this._activeRenderer?.clearExplain?.();
+        return;
+      }
+      this._openOverlay('pause');
+    });
+  }
+
+  _onMenuAction() {
+    if (this._activeGameType === 'chess' && this._activeRenderer?.toggleExplain) {
+      this._activeRenderer.toggleExplain();
+      const enabled = !!this._activeRenderer.isExplainActive?.();
+      this._menuBtn?.setText(enabled ? 'HIDE\nEXPLAIN' : 'EXPLAIN');
+      return;
+    }
+    this._openOverlay('pause');
   }
 
   _onUndo() {
@@ -656,6 +912,12 @@ export default class PlayScene extends NetScene {
         this.game.net.send('pass_turn');
       }
     }
+  }
+
+  _onChessNewGame() {
+    this._showConfirmDialog('New Game: Are you sure?', 'Yes', 'No', () => {
+      this._showChessPresetMenu();
+    });
   }
 
   // ─── Networking ──────────────────────────────────────────────────────────────
@@ -710,6 +972,11 @@ export default class PlayScene extends NetScene {
     this._prevTick        = -1;
     this._prevGameOver    = false;
 
+    // Auto-show chess preset menu only on the very first load of chess in this session.
+    if (gameType === 'chess' && !this._chessFirstLoadInSession) {
+      this._chessFirstLoadInSession = true;
+    }
+
     // Pass button visibility.
     this._passBtn.setVisible(renderer.showPassButton);
     if (!renderer.showPassButton) this._passBtn.disableInteractive();
@@ -733,6 +1000,32 @@ export default class PlayScene extends NetScene {
     const renderer = this._activeRenderer;
     if (!renderer) return;
 
+    // Auto-show chess start screen on the very first load of chess (fresh game, no moves yet).
+    // Hide preset menu if game starts (tick > 0) or if switching away from chess.
+    if (this._chessFirstLoadInSession && gameType === 'chess' && gameState.tick === 0) {
+      this._chessFirstLoadInSession = false;  // Reset so we don't show it again
+      if (!this._chessPresetChosenForSession) {
+        this._chessPresetOpenPending = true;
+        // Defer so the board draws first, then overlay appears on top.
+        this._chessPresetOpenTimer = this.time.delayedCall(50, () => {
+          this._chessPresetOpenTimer = null;
+          if (
+            this._activeGameType === 'chess' &&
+            this._chessPresetOpenPending &&
+            !this._chessPresetChosenForSession
+          ) {
+            this._showChessPresetMenu();
+          }
+        });
+      }
+    } else if (gameType === 'chess' && gameState.tick > 0) {
+      // Game has started, hide the preset menu if it's still showing
+      this._hideChessPresetMenu();
+    } else if (gameType !== 'chess' && this._chessPresetOverlay?.length > 0) {
+      // Switched away from chess, hide any menu
+      this._hideChessPresetMenu();
+    }
+
     // Compute shared context.
     const actingColor = (gameType === 'morris' && gameState.phase === 'removing')
       ? gameState.pendingRemove
@@ -744,6 +1037,7 @@ export default class PlayScene extends NetScene {
     if (gameState.tick !== this._prevTick) {
       this._prevTick = gameState.tick;
       renderer.clearHint();
+      if (!renderer.isExplainActive?.()) renderer.clearExplain?.();
       if (renderer.resetSelection) renderer.resetSelection();
       if (this._hintStatusTxt) this._hintStatusTxt.setText('');
       this._hintBtn?.setAlpha(1).setInteractive({ useHandCursor: true });
@@ -770,6 +1064,13 @@ export default class PlayScene extends NetScene {
       this._updateSidePanel(mySide);
       this._updateComputerPanel(state);
       this._updateLevelPanel(state);
+    }
+    this._updateChessPanel(state);
+
+    if (this._menuBtn) {
+      this._menuBtn.setText(gameType === 'chess'
+        ? (this._activeRenderer?.isExplainActive?.() ? 'HIDE\nEXPLAIN' : 'EXPLAIN')
+        : '⏸ PAUSE');
     }
 
     // Button states.
@@ -805,7 +1106,11 @@ export default class PlayScene extends NetScene {
     this._prevGameOver = !!goInfo;
 
     if (goInfo) {
-      if (justEnded) {
+      if (gameType === 'chess') {
+        this._stopCelebration();
+        this._pendingGoInfo = null;
+        this._hideScoreOverlay();
+      } else if (justEnded) {
         // First frame of game over — launch celebration, delay overlay by 2s.
         this._pendingGoInfo = goInfo;
         this._startCelebration();
@@ -1061,6 +1366,51 @@ export default class PlayScene extends NetScene {
     }
   }
 
+  _showConfirmDialog(message, yesLabel, noLabel, onYes) {
+    if (this._gameOverlay) return;  // Already showing a dialog
+    const { width: W, height: H } = this.scale;
+    const cx = W / 2;
+    const cy = H / 2;
+
+    this._gameOverlay = this.add.container(0, 0);
+
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.72).setOrigin(0, 0).setInteractive();
+    this._gameOverlay.add(dim);
+
+    const panelW = Math.min(W * 0.82, 360);
+    const panelH = 140;
+    const panel = this.add.rectangle(cx, cy, panelW, panelH, 0x16213e)
+      .setStrokeStyle(3, 0xffd700);
+    this._gameOverlay.add(panel);
+
+    this._gameOverlay.add(this.add.text(cx, cy - 28, message, {
+      ...FONT, fontSize: '20px', color: '#ffd700', fontStyle: 'bold',
+    }).setOrigin(0.5));
+
+    const btnW = 80;
+    const btnGap = 20;
+    const yesBtn = this.add.text(cx - btnW - btnGap / 2, cy + 32, yesLabel, {
+      ...FONT, fontSize: '16px', color: '#ffffff',
+      backgroundColor: '#2a5c2a', padding: { x: 16, y: 8 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    yesBtn.on('pointerover', () => yesBtn.setBackgroundColor('#3a8c3a'));
+    yesBtn.on('pointerout', () => yesBtn.setBackgroundColor('#2a5c2a'));
+    yesBtn.on('pointerdown', () => {
+      this._hideOverlay();
+      if (onYes) onYes();
+    });
+    this._gameOverlay.add(yesBtn);
+
+    const noBtn = this.add.text(cx + btnW + btnGap / 2, cy + 32, noLabel, {
+      ...FONT, fontSize: '16px', color: '#ffffff',
+      backgroundColor: '#333333', padding: { x: 16, y: 8 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    noBtn.on('pointerover', () => noBtn.setBackgroundColor('#555555'));
+    noBtn.on('pointerout', () => noBtn.setBackgroundColor('#333333'));
+    noBtn.on('pointerdown', () => this._hideOverlay());
+    this._gameOverlay.add(noBtn);
+  }
+
   // ─── Hint ───────────────────────────────────────────────────────────────────
 
   _onHint() {
@@ -1076,6 +1426,11 @@ export default class PlayScene extends NetScene {
   shutdown() {
     super.shutdown();
     this._stopCelebration();
+    if (this._chessPresetOpenTimer) {
+      this._chessPresetOpenTimer.remove(false);
+      this._chessPresetOpenTimer = null;
+    }
+    this._hideChessPresetMenu();
     if (this._activeRenderer) {
       this._activeRenderer.shutdown();
       this._activeRenderer = null;

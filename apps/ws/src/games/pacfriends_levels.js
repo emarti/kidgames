@@ -425,16 +425,189 @@ function generateBMaze(seed) {
 }
 
 // ============================================================
+// Hand-crafted Level 1 — classic symmetric Pac-Man layout
+//
+// Left half (cols 0–10) defined as a numeric array, mirrored
+// to cols 11–21.  Col 10 mirrors to col 11.  Ghost house is
+// stamped over the template.  Tunnel exits at rows 7, 12, 17.
+//
+// The template is designed so that no 2×2 block of walkable
+// tiles exists (outside the exemption zones around the ghost
+// house and tunnel wings).
+// ============================================================
+function handCraftedLevel1() {
+  const W = T.WALL, D = T.DOT, P = T.POWER, E = T.EMPTY;
+  const H = T.HOUSE, DR = T.DOOR, TN = T.TUNNEL;
+
+  // Left half: cols 0–10 (11 values), 26 rows.
+  // Mirror: col c → col 21−c.  Col 10 → col 11.
+  //
+  // 2×2 constraint at center axis (cols 10-11):
+  //   After mirroring, cols 10 and 11 are identical.
+  //   So if L[r][10] and L[r+1][10] are BOTH open → 2×2.
+  //   Fix: never have two consecutive rows with col 10 open,
+  //   UNLESS col 9 is wall on at least one of those rows.
+  //
+  // 2×2 constraint elsewhere:
+  //   For any (c,r), if tiles at (c,r),(c+1,r),(c,r+1),(c+1,r+1)
+  //   are all non-wall, that's a violation.
+  //
+  // Ghost house (rows 8-11, cols 7-13) and tunnel wings
+  // (rows 11-13 cols 0-6/14-21) are exempt from the 2×2 check.
+  //
+  // Template notation:
+  //   Each row shows cols 0-10.  After mirroring:
+  //     col 0→col 21, col 1→col 20, ..., col 10→col 11
+  //
+  // Visual key: W=wall, D=dot, P=power, E=empty, H=house, TN=tunnel
+const L = [
+  //c: 0   1  2  3  4  5  6  7  8  9 10
+  [  W,  W, W, W, W, W, W, W, W, W, W ],  //  0
+  [  W,  D, D, D, D, D, D, D, D, D, D ],  //  1
+  [  W,  D, W, W, D, W, W, D, W, W, W ],  //  2
+  [  W,  D, W, W, D, W, W, D, W, W, W ],  //  3
+  [  W,  D, D, D, D, D, D, D, W, W, W ],  //  4
+  [  W,  D, W, W, D, W, W, D, D, D, D ],  //  5
+  [  W,  D, W, W, D, W, W, W, W, W, W ],  //  6
+  [ TN,  P, D, D, D, D, D, D, D, D, D ],  //  7
+
+  [  W,  D, W, W, W, W, W, W, W, W, W ],  //  8
+  [  W,  D, W, W, W, W, W, W, W, W, W ],  //  9
+  [  W,  D, W, W, W, W, W, W, W, W, W ],  // 10
+  [  W,  D, W, W, W, W, W, W, W, W, W ],  // 11
+  [ TN,  D, D, D, D, D, D, W, W, W, W ],  // 12
+
+  [  W,  D, W, W, W, W, D, W, W, W, W ],  // 13
+  [  W,  D, D, D, D, D, D, D, W, W, W ],  // 14
+  [  W,  D, W, W, D, W, W, D, W, W, W ],  // 15
+  [  W,  D, W, W, D, W, W, D, W, W, W ],  // 16
+  [ TN,  P, D, D, D, D, D, D, D, D, D ],  // 17
+
+  [  W,  D, W, W, D, W, W, D, W, D, W ],  // 18
+  [  W,  D, D, D, D, W, W, D, D, D, D ],  // 19
+  [  W,  D, W, W, D, W, W, D, W, D, W ],  // 20
+  [  W,  D, D, D, D, W, W, D, D, D, D ],  // 21
+  [  W,  D, W, W, D, W, W, D, W, W, W ],  // 22
+  [  W,  D, W, W, D, W, W, D, W, W, W ],  // 23
+  [  W,  D, D, D, D, D, D, D, D, D, D ],  // 24
+  [  W,  W, W, W, W, W, W, W, W, W, W ],  // 25
+];
+
+  // Build full 22×26 grid by mirroring left half
+  const grid = Array.from({ length: GRID_H }, () => new Array(GRID_W).fill(W));
+
+  for (let r = 0; r < GRID_H; r++) {
+    for (let c = 0; c <= 10; c++) {
+      grid[r][c] = L[r][c];
+      const mc = GRID_W - 1 - c;
+      if (mc !== c) grid[r][mc] = L[r][c];
+    }
+  }
+
+  // Ghost house: stamp proper structure
+  for (let c = HOUSE_LEFT; c <= HOUSE_RIGHT; c++) grid[8][c] = W;
+  grid[8][GHOST_DOOR_X] = DR;
+  grid[9][HOUSE_LEFT] = W;  grid[9][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[9][c] = H;
+  grid[10][HOUSE_LEFT] = W; grid[10][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[10][c] = H;
+  grid[11][HOUSE_LEFT] = W; grid[11][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[11][c] = E;
+
+  // Approach corridors: cols 6 and 14 open from rows 7–12
+  for (let r = 7; r <= 12; r++) {
+    if (grid[r][6]  === W) grid[r][6]  = E;
+    if (grid[r][14] === W) grid[r][14] = E;
+  }
+
+  // Path above door: col 10 rows 5–7
+  for (let r = 5; r <= 7; r++) {
+    if (grid[r][10] === W) grid[r][10] = E;
+  }
+
+  // Tunnel row 12
+  grid[12][0]  = TN;  grid[12][21] = TN;
+  for (let c = 1; c <= 5; c++)   if (grid[12][c] === W) grid[12][c] = E;
+  for (let c = 15; c <= 20; c++) if (grid[12][c] === W) grid[12][c] = E;
+
+  // Side tunnels rows 7 and 17
+  grid[7][0]  = TN;  grid[7][21]  = TN;
+  grid[17][0] = TN;  grid[17][21] = TN;
+
+  // Power pellets
+  grid[7][1]  = P;  grid[7][20]  = P;
+  grid[17][1] = P;  grid[17][20] = P;
+
+  // Perimeter walls (except tunnels)
+  for (let c = 0; c < GRID_W; c++) {
+    if (grid[0][c]  !== TN) grid[0][c]  = W;
+    if (grid[25][c] !== TN) grid[25][c] = W;
+  }
+  for (let r = 1; r <= 24; r++) {
+    if (r !== 7 && r !== 12 && r !== 17) {
+      grid[r][0]  = W;
+      grid[r][21] = W;
+    }
+  }
+
+  // Player spawns: EMPTY (no dot at spawn)
+  for (const [sx, sy] of [[9,19],[11,19],[9,21],[11,21]]) {
+    if (grid[sy][sx] !== W) grid[sy][sx] = E;
+  }
+  // Fruit spawn: EMPTY
+  if (grid[15][10] !== W) grid[15][10] = E;
+  if (grid[15][11] !== W) grid[15][11] = E;
+
+  // Safety nets
+  repairConnectivity(grid);
+  eliminateDeadEnds(grid);
+  validateMaze(grid, 'handcrafted_1');
+
+  // Debug: print maze as ASCII art
+  const TILE_CHARS = { [W]:'#', [D]:'·', [P]:'P', [E]:' ', [H]:'H', [DR]:'D', [TN]:'T' };
+  const header = '    ' + Array.from({length: GRID_W}, (_,i) => (i % 10).toString()).join('');
+  console.log('[pacfriends] Hand-crafted Level 1 maze:');
+  console.log(header);
+  for (let r = 0; r < GRID_H; r++) {
+    const row = grid[r].map(t => TILE_CHARS[t] ?? '?').join('');
+    console.log(`[pacfriends] ${r.toString().padStart(2)}  ${row}`);
+  }
+  console.log(header);
+
+  const toHomeMap = buildToHomeMap(grid, T, GHOST_DOOR_X, GHOST_DOOR_Y);
+
+  return {
+    tiles: grid,
+    walls: null,
+    toHomeMap,
+    topology: 'none',
+    portalPairs: [],
+    playerSpawns: [
+      { x: 9, y: 19 }, { x: 11, y: 19 },
+      { x: 9, y: 21 }, { x: 11, y: 21 },
+    ],
+    ghostSpawns: [
+      { x: 11, y: 7 }, { x: 9, y: 10 },
+      { x: 11, y: 10 }, { x: 12, y: 10 },
+    ],
+    ghostHouse: { x: HOUSE_LEFT, y: 8, w: HOUSE_RIGHT - HOUSE_LEFT + 1, h: 4 },
+    ghostDoor: { x: GHOST_DOOR_X, y: GHOST_DOOR_Y },
+    tunnelRows: [7, 12, 17],
+    fruitSpawn: { x: 10, y: 15 },
+  };
+}
+
+// ============================================================
 // Pre-built levels 1-6
 //
-// Level 1 is fixed (classic sparse Pac-Man feel).
+// Level 1 is hand-crafted for a classic symmetric feel.
 // Levels 2-6 are auto-generated with increasing loopDensity
 // for greater variety.  The cycle-first engine guarantees no
 // dead ends and 1-tile-wide corridors by construction.
 // ============================================================
 export const LEVELS = [
-  // 1 — fixed classic layout
-  generateMaze({ seed: 1001, loopDensity: 0.05, topology: 'none', topologyCount: 0 }),
+  // 1 — hand-crafted classic symmetric layout
+  handCraftedLevel1(),
   // 2-6 — auto-generated, increasing density
   generateMaze({ seed: 2002, loopDensity: 0.18, topology: 'none', topologyCount: 0 }),
   generateMaze({ seed: 3003, loopDensity: 0.26, topology: 'none', topologyCount: 0 }),
