@@ -194,6 +194,40 @@ export class Sounds {
     }
 
     // ---------------------------------------------------------------
+    // Start celebration — bright starburst jingle
+    // ---------------------------------------------------------------
+    playStartCelebration() {
+        if (!this._enabled) return;
+        const ctx = this._getCtx();
+        if (!ctx) return;
+        try {
+            const t0 = ctx.currentTime + 0.02;
+            const notes = [
+                [523, 0.00], [659, 0.06], [784, 0.12],
+                [1047, 0.20], [1319, 0.30],
+            ];
+            const master = ctx.createGain();
+            master.gain.setValueAtTime(0.16, t0);
+            master.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.75);
+            master.connect(ctx.destination);
+
+            for (const [freq, dt] of notes) {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(freq, t0 + dt);
+                gain.gain.setValueAtTime(0.0001, t0 + dt);
+                gain.gain.linearRampToValueAtTime(0.9, t0 + dt + 0.01);
+                gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.16);
+                osc.connect(gain);
+                gain.connect(master);
+                osc.start(t0 + dt);
+                osc.stop(t0 + dt + 0.18);
+            }
+        } catch { /* ignore */ }
+    }
+
+    // ---------------------------------------------------------------
     // Ghost siren (background ambient oscillation while playing)
     // ---------------------------------------------------------------
     startSiren(frightened = false) {

@@ -16,9 +16,8 @@
 // ============================================================
 
 import {
-  MAZE_LW, MAZE_LH, GRID_W, GRID_H,
-  makePRNG, ALL_WALLS, N_BIT, S_BIT, E_BIT, W_BIT, NBRS,
-  countBits, shuffle,
+  GRID_W, GRID_H,
+  makePRNG,
   generateLogicalMaze, toTileGrid, buildToHomeMap,
 } from './pacfriends_maze_engine.js';
 
@@ -72,6 +71,17 @@ function isWallBlock(lc, lr) {
   if (lc >= 1 && lc <= 2 && lr >= 9 && lr <= 10) return true;
   if (lc >= 7 && lc <= 8 && lr >= 9 && lr <= 10) return true;
   return false;
+}
+
+const SIMPLE_GENERATED_OPEN_ROWS = new Set([0, 3, 6, 8, 11]);
+const SIMPLE_GENERATED_OPEN_COLS = new Set([0, 3, 6, 9]);
+
+function isSimpleGeneratedReserved(lc, lr) {
+  if (isWallBlock(lc, lr)) return true;
+  if (SIMPLE_GENERATED_OPEN_ROWS.has(lr)) return false;
+  if (SIMPLE_GENERATED_OPEN_COLS.has(lc)) return false;
+  if (lc >= 4 && lc <= 5 && lr >= 9 && lr <= 10) return false;
+  return true;
 }
 
 // ============================================================
@@ -135,7 +145,10 @@ function repairConnectivity(grid) {
 // ============================================================
 // applyOverlays — writes all fixed features onto the tile grid
 // ============================================================
-function applyOverlays(grid, portalPairs) {
+function applyOverlays(grid, { tunnelRows = [12], portalPairs = [], sideRows = tunnelRows } = {}) {
+  const tunnelRowSet = new Set(tunnelRows);
+  const sideRowSet = new Set(sideRows);
+
   // ---- Ghost house ----
   // Row 8: top wall + door
   for (let c = HOUSE_LEFT; c <= HOUSE_RIGHT; c++) grid[8][c] = T.WALL;
@@ -147,10 +160,9 @@ function applyOverlays(grid, portalPairs) {
   grid[10][HOUSE_LEFT] = T.WALL; grid[10][HOUSE_RIGHT] = T.WALL;
   for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[10][c] = T.HOUSE;
 
-  // Row 11: exit corridor
+  // Row 11: ghost-house exit corridor
   grid[11][HOUSE_LEFT] = T.WALL; grid[11][HOUSE_RIGHT] = T.WALL;
-  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++)
-    if (grid[11][c] === T.WALL) grid[11][c] = T.EMPTY;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[11][c] = T.HOUSE;
 
   // Approach corridors (cols 6 and 14), rows 7-12
   for (let r = 7; r <= 12; r++) {
@@ -162,25 +174,32 @@ function applyOverlays(grid, portalPairs) {
   for (let r = 5; r <= 7; r++)
     if (grid[r][10] === T.WALL) grid[r][10] = T.EMPTY;
 
-  // ---- Tunnel (row 12) ----
+  // ---- Left/right side exits ----
   // Row 12 is a gap row between logical rows lr=5 (tr=11) and lr=6 (tr=13).
-  // Open the inner corridor so players can traverse it.  Rows 11 and 13
-  // are left as the maze generator produced them — walling them off
-  // destroyed maze connections for lr=5 and lr=6 cells, causing dead ends
-  // and disconnections that repairConnectivity could not cleanly fix.
-  grid[12][0]  = T.TUNNEL;
-  grid[12][21] = T.TUNNEL;
-  for (let c = 1;  c <= 5;  c++) grid[12][c] = T.EMPTY;
-  for (let c = 15; c <= 20; c++) grid[12][c] = T.EMPTY;
+  // When selected, open its wings so players can traverse around the ghost
+  // house. Other side-exit rows naturally connect through the edge cells.
+  for (const row of sideRowSet) {
+    if (row === 12) {
+      for (let c = 1;  c <= 5;  c++) grid[row][c] = T.EMPTY;
+      for (let c = 15; c <= 20; c++) grid[row][c] = T.EMPTY;
+    } else {
+      if (grid[row][1] === T.WALL) grid[row][1] = T.DOT;
+      if (grid[row][20] === T.WALL) grid[row][20] = T.DOT;
+    }
+  }
+  for (const row of tunnelRowSet) {
+    grid[row][0] = T.TUNNEL;
+    grid[row][21] = T.TUNNEL;
+  }
 
   // ---- Power pellets ----
   // Placed at mid-height on each side column (lc=0 and lc=9),
   // rows lr=3 and lr=8 in logical space → tile rows 7 and 17.
   // These cells are never reserved and always part of the maze graph.
   grid[7][1]  = T.POWER;   // left side, upper
-  grid[7][19] = T.POWER;   // right side, upper
+  grid[7][20] = T.POWER;   // right side, upper
   grid[17][1] = T.POWER;   // left side, lower
-  grid[17][19]= T.POWER;   // right side, lower
+  grid[17][20]= T.POWER;   // right side, lower
 
   // ---- Portal border tiles ----
   // Mark all portal entry/exit tiles including left/right edge columns.
@@ -195,7 +214,7 @@ function applyOverlays(grid, portalPairs) {
     if (grid[GRID_H - 1][c] !== T.PORTAL) grid[GRID_H - 1][c] = T.WALL;
   }
   for (let r = 1; r <= GRID_H - 2; r++) {
-    if (r !== 12) {
+    if (!tunnelRowSet.has(r)) {
       if (grid[r][0]          !== T.PORTAL) grid[r][0]          = T.WALL;
       if (grid[r][GRID_W - 1] !== T.PORTAL) grid[r][GRID_W - 1] = T.WALL;
     }
@@ -294,88 +313,279 @@ function validateMaze(grid, seed) {
   }
 }
 
+function isPlayerAccessibleTile(tile) {
+  return tile != null && tile !== T.WALL && tile !== T.HOUSE && tile !== T.DOOR;
+}
+
+function portalKey(x, y) {
+  return `${x},${y}`;
+}
+
+function buildPortalMap(portalPairs) {
+  const map = new Map();
+  for (const p of portalPairs ?? []) {
+    map.set(portalKey(p.fromX, p.fromY), { x: p.toX, y: p.toY });
+  }
+  return map;
+}
+
+function walkableNeighbours(grid, x, y, { tunnelRows = [], portalPairs = [] } = {}) {
+  const out = [];
+  for (const [dx, dy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+    const nx = x + dx, ny = y + dy;
+    if (ny < 0 || ny >= GRID_H || nx < 0 || nx >= GRID_W) continue;
+    if (isPlayerAccessibleTile(grid[ny][nx])) out.push({ x: nx, y: ny });
+  }
+
+  const tile = grid[y][x];
+  if (tile === T.TUNNEL && tunnelRows.includes(y)) {
+    if (x === 0 && grid[y][GRID_W - 1] === T.TUNNEL) out.push({ x: GRID_W - 1, y });
+    if (x === GRID_W - 1 && grid[y][0] === T.TUNNEL) out.push({ x: 0, y });
+  }
+
+  if (tile === T.PORTAL) {
+    const dest = buildPortalMap(portalPairs).get(portalKey(x, y));
+    if (dest && isPlayerAccessibleTile(grid[dest.y]?.[dest.x])) out.push(dest);
+  }
+
+  return out;
+}
+
+function collectMazeIssues(grid, label, {
+  tunnelRows = [],
+  portalPairs = [],
+  requiredTiles = [],
+} = {}) {
+  const issues = [];
+  const portalMap = buildPortalMap(portalPairs);
+  const neighbourCtx = { tunnelRows, portalPairs };
+
+  for (let y = 0; y < GRID_H; y++) {
+    for (let x = 0; x < GRID_W; x++) {
+      if (!isPlayerAccessibleTile(grid[y][x])) continue;
+      if (walkableNeighbours(grid, x, y, neighbourCtx).length <= 1) {
+        issues.push(`${label}: dead end at (${x},${y})`);
+      }
+    }
+  }
+
+  let start = null;
+  outer: for (let y = 0; y < GRID_H; y++) {
+    for (let x = 0; x < GRID_W; x++) {
+      if (isPlayerAccessibleTile(grid[y][x])) { start = { x, y }; break outer; }
+    }
+  }
+
+  const reachable = new Set();
+  if (start) {
+    const stack = [start];
+    while (stack.length) {
+      const cur = stack.pop();
+      const key = portalKey(cur.x, cur.y);
+      if (reachable.has(key)) continue;
+      reachable.add(key);
+      for (const n of walkableNeighbours(grid, cur.x, cur.y, neighbourCtx)) stack.push(n);
+    }
+  }
+
+  for (let y = 0; y < GRID_H; y++) {
+    for (let x = 0; x < GRID_W; x++) {
+      if (!isPlayerAccessibleTile(grid[y][x])) continue;
+      if (!reachable.has(portalKey(x, y))) {
+        issues.push(`${label}: unreachable tile at (${x},${y})`);
+      }
+    }
+  }
+
+  for (let y = 0; y < GRID_H - 1; y++) {
+    for (let x = 0; x < GRID_W - 1; x++) {
+      if (grid[y][x] !== T.WALL && grid[y][x + 1] !== T.WALL &&
+          grid[y + 1][x] !== T.WALL && grid[y + 1][x + 1] !== T.WALL) {
+        const types = [grid[y][x], grid[y][x + 1], grid[y + 1][x], grid[y + 1][x + 1]];
+        if (types.some(t => t === T.HOUSE || t === T.DOOR || t === T.TUNNEL)) continue;
+        if (y >= 7 && y <= 12 && x >= 5 && x + 1 <= 15) continue;
+        if (y >= 11 && y <= 13 && (x <= 6 || x >= 14)) continue;
+        issues.push(`${label}: 2x2 open block at (${x},${y})`);
+      }
+    }
+  }
+
+  for (const tile of requiredTiles) {
+    const v = grid[tile.y]?.[tile.x];
+    if (!isPlayerAccessibleTile(v)) {
+      issues.push(`${label}: required tile ${tile.name} is blocked at (${tile.x},${tile.y})`);
+    } else if (!reachable.has(portalKey(tile.x, tile.y))) {
+      issues.push(`${label}: required tile ${tile.name} is unreachable at (${tile.x},${tile.y})`);
+    }
+  }
+
+  for (const p of portalPairs ?? []) {
+    if (!portalMap.has(portalKey(p.toX, p.toY))) {
+      issues.push(`${label}: portal at (${p.fromX},${p.fromY}) has no reverse mapping`);
+    }
+  }
+
+  return issues;
+}
+
 // ============================================================
 // Core maze generator
 // ============================================================
+const GENERATED_SIDE_ROW_OPTIONS = [
+  [7, 17],
+  [7, 12, 17],
+];
+
+function buildKleinSidePortalPairs(sideRows) {
+  const rows = [...sideRows].sort((a, b) => a - b);
+  const pairs = [];
+  for (let i = 0; i < rows.length; i++) {
+    const leftRow = rows[i];
+    const rightRow = rows[rows.length - 1 - i];
+    pairs.push({ fromX: 0,          fromY: leftRow,  toX: GRID_W - 1, toY: rightRow });
+    pairs.push({ fromX: GRID_W - 1, fromY: rightRow, toX: 0,          toY: leftRow  });
+  }
+  return pairs;
+}
+
+function makeSidePlan({ sideMode = 'normal', sideRows = [12], topology = 'none' } = {}) {
+  const rows = [...sideRows].sort((a, b) => a - b);
+  if (sideMode === 'klein') {
+    return {
+      sideMode,
+      sideRows: rows,
+      topology: 'klein_lr',
+      tunnelRows: [],
+      portalPairs: buildKleinSidePortalPairs(rows),
+    };
+  }
+  return {
+    sideMode,
+    sideRows: rows,
+    topology: sideMode === 'normal' && topology === 'none' && rows.length !== 1 ? 'torus_lr' : topology,
+    tunnelRows: rows,
+    portalPairs: [],
+  };
+}
+
+function generatedRequiredTiles(levelData) {
+  return [
+    ...levelData.playerSpawns.map((p, i) => ({ ...p, name: `playerSpawn${i + 1}` })),
+    { ...levelData.fruitSpawn, name: 'fruitSpawn' },
+    { x: 1,  y: 7,  name: 'upperLeftPower' },
+    { x: 20, y: 7,  name: 'upperRightPower' },
+    { x: 1,  y: 17, name: 'lowerLeftPower' },
+    { x: 20, y: 17, name: 'lowerRightPower' },
+  ];
+}
+
+function collectGeneratedLevelIssues(levelData, label, sidePlan) {
+  const issues = collectMazeIssues(levelData.tiles, label, {
+    tunnelRows: levelData.tunnelRows,
+    portalPairs: levelData.portalPairs,
+    requiredTiles: generatedRequiredTiles(levelData),
+  });
+
+  if (sidePlan.sideRows.length !== 2 && sidePlan.sideRows.length !== 3) {
+    issues.push(`${label}: expected 2 or 3 side rows, got ${sidePlan.sideRows.length}`);
+  }
+
+  if (sidePlan.sideMode === 'klein') {
+    if (levelData.topology !== 'klein_lr') issues.push(`${label}: expected topology klein_lr`);
+    if (levelData.tunnelRows.length !== 0) issues.push(`${label}: Klein level should not expose tunnelRows`);
+    if (levelData.portalPairs.length !== sidePlan.sideRows.length * 2) {
+      issues.push(`${label}: expected ${sidePlan.sideRows.length * 2} Klein portal pairs`);
+    }
+    for (const row of sidePlan.sideRows) {
+      if (levelData.tiles[row][0] !== T.PORTAL || levelData.tiles[row][GRID_W - 1] !== T.PORTAL) {
+        issues.push(`${label}: missing Klein portal edge on row ${row}`);
+      }
+    }
+  } else {
+    if (levelData.topology !== 'torus_lr') issues.push(`${label}: expected topology torus_lr`);
+    if (levelData.portalPairs.length !== 0) issues.push(`${label}: normal level should not expose portalPairs`);
+    if (levelData.tunnelRows.length !== sidePlan.sideRows.length) {
+      issues.push(`${label}: expected ${sidePlan.sideRows.length} tunnel rows`);
+    }
+    for (const row of sidePlan.sideRows) {
+      if (!levelData.tunnelRows.includes(row)) issues.push(`${label}: missing tunnel row ${row}`);
+      if (levelData.tiles[row][0] !== T.TUNNEL || levelData.tiles[row][GRID_W - 1] !== T.TUNNEL) {
+        issues.push(`${label}: missing tunnel edge on row ${row}`);
+      }
+    }
+  }
+
+  return issues;
+}
+
 export function generateMaze({
   seed,
   loopDensity = 0.35,
   topology = 'none',
   topologyCount = 5,
+  sideMode = null,
+  sideRows = null,
+  fruitSpawn = { x: 10, y: 15 },
+  hardValidate = false,
+  label = null,
   customReservedFn = null,
 } = {}) {
-  const rng = makePRNG(seed);
   const reservedFn = customReservedFn ?? isWallBlock;
+  const legacySideRows = sideRows ?? [12];
+  const legacySideMode = sideMode ?? 'normal';
+  const maxAttempts = hardValidate ? 48 : 1;
+  let lastIssues = [];
 
-  const walls = generateLogicalMaze(seed, loopDensity, reservedFn);
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const attemptSeed = (seed + Math.imul(attempt, 0x9E3779B9)) >>> 0;
+    const sidePlan = makeSidePlan({
+      sideMode: legacySideMode,
+      sideRows: legacySideRows,
+      topology,
+    });
+    const walls = generateLogicalMaze(attemptSeed, loopDensity, reservedFn);
+    const grid = toTileGrid(walls, reservedFn, T);
 
-  const portalPairs = [];
-  if (topology !== 'none') {
-    if (topology === 'klein_lr' || topology === 'torus_lr') {
-      // Left/right wall portals — pair row lr on left with pairedLr on right.
-      // Klein LR: diagonal twist (lr ↔ MAZE_LH-1-lr). Torus LR: same row.
-      const validRows = Array.from({ length: MAZE_LH }, (_, i) => i)
-        .filter(lr => !(lr >= 4 && lr <= 5));  // avoid ghost-house height rows
-      const rows = shuffle(validRows, rng).slice(0, topologyCount);
-      for (const lr of rows) {
-        const pairedLr = (topology === 'torus_lr') ? lr : (MAZE_LH - 1 - lr);
-        const tileRowLeft  = 1 + lr * 2;
-        const tileRowRight = 1 + pairedLr * 2;
-        walls[lr][0]               &= ~W_BIT;
-        walls[pairedLr][MAZE_LW-1] &= ~E_BIT;
-        // Left edge → right edge at mirrored row (and reverse)
-        portalPairs.push({ fromX: 0,          fromY: tileRowLeft,  toX: GRID_W - 1, toY: tileRowRight });
-        portalPairs.push({ fromX: GRID_W - 1, fromY: tileRowRight, toX: 0,          toY: tileRowLeft  });
-      }
-    } else {
-      // Top/bottom portals (topology = 'torus', 'klein', 'projective')
-      const validCols = Array.from({ length: MAZE_LW }, (_, i) => i)
-        .filter(lc => !isWallBlock(lc, 0) && !isWallBlock(lc, MAZE_LH - 1));
-      const cols = shuffle(validCols, rng).slice(0, topologyCount);
-      for (const lc of cols) {
-        const pairedLc = (topology === 'torus') ? lc : (MAZE_LW - 1 - lc);
-        const tileColTop = 1 + lc * 2;
-        const tileColBot = 1 + pairedLc * 2;
-        walls[0][lc]                 &= ~N_BIT;
-        walls[MAZE_LH - 1][pairedLc] &= ~S_BIT;
-        portalPairs.push({ fromX: tileColTop, fromY: 0,          toX: tileColBot, toY: GRID_H - 1 });
-        portalPairs.push({ fromX: tileColBot, fromY: GRID_H - 1, toX: tileColTop, toY: 0 });
-      }
+    applyOverlays(grid, sidePlan);
+    repairConnectivity(grid);
+    eliminateDeadEnds(grid);
+
+    const toHomeMap = buildToHomeMap(grid, T, GHOST_DOOR_X, GHOST_DOOR_Y);
+    const levelData = {
+      tiles: grid,
+      walls,
+      toHomeMap,
+      topology: sidePlan.topology,
+      portalPairs: sidePlan.portalPairs,
+      playerSpawns: [
+        { x:  9, y: 19 },
+        { x: 11, y: 19 },
+        { x:  9, y: 21 },
+        { x: 11, y: 21 },
+      ],
+      ghostSpawns: [
+        { x: 11, y: 7  },
+        { x:  9, y: 10 },
+        { x: 11, y: 10 },
+        { x: 12, y: 10 },
+      ],
+      ghostHouse:  { x: HOUSE_LEFT, y: 8, w: HOUSE_RIGHT - HOUSE_LEFT + 1, h: 4 },
+      ghostDoor:   { x: GHOST_DOOR_X, y: GHOST_DOOR_Y },
+      tunnelRows:  sidePlan.tunnelRows,
+      fruitSpawn,
+    };
+
+    if (!hardValidate) {
+      validateMaze(grid, seed);
+      return levelData;
     }
+
+    const levelLabel = label ?? `seed_${seed}`;
+    lastIssues = collectGeneratedLevelIssues(levelData, `${levelLabel}/attempt_${attempt}`, sidePlan);
+    if (lastIssues.length === 0) return levelData;
   }
 
-  const grid = toTileGrid(walls, reservedFn, T);
-
-  applyOverlays(grid, portalPairs);
-  repairConnectivity(grid);
-  eliminateDeadEnds(grid);
-  validateMaze(grid, seed);
-
-  const toHomeMap = buildToHomeMap(grid, T, GHOST_DOOR_X, GHOST_DOOR_Y);
-
-  return {
-    tiles: grid,
-    walls,
-    toHomeMap,
-    topology,
-    portalPairs,
-    playerSpawns: [
-      { x:  9, y: 19 },
-      { x: 11, y: 19 },
-      { x:  9, y: 21 },
-      { x: 11, y: 21 },
-    ],
-    ghostSpawns: [
-      { x: 11, y: 7  },
-      { x:  9, y: 10 },
-      { x: 11, y: 10 },
-      { x: 12, y: 10 },
-    ],
-    ghostHouse:  { x: HOUSE_LEFT, y: 8, w: HOUSE_RIGHT - HOUSE_LEFT + 1, h: 4 },
-    ghostDoor:   { x: GHOST_DOOR_X, y: GHOST_DOOR_Y },
-    tunnelRows:  [12],
-    fruitSpawn:  { x: 10, y: 15 },
-  };
+  throw new Error(`Unable to generate valid Pacfriends maze for ${label ?? seed}: ${lastIssues.slice(0, 6).join('; ')}`);
 }
 
 // ============================================================
@@ -429,7 +639,7 @@ function generateBMaze(seed) {
 //
 // Left half (cols 0–10) defined as a numeric array, mirrored
 // to cols 11–21.  Col 10 mirrors to col 11.  Ghost house is
-// stamped over the template.  Tunnel exits at rows 7, 12, 17.
+// stamped over the template.  Tunnel exits at rows 7 and 17.
 //
 // The template is designed so that no 2×2 block of walkable
 // tiles exists (outside the exemption zones around the ghost
@@ -475,7 +685,7 @@ const L = [
   [  W,  D, W, W, W, W, W, W, W, W, W ],  //  9
   [  W,  D, W, W, W, W, W, W, W, W, W ],  // 10
   [  W,  D, W, W, W, W, W, W, W, W, W ],  // 11
-  [ TN,  D, D, D, D, D, D, W, W, W, W ],  // 12
+  [  W,  D, D, D, D, D, D, W, W, W, W ],  // 12
 
   [  W,  D, W, W, W, W, D, W, W, W, W ],  // 13
   [  W,  D, D, D, D, D, D, D, W, W, W ],  // 14
@@ -483,10 +693,10 @@ const L = [
   [  W,  D, W, W, D, W, W, D, W, W, W ],  // 16
   [ TN,  P, D, D, D, D, D, D, D, D, D ],  // 17
 
-  [  W,  D, W, W, D, W, W, D, W, D, W ],  // 18
-  [  W,  D, D, D, D, W, W, D, D, D, D ],  // 19
-  [  W,  D, W, W, D, W, W, D, W, D, W ],  // 20
-  [  W,  D, D, D, D, W, W, D, D, D, D ],  // 21
+  [  W,  D, W, W, D, W, W, D, W, W, W ],  // 18
+  [  W,  D, D, D, D, D, D, D, D, D, D ],  // 19
+  [  W,  D, W, W, D, W, W, D, W, W, W ],  // 20
+  [  W,  D, D, D, D, D, D, D, D, D, D ],  // 21
   [  W,  D, W, W, D, W, W, D, W, W, W ],  // 22
   [  W,  D, W, W, D, W, W, D, W, W, W ],  // 23
   [  W,  D, D, D, D, D, D, D, D, D, D ],  // 24
@@ -525,8 +735,7 @@ const L = [
     if (grid[r][10] === W) grid[r][10] = E;
   }
 
-  // Tunnel row 12
-  grid[12][0]  = TN;  grid[12][21] = TN;
+  // Center corridor row 12, without a side tunnel.
   for (let c = 1; c <= 5; c++)   if (grid[12][c] === W) grid[12][c] = E;
   for (let c = 15; c <= 20; c++) if (grid[12][c] === W) grid[12][c] = E;
 
@@ -544,7 +753,7 @@ const L = [
     if (grid[25][c] !== TN) grid[25][c] = W;
   }
   for (let r = 1; r <= 24; r++) {
-    if (r !== 7 && r !== 12 && r !== 17) {
+    if (r !== 7 && r !== 17) {
       grid[r][0]  = W;
       grid[r][21] = W;
     }
@@ -592,7 +801,448 @@ const L = [
     ],
     ghostHouse: { x: HOUSE_LEFT, y: 8, w: HOUSE_RIGHT - HOUSE_LEFT + 1, h: 4 },
     ghostDoor: { x: GHOST_DOOR_X, y: GHOST_DOOR_Y },
-    tunnelRows: [7, 12, 17],
+    tunnelRows: [7, 17],
+    fruitSpawn: { x: 10, y: 15 },
+  };
+}
+
+// ============================================================
+// Hand-crafted Level 2 — simpler training loops and two side tunnel highways
+// ============================================================
+function handCraftedLevel2() {
+  const W = T.WALL, D = T.DOT, P = T.POWER, E = T.EMPTY;
+  const H = T.HOUSE, DR = T.DOOR, TN = T.TUNNEL;
+
+  const L = [
+    //c: 0   1  2  3  4  5  6  7  8  9 10
+    [  W,  W, W, W, W, W, W, W, W, W, W ],  //  0
+    [  W,  D, D, D, D, D, D, D, D, D, D ],  //  1
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  //  2
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  //  3
+    [  W,  D, D, D, D, D, D, D, W, W, W ],  //  4
+
+    [  W,  D, W, W, D, W, W, D, D, D, D ],  //  5
+    [  W,  D, W, W, D, W, W, W, W, W, W ],  //  6
+    [ TN,  P, D, D, D, D, D, D, D, D, D ],  //  7
+
+    [  W,  D, W, W, W, W, W, W, W, W, W ],  //  8
+    [  W,  D, W, W, W, W, W, W, W, W, W ],  //  9
+    [  W,  D, W, W, W, W, W, W, W, W, W ],  // 10
+    [  W,  D, W, W, W, W, W, W, W, W, W ],  // 11
+
+    [  W,  D, D, D, D, D, D, W, W, W, W ],  // 12
+    [  W,  D, W, W, W, W, D, W, W, W, W ],  // 13
+    [  W,  D, D, D, D, D, D, D, W, W, W ],  // 14
+
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 15
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 16
+    [ TN,  P, D, D, D, D, D, D, D, D, D ],  // 17
+
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 18
+    [  W,  D, D, D, D, D, D, D, D, D, D ],  // 19
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 20
+    [  W,  D, D, D, D, D, D, D, D, D, D ],  // 21
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 22
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 23
+    [  W,  D, D, D, D, D, D, D, D, D, D ],  // 24
+    [  W,  W, W, W, W, W, W, W, W, W, W ],  // 25
+  ];
+
+  const grid = Array.from({ length: GRID_H }, () => new Array(GRID_W).fill(W));
+
+  for (let r = 0; r < GRID_H; r++) {
+    for (let c = 0; c <= 10; c++) {
+      grid[r][c] = L[r][c];
+      const mc = GRID_W - 1 - c;
+      if (mc !== c) grid[r][mc] = L[r][c];
+    }
+  }
+
+  // Ghost house: stamp proper structure.
+  for (let c = HOUSE_LEFT; c <= HOUSE_RIGHT; c++) grid[8][c] = W;
+  grid[8][GHOST_DOOR_X] = DR;
+  grid[9][HOUSE_LEFT] = W;  grid[9][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[9][c] = H;
+  grid[10][HOUSE_LEFT] = W; grid[10][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[10][c] = H;
+  grid[11][HOUSE_LEFT] = W; grid[11][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[11][c] = E;
+
+  // Approach corridors: cols 6 and 14 open from rows 7-12.
+  for (let r = 7; r <= 12; r++) {
+    if (grid[r][6]  === W) grid[r][6]  = E;
+    if (grid[r][14] === W) grid[r][14] = E;
+  }
+
+  // Path above door: col 10 rows 5-7.
+  for (let r = 5; r <= 7; r++) {
+    if (grid[r][10] === W) grid[r][10] = E;
+  }
+
+  // Side tunnels rows 7 and 17.
+  grid[7][0]  = TN;  grid[7][21]  = TN;
+  grid[17][0] = TN;  grid[17][21] = TN;
+
+  // Power pellets.
+  grid[7][1]  = P;  grid[7][20]  = P;
+  grid[17][1] = P;  grid[17][20] = P;
+
+  // Perimeter walls (except tunnels).
+  for (let c = 0; c < GRID_W; c++) {
+    if (grid[0][c]  !== TN) grid[0][c]  = W;
+    if (grid[25][c] !== TN) grid[25][c] = W;
+  }
+  for (let r = 1; r <= 24; r++) {
+    if (r !== 7 && r !== 17) {
+      grid[r][0]  = W;
+      grid[r][21] = W;
+    }
+  }
+
+  // Player spawns: EMPTY (no dot at spawn).
+  for (const [sx, sy] of [[9,19],[11,19],[9,21],[11,21]]) {
+    if (grid[sy][sx] !== W) grid[sy][sx] = E;
+  }
+  // Fruit spawn: EMPTY.
+  if (grid[15][10] !== W) grid[15][10] = E;
+  if (grid[15][11] !== W) grid[15][11] = E;
+
+  repairConnectivity(grid);
+  eliminateDeadEnds(grid);
+  validateMaze(grid, 'handcrafted_2');
+
+  const TILE_CHARS = { [W]:'#', [D]:'·', [P]:'P', [E]:' ', [H]:'H', [DR]:'D', [TN]:'T' };
+  const header = '    ' + Array.from({length: GRID_W}, (_,i) => (i % 10).toString()).join('');
+  console.log('[pacfriends] Hand-crafted Level 2 maze:');
+  console.log(header);
+  for (let r = 0; r < GRID_H; r++) {
+    const row = grid[r].map(t => TILE_CHARS[t] ?? '?').join('');
+    console.log(`[pacfriends] ${r.toString().padStart(2)}  ${row}`);
+  }
+  console.log(header);
+
+  const toHomeMap = buildToHomeMap(grid, T, GHOST_DOOR_X, GHOST_DOOR_Y);
+
+  return {
+    tiles: grid,
+    walls: null,
+    toHomeMap,
+    topology: 'none',
+    portalPairs: [],
+    playerSpawns: [
+      { x: 9, y: 19 }, { x: 11, y: 19 },
+      { x: 9, y: 21 }, { x: 11, y: 21 },
+    ],
+    ghostSpawns: [
+      { x: 11, y: 7 }, { x: 9, y: 10 },
+      { x: 11, y: 10 }, { x: 12, y: 10 },
+    ],
+    ghostHouse: { x: HOUSE_LEFT, y: 8, w: HOUSE_RIGHT - HOUSE_LEFT + 1, h: 4 },
+    ghostDoor: { x: GHOST_DOOR_X, y: GHOST_DOOR_Y },
+    tunnelRows: [7, 17],
+    fruitSpawn: { x: 10, y: 15 },
+  };
+}
+
+// ============================================================
+// Hand-crafted Level 3 — split bridges and lower pretzel routes
+// ============================================================
+function handCraftedLevel3() {
+  const W = T.WALL, D = T.DOT, P = T.POWER, E = T.EMPTY;
+  const H = T.HOUSE, DR = T.DOOR, TN = T.TUNNEL, PT = T.PORTAL;
+
+  const L = [
+    //c: 0   1  2  3  4  5  6  7  8  9 10
+    [  W,  W, W, W, W, W, W, W, W, W, W ],  //  0
+    [  W,  D, D, D, D, D, D, D, D, D, D ],  //  1
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  //  2
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  //  3
+    [  W,  D, D, D, D, D, D, D, W, W, W ],  //  4
+
+    [  W,  D, W, W, D, W, W, D, D, D, D ],  //  5
+    [  W,  D, W, W, D, W, W, W, W, W, W ],  //  6
+    [ TN,  P, D, D, D, W, W, D, D, D, D ],  //  7
+
+    [  W,  D, W, W, W, W, W, W, W, W, W ],  //  8
+    [  W,  D, W, W, W, W, W, W, W, W, W ],  //  9
+    [  W,  D, W, W, W, W, W, W, W, W, W ],  // 10
+    [  W,  D, W, W, W, W, W, W, W, W, W ],  // 11
+
+    [  W,  D, D, D, D, D, D, D, W, W, W ],  // 12
+    [  W,  D, W, W, W, W, W, D, W, W, W ],  // 13
+    [  W,  D, D, D, D, D, D, D, W, W, W ],  // 14
+
+    [  W,  D, W, W, D, W, W, D, D, D, D ],  // 15
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 16
+    [ TN,  P, D, D, D, W, W, D, D, D, D ],  // 17
+
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 18
+    [  W,  D, D, D, D, W, W, D, D, D, D ],  // 19
+    [  W,  D, W, W, D, W, W, D, W, D, W ],  // 20
+    [  W,  D, D, D, D, W, W, D, D, D, D ],  // 21
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 22
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 23
+    [  W,  D, D, D, D, D, D, D, D, D, D ],  // 24
+    [  W,  W, W, W, W, W, W, W, W, W, W ],  // 25
+  ];
+
+  const grid = Array.from({ length: GRID_H }, () => new Array(GRID_W).fill(W));
+
+  for (let r = 0; r < GRID_H; r++) {
+    for (let c = 0; c <= 10; c++) {
+      grid[r][c] = L[r][c];
+      const mc = GRID_W - 1 - c;
+      if (mc !== c) grid[r][mc] = L[r][c];
+    }
+  }
+
+  // Ghost house: stamp proper structure.
+  for (let c = HOUSE_LEFT; c <= HOUSE_RIGHT; c++) grid[8][c] = W;
+  grid[8][GHOST_DOOR_X] = DR;
+  grid[9][HOUSE_LEFT] = W;  grid[9][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[9][c] = H;
+  grid[10][HOUSE_LEFT] = W; grid[10][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[10][c] = H;
+  grid[11][HOUSE_LEFT] = W; grid[11][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[11][c] = E;
+
+  // Approach corridors: cols 6 and 14 open from rows 7-12.
+  for (let r = 7; r <= 12; r++) {
+    if (grid[r][6]  === W) grid[r][6]  = E;
+    if (grid[r][14] === W) grid[r][14] = E;
+  }
+
+  // Path above door: col 10 rows 5-7.
+  for (let r = 5; r <= 7; r++) {
+    if (grid[r][10] === W) grid[r][10] = E;
+  }
+
+  // Klein side portals: bottom-left <-> top-right, top-left <-> bottom-right.
+  const portalPairs = [
+    { fromX: 0,         fromY: 17, toX: GRID_W - 1, toY: 7  },
+    { fromX: GRID_W - 1, fromY: 7,  toX: 0,          toY: 17 },
+    { fromX: 0,         fromY: 7,  toX: GRID_W - 1, toY: 17 },
+    { fromX: GRID_W - 1, fromY: 17, toX: 0,          toY: 7  },
+  ];
+  for (const p of portalPairs) {
+    grid[p.fromY][p.fromX] = PT;
+    grid[p.toY][p.toX] = PT;
+  }
+
+  // Power pellets.
+  grid[7][1]  = P;  grid[7][20]  = P;
+  grid[17][1] = P;  grid[17][20] = P;
+
+  // Perimeter walls (except tunnels).
+  for (let c = 0; c < GRID_W; c++) {
+    if (grid[0][c]  !== PT) grid[0][c]  = W;
+    if (grid[25][c] !== PT) grid[25][c] = W;
+  }
+  for (let r = 1; r <= 24; r++) {
+    if (r !== 7 && r !== 17) {
+      if (grid[r][0] !== PT) grid[r][0] = W;
+      if (grid[r][21] !== PT) grid[r][21] = W;
+    }
+  }
+
+  // Player spawns: EMPTY (no dot at spawn).
+  for (const [sx, sy] of [[9,19],[11,19],[9,21],[11,21]]) {
+    if (grid[sy][sx] !== W) grid[sy][sx] = E;
+  }
+  // Fruit spawn: EMPTY.
+  if (grid[15][10] !== W) grid[15][10] = E;
+  if (grid[15][11] !== W) grid[15][11] = E;
+
+  repairConnectivity(grid);
+  eliminateDeadEnds(grid);
+  validateMaze(grid, 'handcrafted_3');
+
+  const TILE_CHARS = { [W]:'#', [D]:'·', [P]:'P', [E]:' ', [H]:'H', [DR]:'D', [TN]:'T', [PT]:'K' };
+  const header = '    ' + Array.from({length: GRID_W}, (_,i) => (i % 10).toString()).join('');
+  console.log('[pacfriends] Hand-crafted Level 3 maze:');
+  console.log(header);
+  for (let r = 0; r < GRID_H; r++) {
+    const row = grid[r].map(t => TILE_CHARS[t] ?? '?').join('');
+    console.log(`[pacfriends] ${r.toString().padStart(2)}  ${row}`);
+  }
+  console.log(header);
+
+  const toHomeMap = buildToHomeMap(grid, T, GHOST_DOOR_X, GHOST_DOOR_Y);
+
+  return {
+    tiles: grid,
+    walls: null,
+    toHomeMap,
+    topology: 'klein_lr',
+    portalPairs,
+    playerSpawns: [
+      { x: 9, y: 19 }, { x: 11, y: 19 },
+      { x: 9, y: 21 }, { x: 11, y: 21 },
+    ],
+    ghostSpawns: [
+      { x: 11, y: 7 }, { x: 9, y: 10 },
+      { x: 11, y: 10 }, { x: 12, y: 10 },
+    ],
+    ghostHouse: { x: HOUSE_LEFT, y: 8, w: HOUSE_RIGHT - HOUSE_LEFT + 1, h: 4 },
+    ghostDoor: { x: GHOST_DOOR_X, y: GHOST_DOOR_Y },
+    tunnelRows: [],
+    fruitSpawn: { x: 10, y: 15 },
+  };
+}
+
+// ============================================================
+// Hand-crafted Level 4 — classic cloverleaf with a center tunnel
+// ============================================================
+function handCraftedLevel4() {
+  const W = T.WALL, D = T.DOT, P = T.POWER, E = T.EMPTY;
+  const H = T.HOUSE, DR = T.DOOR, TN = T.TUNNEL, PT = T.PORTAL;
+
+  const L = [
+    //c: 0   1  2  3  4  5  6  7  8  9 10
+    [  W,  W, W, W, W, W, W, W, W, W, W ],  //  0
+    [  W,  D, D, D, D, D, D, D, D, D, D ],  //  1
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  //  2
+    [  W,  D, W, W, D, D, D, D, W, W, W ],  //  3
+    [  W,  D, D, D, D, W, W, D, D, D, D ],  //  4
+
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  //  5
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  //  6
+    [ TN,  P, D, D, D, D, D, D, D, D, D ],  //  7
+
+    [  W,  D, W, W, W, W, W, W, W, W, D ],  //  8
+    [  W,  D, W, W, W, W, W, W, W, W, D ],  //  9
+    [  W,  D, W, W, W, W, W, W, W, W, D ],  // 10
+    [  W,  D, W, W, W, W, W, W, W, W, D ],  // 11
+
+    [ TN,  D, D, D, D, D, D, D, D, D, D ],  // 12
+    [  W,  D, W, W, W, W, W, D, W, W, D ],  // 13
+    [  W,  D, D, D, D, D, D, D, W, W, W ],  // 14
+
+    [  W,  D, W, W, D, W, W, D, D, D, D ],  // 15
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 16
+    [  W,  P, D, D, D, W, W, D, W, W, D ],  // 17
+
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 18
+    [  W,  D, D, D, D, W, W, D, D, D, D ],  // 19
+    [  W,  D, W, W, D, W, W, D, W, D, W ],  // 20
+    [  W,  D, D, D, D, D, D, D, W, D, D ],  // 21
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 22
+    [  W,  D, W, W, D, W, W, D, W, W, W ],  // 23
+    [  W,  D, D, D, D, D, D, D, D, D, D ],  // 24
+    [  W,  W, W, W, W, W, W, W, W, W, W ],  // 25
+  ];
+
+  const grid = Array.from({ length: GRID_H }, () => new Array(GRID_W).fill(W));
+
+  for (let r = 0; r < GRID_H; r++) {
+    for (let c = 0; c <= 10; c++) {
+      grid[r][c] = L[r][c];
+      const mc = GRID_W - 1 - c;
+      if (mc !== c) grid[r][mc] = L[r][c];
+    }
+  }
+
+  // Ghost house: stamp proper structure.
+  for (let c = HOUSE_LEFT; c <= HOUSE_RIGHT; c++) grid[8][c] = W;
+  grid[8][GHOST_DOOR_X] = DR;
+  grid[9][HOUSE_LEFT] = W;  grid[9][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[9][c] = H;
+  grid[10][HOUSE_LEFT] = W; grid[10][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[10][c] = H;
+  grid[11][HOUSE_LEFT] = W; grid[11][HOUSE_RIGHT] = W;
+  for (let c = HOUSE_LEFT + 1; c < HOUSE_RIGHT; c++) grid[11][c] = E;
+
+  // Approach corridors: cols 6 and 14 open from rows 7-12.
+  for (let r = 7; r <= 12; r++) {
+    if (grid[r][6]  === W) grid[r][6]  = E;
+    if (grid[r][14] === W) grid[r][14] = E;
+  }
+
+  // Path above door: col 10 rows 5-7.
+  for (let r = 5; r <= 7; r++) {
+    if (grid[r][10] === W) grid[r][10] = E;
+  }
+
+  // Three Klein side portals: top <-> bottom, middle <-> middle.
+  const portalPairs = [
+    { fromX: 0,          fromY: 7,  toX: GRID_W - 1, toY: 17 },
+    { fromX: GRID_W - 1, fromY: 17, toX: 0,          toY: 7  },
+    { fromX: 0,          fromY: 12, toX: GRID_W - 1, toY: 12 },
+    { fromX: GRID_W - 1, fromY: 12, toX: 0,          toY: 12 },
+    { fromX: 0,          fromY: 17, toX: GRID_W - 1, toY: 7  },
+    { fromX: GRID_W - 1, fromY: 7,  toX: 0,          toY: 17 },
+  ];
+  for (const p of portalPairs) {
+    grid[p.fromY][p.fromX] = PT;
+    grid[p.toY][p.toX] = PT;
+  }
+
+  // Power pellets.
+  grid[7][1]  = P;  grid[7][20]  = P;
+  grid[17][1] = P;  grid[17][20] = P;
+
+  // Perimeter walls (except portals).
+  for (let c = 0; c < GRID_W; c++) {
+    if (grid[0][c]  !== PT) grid[0][c]  = W;
+    if (grid[25][c] !== PT) grid[25][c] = W;
+  }
+  for (let r = 1; r <= 24; r++) {
+    if (r !== 7 && r !== 12 && r !== 17) {
+      if (grid[r][0] !== PT) grid[r][0] = W;
+      if (grid[r][21] !== PT) grid[r][21] = W;
+    }
+  }
+
+  // Player spawns: EMPTY (no dot at spawn).
+  for (const [sx, sy] of [[9,19],[11,19],[9,21],[11,21]]) {
+    if (grid[sy][sx] !== W) grid[sy][sx] = E;
+  }
+  // Fruit spawn: EMPTY.
+  if (grid[15][10] !== W) grid[15][10] = E;
+  if (grid[15][11] !== W) grid[15][11] = E;
+
+  repairConnectivity(grid);
+  eliminateDeadEnds(grid);
+
+  // Keep the upper/lower side entries tighter than the center corridor.
+  for (const x of [5, 15, 16]) {
+    grid[7][x] = W;
+  }
+  for (const x of [5, 6, 8, 9, 12, 13, 15, 16]) {
+    grid[17][x] = W;
+  }
+
+  validateMaze(grid, 'handcrafted_4');
+
+  const TILE_CHARS = { [W]:'#', [D]:'·', [P]:'P', [E]:' ', [H]:'H', [DR]:'D', [TN]:'T', [PT]:'K' };
+  const header = '    ' + Array.from({length: GRID_W}, (_,i) => (i % 10).toString()).join('');
+  console.log('[pacfriends] Hand-crafted Level 4 maze:');
+  console.log(header);
+  for (let r = 0; r < GRID_H; r++) {
+    const row = grid[r].map(t => TILE_CHARS[t] ?? '?').join('');
+    console.log(`[pacfriends] ${r.toString().padStart(2)}  ${row}`);
+  }
+  console.log(header);
+
+  const toHomeMap = buildToHomeMap(grid, T, GHOST_DOOR_X, GHOST_DOOR_Y);
+
+  return {
+    tiles: grid,
+    walls: null,
+    toHomeMap,
+    topology: 'klein_lr',
+    portalPairs,
+    playerSpawns: [
+      { x: 9, y: 19 }, { x: 11, y: 19 },
+      { x: 9, y: 21 }, { x: 11, y: 21 },
+    ],
+    ghostSpawns: [
+      { x: 11, y: 7 }, { x: 9, y: 10 },
+      { x: 11, y: 10 }, { x: 12, y: 10 },
+    ],
+    ghostHouse: { x: HOUSE_LEFT, y: 8, w: HOUSE_RIGHT - HOUSE_LEFT + 1, h: 4 },
+    ghostDoor: { x: GHOST_DOOR_X, y: GHOST_DOOR_Y },
+    tunnelRows: [],
     fruitSpawn: { x: 10, y: 15 },
   };
 }
@@ -600,34 +1250,42 @@ const L = [
 // ============================================================
 // Pre-built levels 1-6
 //
-// Level 1 is hand-crafted for a classic symmetric feel.
-// Levels 2-6 are auto-generated with increasing loopDensity
-// for greater variety.  The cycle-first engine guarantees no
-// dead ends and 1-tile-wide corridors by construction.
+// Levels 1-4 are hand-crafted for classic symmetric play.
+// Levels 5+ are generated by the strict loop-only generator.
 // ============================================================
 export const LEVELS = [
   // 1 — hand-crafted classic symmetric layout
   handCraftedLevel1(),
-  // 2-6 — auto-generated, increasing density
-  generateMaze({ seed: 2002, loopDensity: 0.18, topology: 'none', topologyCount: 0 }),
-  generateMaze({ seed: 3003, loopDensity: 0.26, topology: 'none', topologyCount: 0 }),
-  generateMaze({ seed: 4004, loopDensity: 0.34, topology: 'none', topologyCount: 0 }),
-  generateMaze({ seed: 5005, loopDensity: 0.40, topology: 'none', topologyCount: 0 }),
-  generateMaze({ seed: 6006, loopDensity: 0.46, topology: 'none', topologyCount: 0 }),
+  // 2 — hand-crafted wide-loop layout
+  handCraftedLevel2(),
+  // 3 — hand-crafted split-bridge layout
+  handCraftedLevel3(),
+  // 4 — hand-crafted cloverleaf layout
+  handCraftedLevel4(),
+  // 5-6 — strict generated layouts
+  generateLevel(5),
+  generateLevel(6),
 ];
 
 // ============================================================
 // Random levels 7+
 // ============================================================
-const TOPOLOGIES = ['klein', 'projective', 'torus'];
-
 export function generateLevel(levelNum) {
   const seed = ((levelNum * 2654435761) + 987654321) >>> 0;
   const rng  = makePRNG(seed);
-  const loopDensity   = 0.25 + rng() * 0.25;
-  const topology      = rng() < 0.33 ? TOPOLOGIES[Math.floor(rng() * 3)] : 'none';
-  const topologyCount = 4 + Math.floor(rng() * 3);
-  return generateMaze({ seed, loopDensity, topology, topologyCount });
+  const loopDensity   = 0.03 + rng() * 0.07;
+  const sideRows      = rng() < 0.75 ? GENERATED_SIDE_ROW_OPTIONS[0] : GENERATED_SIDE_ROW_OPTIONS[1];
+  const sideMode      = rng() < 0.5 ? 'normal' : 'klein';
+  return generateMaze({
+    seed,
+    loopDensity,
+    sideMode,
+    sideRows,
+    fruitSpawn: { x: 7, y: 15 },
+    customReservedFn: isSimpleGeneratedReserved,
+    hardValidate: true,
+    label: `level_${levelNum}`,
+  });
 }
 
 // ============================================================

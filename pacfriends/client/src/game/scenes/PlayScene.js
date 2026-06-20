@@ -115,6 +115,10 @@ export default class PlayScene extends Phaser.Scene {
     this._sounds = new Sounds();
     this._prevDotsRemaining = null;
     this._prevScore = 0;
+    this._prevEndReason = null;
+    this._prevMaxPowerTimer = 0;
+    this._celebrationTimer = null;
+    this._celebrationParticles = [];
 
     // Touch controls
     this.touchControlsEnabled = isTouchDevice();
@@ -133,6 +137,7 @@ export default class PlayScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.game.net.removeEventListener('state', this.onState);
       this.game.net.removeEventListener('disconnected', this.onDisconnected);
+      this._stopCelebration();
     });
 
     if (this.game.net.latestState) this.renderState(this.game.net.latestState);
@@ -485,6 +490,11 @@ export default class PlayScene extends Phaser.Scene {
     const isEndLevel = Boolean(state.paused && state.reasonPaused === 'levelcomplete');
     const isVictory  = Boolean(state.paused && state.reasonPaused === 'victory');
     const overlayVisible = isLobby || isPaused || isEndLevel || isVictory;
+    const endReason = isEndLevel ? 'levelcomplete' : isVictory ? 'victory' : null;
+    if (!this._prevEndReason && endReason) {
+      this._startCelebration();
+    }
+    this._prevEndReason = endReason;
 
     let layout = this.computeLayout();
     if (this.ensureTouchControlsGap_(layout.cellSize)) {
@@ -556,12 +566,86 @@ export default class PlayScene extends Phaser.Scene {
   // Sound triggers
   // ----------------------------------------------------------------
 
+  _startCelebration() {
+    this._stopCelebration();
+    this._sounds.playLevelComplete();
+
+    const { width: W, height: H } = this.scale;
+    const cx = W / 2;
+    const cy = H / 2;
+    const colors = [0xffd700, 0xff4466, 0x44ddff, 0x88ff44, 0xff8800, 0xcc44ff, 0xffffff];
+    const count = 60;
+
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 120 + Math.random() * 260;
+      const size = 5 + Math.random() * 10;
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      const isRect = Math.random() < 0.4;
+      const obj = isRect
+        ? this.add.rectangle(cx, cy, size, size * 1.6, color).setDepth(48)
+        : this.add.circle(cx, cy, size / 2, color).setDepth(48);
+      const destX = cx + Math.cos(angle) * speed * (1.2 + Math.random());
+      const destY = cy + Math.sin(angle) * speed * (1.2 + Math.random());
+
+      this.tweens.add({
+        targets: obj,
+        x: destX,
+        y: destY,
+        alpha: 0,
+        scaleX: 0.3 + Math.random() * 0.7,
+        scaleY: 0.3 + Math.random() * 0.7,
+        duration: 1600 + Math.random() * 400,
+        delay: Math.random() * 200,
+        ease: 'Quad.easeOut',
+      });
+
+      this._celebrationParticles.push(obj);
+    }
+
+    const flash = this.add.text(cx, cy - 30, '✦', {
+      fontSize: '80px',
+      color: '#ffd700',
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(48).setAlpha(0);
+    this.tweens.add({
+      targets: flash,
+      alpha: { from: 0, to: 1 },
+      scaleX: { from: 0.1, to: 1.5 },
+      scaleY: { from: 0.1, to: 1.5 },
+      yoyo: true,
+      duration: 500,
+      ease: 'Back.easeOut',
+    });
+    this._celebrationParticles.push(flash);
+
+    this._celebrationTimer = this.time.delayedCall(2000, () => {
+      this._celebrationTimer = null;
+      this._stopCelebration();
+    });
+  }
+
+  _stopCelebration() {
+    if (this._celebrationTimer) {
+      this._celebrationTimer.remove();
+      this._celebrationTimer = null;
+    }
+    for (const p of this._celebrationParticles) p.destroy();
+    this._celebrationParticles = [];
+  }
+
   _handleSounds(state) {
     const prev = this._prevDotsRemaining;
     if (prev !== null && state.dotsRemaining < prev) {
       this._sounds.playChomp();
     }
     this._prevDotsRemaining = state.dotsRemaining;
+
+    const maxPowerTimer = Math.max(...[1, 2, 3, 4].map(id => state.players?.[id]?.powerTimer ?? 0));
+    if (maxPowerTimer > this._prevMaxPowerTimer) {
+      this._sounds.playPowerPellet();
+    }
+    this._prevMaxPowerTimer = maxPowerTimer;
 
     if (state.score > this._prevScore) {
       if (state.score - this._prevScore >= 200) {

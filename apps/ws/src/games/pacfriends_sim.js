@@ -136,6 +136,7 @@ export function newGameState({ level = 1, difficulty = 'medium', speed = 'medium
 
     // Ghost eat combo (resets when ghosts stop being frightened)
     ghostEatCombo: 0,
+    teamPowerTimer: 0,
 
     ghosts: GHOST_NAMES.map((name, i) => newGhost(i, name, levelData)),
 
@@ -193,7 +194,7 @@ function newPlayerState(id, color, playerSpawns) {
     lives: 3,
     alive: true,
     respawnTimer: 0,
-    // Per-player power pellet timer (only this player can eat ghosts)
+    // Shared power pellet timer mirrored onto each player for client FX.
     powerTimer: 0,
     paused: true,
     dotsEaten: 0,
@@ -310,7 +311,7 @@ function respawnPlayer(state, playerId) {
   p.pendingDir = 'LEFT';
   p.alive = true;
   p.respawnTimer = 0;
-  p.powerTimer = 0;
+  p.powerTimer = state.teamPowerTimer ?? 0;
   p.moving = false;
 }
 
@@ -327,7 +328,13 @@ function maybeExitGhostHouse(state, ghost) {
   const timeElapsed = state.tick * TICK_MS;
   if (state.dotsEatenTotal >= ghost.houseExitDots ||
       timeElapsed >= GHOST_RELEASE_MS[ghost.id]) {
-    ghost.mode = state.ghostMode === 'frightened' ? 'frightened' : state.ghostMode;
+    if ((state.teamPowerTimer ?? 0) > 0) {
+      ghost.mode = 'frightened';
+      ghost.frightenedTimer = state.teamPowerTimer;
+      ghost.frightenedBy = null;
+    } else {
+      ghost.mode = state.ghostMode;
+    }
     const door = state.ghostDoor;
     ghost.x = tileCenterPx(door.x);
     ghost.y = tileCenterPx(door.y);
@@ -629,15 +636,18 @@ function movePlayer(state, player) {
 }
 
 function activatePowerPellet(state, playerId) {
-  const p = state.players[playerId];
-  p.powerTimer = FRIGHTENED_DURATION_MS[state.difficulty];
+  const duration = FRIGHTENED_DURATION_MS[state.difficulty];
+  state.teamPowerTimer = duration;
+  for (const pid of [1, 2, 3, 4]) {
+    state.players[pid].powerTimer = duration;
+  }
   // Reset ghost eat combo
   state.ghostEatCombo = 0;
   for (const ghost of state.ghosts) {
-    if (ghost.mode === 'scatter' || ghost.mode === 'chase') {
+    if (ghost.mode === 'scatter' || ghost.mode === 'chase' || ghost.mode === 'frightened') {
       ghost.mode = 'frightened';
       ghost.frightenedBy = playerId;
-      ghost.frightenedTimer = FRIGHTENED_DURATION_MS[state.difficulty];
+      ghost.frightenedTimer = duration;
       ghost.eatComboIndex = 0;
     }
   }
@@ -679,7 +689,7 @@ function checkPlayerGhostCollisions(state) {
       const overlap = TILE_PX * 0.75;
       if (dx * dx + dy * dy > overlap * overlap) continue;
 
-      if (ghost.mode === 'frightened' && ghost.frightenedBy === pid && player.powerTimer > 0) {
+      if (ghost.mode === 'frightened' && player.powerTimer > 0) {
         // Eat ghost
         ghost.mode = 'eaten';
         ghost.frightenedBy = null;
@@ -693,7 +703,7 @@ function checkPlayerGhostCollisions(state) {
         // Kill player
         player.alive = false;
         player.respawnTimer = RESPAWN_DELAY_MS;
-        player.powerTimer = 0;
+        player.powerTimer = state.teamPowerTimer ?? 0;
         player.lives = Math.max(0, player.lives - 1);
         // Reset ghost positions (classic Pac-Man doesn't reset ghosts on death)
       }
@@ -741,19 +751,20 @@ export function step(state, nowMs) {
   let changed = true;
 
   // Respawn timers
+  if (state.teamPowerTimer > 0) {
+    state.teamPowerTimer -= TICK_MS;
+    if (state.teamPowerTimer <= 0) state.teamPowerTimer = 0;
+  }
+
   for (const pid of [1, 2, 3, 4]) {
     const p = state.players[pid];
+    p.powerTimer = state.teamPowerTimer;
     if (!p.connected) continue;
     if (!p.alive) {
       p.respawnTimer -= TICK_MS;
       if (p.respawnTimer <= 0) {
         respawnPlayer(state, pid);
       }
-    }
-    // Power timer
-    if (p.powerTimer > 0) {
-      p.powerTimer -= TICK_MS;
-      if (p.powerTimer <= 0) p.powerTimer = 0;
     }
   }
 

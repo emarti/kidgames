@@ -80,14 +80,9 @@ export function drawMaze(g, state, layout) {
                     break;
                 }
                 case T.PORTAL: {
-                    // Dark purple bg + pulsing magenta glow
-                    g.fillStyle(0x110022, 1);
+                    // Portals are used as topological side tunnels; keep them visually quiet.
+                    g.fillStyle(TUNNEL_COLOR, 1);
                     g.fillRect(px, py, cellSize, cellSize);
-                    const portalPhase = (state.tick * 4) % 360;
-                    const portalAlpha = 0.5 + 0.5 * Math.sin(portalPhase * Math.PI / 180);
-                    const pr2 = Math.max(2, Math.floor(cellSize * 0.38));
-                    g.fillStyle(0xFF00FF, portalAlpha);
-                    g.fillCircle(px + cellSize / 2, py + cellSize / 2, pr2);
                     break;
                 }
                 case T.DOT: {

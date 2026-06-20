@@ -70,11 +70,11 @@ PORTAL 7   Topological portal (torus/klein/projective)
 ## Fixed layout elements (tile coords)
 
 - **Ghost house**: rows 8–11, cols 7–13. Door at `(10, 8)`. Interior rows 9–10, exit corridor row 11.
-- **Tunnel row**: row 12 — `TUNNEL` at cols 0 and 21, `EMPTY` approach corridors cols 1–5 and 15–20.
-- **Power pellets**: `(1,7)`, `(19,7)`, `(1,17)`, `(19,17)` (near four corners).
+- **Side exits**: handcrafted and generated levels can use rows 7, 12, and/or 17. Normal exits use `TUNNEL` at cols 0 and 21; Klein exits use `PORTAL` pairs.
+- **Power pellets**: `(1,7)`, `(20,7)`, `(1,17)`, `(20,17)` (near four corners).
 - **Player spawns**: `(9,19)`, `(11,19)`, `(9,21)`, `(11,21)` — centered below ghost house.
 - **Ghost spawns**: Blinky `(11,7)`, Pinky `(9,10)`, Inky `(11,10)`, Clyde `(12,10)`.
-- **Fruit spawn**: `(10,15)`.
+- **Fruit spawn**: handcrafted levels use `(10,15)`; simplified generated levels use `(7,15)` so fruit sits on their left-center backbone.
 
 ## Ghost AI
 
@@ -109,17 +109,22 @@ Portal pairs (topological): stored in `portalPairs[]`. When a player/ghost enter
 
 ## Level structure
 
-- **Levels 1–6**: pre-built in `LEVELS[]` array. Level 1 is hand-crafted for a classic feel. Levels 2–6 use `generateMaze()` with increasing `loopDensity`.
-- **Levels 7+**: fully procedural via `generateLevel(levelNum)` — random seed, loopDensity 0.25–0.50, random topology.
+- **Levels 1–4**: pre-built hand-crafted layouts in `LEVELS[]`.
+- **Levels 5+**: deterministic procedural layouts via `generateLevel(levelNum)`.
+- Procedural levels use the strict loop-only generator: no dead ends, no non-exempt 2×2 open blocks, connected player space, and hard validation before returning.
+- Procedural levels 5+ intentionally use a simpler reserved-cell mask and low extra-loop density (`0.03`–`0.10`) so they read as cleaner Pac-Man corridors instead of dense labyrinths.
+- Each procedural level chooses either 2 or 3 side rows from `[7,17]` or `[7,12,17]`, then chooses one left/right mode for the whole level:
+  - `torus_lr`: normal side tunnels using `TUNNEL` edge tiles and same-row wrap.
+  - `klein_lr`: Klein side portals using `PORTAL` edge tiles, with top ↔ bottom and middle ↔ middle when row 12 is present.
 
 ## Maze generation pipeline
 
 1. `generateLogicalMaze(seed, loopDensity, reservedFn)` — builds a 10×12 logical grid with cycle-first algorithm (Hamiltonian cycle → random extra edges). Guarantees no dead ends, no 2×2 open blocks, connectivity.
 2. `toTileGrid(walls, reservedFn, T)` — expands to 22×26 tile grid.
-3. `applyOverlays(grid, portalPairs)` — stamps ghost house, tunnel, power pellets, portals, perimeter.
+3. `applyOverlays(grid, sidePlan)` — stamps ghost house, side tunnels/portals, power pellets, perimeter.
 4. `repairConnectivity(grid)` — flood-fill + straight-line bridge for isolated regions.
 5. `eliminateDeadEnds(grid)` — iteratively walls off ≤1-neighbor tiles.
-6. `validateMaze(grid, seed)` — diagnostic warnings (dead ends, unreachable tiles, 2×2 blocks).
+6. `collectGeneratedLevelIssues(...)` / `validateMaze(...)` — hard validation for generated levels, diagnostic warnings for legacy/special layouts.
 7. `buildToHomeMap(tiles, T, doorX, doorY)` — BFS distance map for eaten-ghost pathfinding.
 
 ## Maze design rules
