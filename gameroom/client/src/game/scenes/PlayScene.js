@@ -806,8 +806,8 @@ export default class PlayScene extends NetScene {
     }
     // Update the bottom-bar New Game button visibility for chess
     if (this._chessNewGameBtn) {
-      this._chessNewGameBtn.setVisible(isChess && !state?.game?.gameOver);
-      if (isChess && !state?.game?.gameOver) {
+      this._chessNewGameBtn.setVisible(isChess);
+      if (isChess) {
         this._chessNewGameBtn.setInteractive({ useHandCursor: true });
       } else {
         this._chessNewGameBtn.disableInteractive();
@@ -1102,12 +1102,17 @@ export default class PlayScene extends NetScene {
 
     // Game-over overlay — with 2s celebration delay on first trigger.
     const goInfo = renderer.getGameOverInfo(gameState);
-    const justEnded = goInfo && !this._prevGameOver;
-    this._prevGameOver = !!goInfo;
+    const chessCheckmate = gameType === 'chess' && !!gameState.checkmate;
+    const terminalEvent = !!goInfo || chessCheckmate;
+    const justEnded = terminalEvent && !this._prevGameOver;
+    this._prevGameOver = terminalEvent;
 
-    if (goInfo) {
+    if (chessCheckmate) {
+      this._pendingGoInfo = null;
+      this._hideScoreOverlay();
+      if (justEnded) this._startCelebration();
+    } else if (goInfo) {
       if (gameType === 'chess') {
-        this._stopCelebration();
         this._pendingGoInfo = null;
         this._hideScoreOverlay();
       } else if (justEnded) {

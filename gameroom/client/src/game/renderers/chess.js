@@ -46,6 +46,7 @@ let _explainGfx = null;
 let _hitZones  = [];
 
 let _pieceTexts = [];  // Phaser Text objects pooled for piece glyphs
+let _coordTexts = [];  // Phaser Text objects for file/rank labels
 
 let _onPointerMove = null;
 let _onPointerUp   = null;
@@ -134,6 +135,45 @@ function _drawBoard(highlightCells) {
       gfx.lineStyle(2, 0x00ff66, 0.7);
       gfx.strokeRect(rect.x + 1, rect.y + 1, rect.size - 2, rect.size - 2);
     }
+  }
+}
+
+function _drawCoordinates() {
+  const cs = _cellSize();
+  const fs = Math.max(10, Math.round(cs * 0.22));
+  const files = _flipped ? ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a'] : ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  const ranks = _flipped ? ['1', '2', '3', '4', '5', '6', '7', '8'] : ['8', '7', '6', '5', '4', '3', '2', '1'];
+
+  for (let i = 0; i < 16; i++) {
+    let txt = _coordTexts[i];
+    if (!txt || !txt.active) {
+      txt = _scene.add.text(0, 0, '', {
+        fontFamily: 'monospace',
+        fontSize: `${fs}px`,
+        color: '#f7dfb7',
+        stroke: '#2d1a0e',
+        strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(13);
+      _coordTexts[i] = txt;
+    }
+
+    txt.setStyle({
+      fontFamily: 'monospace',
+      fontSize: `${fs}px`,
+      color: '#f7dfb7',
+      stroke: '#2d1a0e',
+      strokeThickness: 2,
+    });
+
+    if (i < 8) {
+      txt.setText(files[i]);
+      txt.setPosition(_bx + (i + 0.5) * cs, _by + _bs + Math.max(9, cs * 0.18));
+    } else {
+      const row = i - 8;
+      txt.setText(ranks[row]);
+      txt.setPosition(_bx - Math.max(9, cs * 0.18), _by + (row + 0.5) * cs);
+    }
+    txt.setVisible(true);
   }
 }
 
@@ -436,8 +476,8 @@ function _buildHitZones() {
 // Server re-validates; this is just for UX feedback.
 
 function _computeLegalDests(gameState, fromIdx) {
-  // Use a minimal pseudo-legal computation to show destinations.
-  // We delegate to the full legalMovesFor logic via a filtered scan on state.
+  // Generate pseudo-legal destinations, then filter out moves that leave
+  // the moving side's king in check. The server still re-validates.
   // Since we don't import chess_sim.js in the client bundle (it runs on the server),
   // we implement a lightweight pseudo-legal generator here.
   const { board, enPassantTarget, castlingRights, turn, gameOver } = gameState;
@@ -500,10 +540,11 @@ function _computeLegalDests(gameState, fromIdx) {
       break;
     }
   }
-  return dests;
+  return dests.filter((toIdx) => _isLegalPreviewMove(gameState, fromIdx, toIdx));
 }
 
 function _inBounds(row, col) { return row >= 0 && row <= 7 && col >= 0 && col <= 7; }
+function _opp(color) { return color === 'white' ? 'black' : 'white'; }
 
 function _sliding(board, fromIdx, color, dirs, out) {
   const { row, col } = _toRC(fromIdx);
@@ -516,6 +557,132 @@ function _sliding(board, fromIdx, color, dirs, out) {
       r += dr; c += dc;
     }
   }
+}
+
+function _isLegalPreviewMove(gameState, from, to) {
+  const piece = gameState.board[from];
+  if (!piece) return false;
+
+  const move = _previewMoveMeta(gameState, from, to, piece);
+  if (move.castling) {
+    if (_isInCheck(gameState.board, piece.color)) return false;
+
+    const { row } = _toRC(from);
+    const passingCol = move.castling === 'k' ? 5 : 3;
+    const passingBoard = gameState.board.slice();
+    passingBoard[from] = null;
+    passingBoard[_idx(row, passingCol)] = { type: 'K', color: piece.color };
+    if (_isInCheck(passingBoard, piece.color)) return false;
+  }
+
+  return !_isInCheck(_applyPreviewMove(gameState.board, move), piece.color);
+}
+
+function _previewMoveMeta(gameState, from, to, piece) {
+  const { row: fromRow, col: fromCol } = _toRC(from);
+  const { row: toRow,   col: toCol   } = _toRC(to);
+  const isEnPassant = piece.type === 'P' &&
+    to === gameState.enPassantTarget &&
+    toCol !== fromCol &&
+    gameState.board[to] === null;
+  const isCastling = piece.type === 'K' && Math.abs(toCol - fromCol) === 2;
+  return {
+    from,
+    to,
+    enPassant: isEnPassant,
+    castling:  isCastling ? (toCol > fromCol ? 'k' : 'q') : null,
+    fromRow,
+    toRow,
+    toCol,
+  };
+}
+
+function _applyPreviewMove(board, move) {
+  const b = board.slice();
+  const piece = b[move.from];
+  b[move.from] = null;
+  b[move.to] = piece ? { ...piece } : null;
+
+  if (move.enPassant) {
+    b[_idx(move.fromRow, move.toCol)] = null;
+  }
+
+  if (move.castling) {
+    const row = move.toRow;
+    if (move.castling === 'k') {
+      b[_idx(row, 5)] = b[_idx(row, 7)];
+      b[_idx(row, 7)] = null;
+    } else {
+      b[_idx(row, 3)] = b[_idx(row, 0)];
+      b[_idx(row, 0)] = null;
+    }
+  }
+
+  return b;
+}
+
+function _isInCheck(board, color) {
+  const kingIdx = _findKing(board, color);
+  if (kingIdx === -1) return false;
+  return _isSquareAttacked(board, kingIdx, _opp(color));
+}
+
+function _findKing(board, color) {
+  for (let i = 0; i < 64; i++) {
+    const p = board[i];
+    if (p?.type === 'K' && p.color === color) return i;
+  }
+  return -1;
+}
+
+function _isSquareAttacked(board, targetIdx, attackerColor) {
+  const { row: targetRow, col: targetCol } = _toRC(targetIdx);
+
+  for (let i = 0; i < 64; i++) {
+    const piece = board[i];
+    if (!piece || piece.color !== attackerColor) continue;
+
+    const { row, col } = _toRC(i);
+    if (piece.type === 'P') {
+      const dir = attackerColor === 'white' ? -1 : 1;
+      if (row + dir === targetRow && Math.abs(col - targetCol) === 1) return true;
+    } else if (piece.type === 'N') {
+      const dr = Math.abs(row - targetRow);
+      const dc = Math.abs(col - targetCol);
+      if ((dr === 2 && dc === 1) || (dr === 1 && dc === 2)) return true;
+    } else if (piece.type === 'K') {
+      if (Math.max(Math.abs(row - targetRow), Math.abs(col - targetCol)) === 1) return true;
+    } else if (_slidingAttacks(board, i, targetIdx, piece)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function _slidingAttacks(board, fromIdx, targetIdx, piece) {
+  const dirs = piece.type === 'B'
+    ? [[-1,-1],[-1,1],[1,-1],[1,1]]
+    : piece.type === 'R'
+      ? [[-1,0],[1,0],[0,-1],[0,1]]
+      : piece.type === 'Q'
+        ? [[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]]
+        : null;
+  if (!dirs) return false;
+
+  const { row, col } = _toRC(fromIdx);
+  for (const [dr, dc] of dirs) {
+    let r = row + dr;
+    let c = col + dc;
+    while (_inBounds(r, c)) {
+      const idx = _idx(r, c);
+      if (idx === targetIdx) return true;
+      if (board[idx]) break;
+      r += dr;
+      c += dc;
+    }
+  }
+  return false;
 }
 
 // ─── Input handling ───────────────────────────────────────────────────────────
@@ -804,6 +971,7 @@ const chessRenderer = {
     const validDests = _selected !== null ? _computeLegalDests(gameState, _selected) : null;
 
     _drawBoard(validDests);
+    _drawCoordinates();
     _drawSelectionRing(_selected);
     _drawLastMoveMarker(gameState.lastMove);
     _drawCheckHighlight(gameState.board, gameState.inCheck, gameState.turn);
@@ -915,6 +1083,9 @@ const chessRenderer = {
 
     for (const t of _pieceTexts) if (t && t.destroy) t.destroy();
     _pieceTexts = [];
+
+    for (const t of _coordTexts) if (t && t.destroy) t.destroy();
+    _coordTexts = [];
 
     for (const t of _explainTexts) if (t && t.destroy) t.destroy();
     _explainTexts = [];
