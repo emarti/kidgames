@@ -97,11 +97,17 @@ export default class PlayScene extends Phaser.Scene {
     this.setupContainer.setVisible(false);
     this.setupContainer.setDepth(500);
 
+    this.winContainer = this.add.container(W / 2, H / 2);
+    this.createWinUI();
+    this.winContainer.setVisible(false);
+    this.winContainer.setDepth(600);
+
     // Reposition fixed-position UI on resize
     const positionFixedUI = () => {
       const W2 = this.scale?.width || 800;
       const H2 = this.scale?.height || 600;
       this.setupContainer.setPosition(W2 / 2, H2 / 2);
+      this.winContainer.setPosition(W2 / 2, H2 / 2);
       this.centerText.setPosition(W2 / 2, H2 / 2);
       this.levelDiffText.setPosition(W2 / 2, 8);
       this.dotsText.setPosition(W2 - 10, 8);
@@ -326,6 +332,38 @@ export default class PlayScene extends Phaser.Scene {
     this.restartButton   = this.addSetupButton( 80, 255, 'Restart',    () => this.game.net.send('restart'));
   }
 
+  createWinUI() {
+    const advance = () => this._advanceFromWinWindow();
+    const bg = this.add.rectangle(0, 0, 380, 230, 0x080820, 0.96)
+      .setStrokeStyle(3, 0xffd700, 1)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', advance);
+    this.winContainer.add(bg);
+
+    this.winTitle = this.add.text(0, -70, 'You won!', {
+      fontSize: '42px',
+      color: '#FFD700',
+      fontStyle: 'bold',
+      fontFamily: 'monospace',
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true }).on('pointerdown', advance);
+    this.winContainer.add(this.winTitle);
+
+    this.winScoreText = this.add.text(0, -10, '', {
+      fontSize: '18px',
+      color: '#FFFFFF',
+      fontFamily: 'monospace',
+      align: 'center',
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true }).on('pointerdown', advance);
+    this.winContainer.add(this.winScoreText);
+
+    this.winContinueText = this.add.text(0, 55, 'Click to continue', {
+      fontSize: '18px',
+      color: '#AAAAFF',
+      fontFamily: 'monospace',
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true }).on('pointerdown', advance);
+    this.winContainer.add(this.winContinueText);
+  }
+
   addSetupButton(x, y, label, cb) {
     const btn = this.add.text(x, y, label, {
       fontSize: '16px',
@@ -420,6 +458,24 @@ export default class PlayScene extends Phaser.Scene {
     }
   }
 
+  updateWinUI(state) {
+    const isVictory = Boolean(state.paused && state.reasonPaused === 'victory');
+    this.winTitle.setText('You won!');
+    this.winScoreText.setText(isVictory
+      ? `All 99 levels cleared!\nFinal Score: ${state.score}`
+      : `Level ${state.level} complete\nScore: ${state.score}`);
+    this.winContinueText.setText(isVictory ? 'Click to restart' : 'Click for next level');
+  }
+
+  _advanceFromWinWindow() {
+    const s = this.game.net?.latestState;
+    if (s?.reasonPaused === 'levelcomplete') {
+      this.game.net.send('next_level');
+    } else if (s?.reasonPaused === 'victory') {
+      this.game.net.send('restart');
+    }
+  }
+
   // ----------------------------------------------------------------
   // Layout
   // ----------------------------------------------------------------
@@ -489,7 +545,8 @@ export default class PlayScene extends Phaser.Scene {
     const isPaused   = Boolean(!isLobby && me?.paused);
     const isEndLevel = Boolean(state.paused && state.reasonPaused === 'levelcomplete');
     const isVictory  = Boolean(state.paused && state.reasonPaused === 'victory');
-    const overlayVisible = isLobby || isPaused || isEndLevel || isVictory;
+    const setupVisible = isLobby || isPaused;
+    const winVisible = isEndLevel || isVictory;
     const endReason = isEndLevel ? 'levelcomplete' : isVictory ? 'victory' : null;
     if (!this._prevEndReason && endReason) {
       this._startCelebration();
@@ -539,23 +596,21 @@ export default class PlayScene extends Phaser.Scene {
       ({ cherry: '🍒', strawberry: '🍓', orange: '🍊' }[t] ?? '🍒')).join('');
     this.fruitText.setText(fruitEmoji);
 
-    // Center message for level complete / victory
-    if (isEndLevel) {
-      this.centerText.setText('⭐  LEVEL COMPLETE  ⭐\n\nScore: ' + state.score);
-      this.centerText.setVisible(true);
-    } else if (isVictory) {
-      this.centerText.setText('🎉  YOU WIN!  🎉\n\nAll 99 levels cleared!\nFinal Score: ' + state.score);
-      this.centerText.setVisible(true);
-    } else {
-      this.centerText.setVisible(false);
-    }
+    this.centerText.setVisible(false);
 
     // Setup overlay
-    if (overlayVisible) {
+    if (setupVisible) {
       this.setupContainer.setVisible(true);
       this.updateSetupUI(state);
     } else {
       this.setupContainer.setVisible(false);
+    }
+
+    if (winVisible) {
+      this.winContainer.setVisible(true);
+      this.updateWinUI(state);
+    } else {
+      this.winContainer.setVisible(false);
     }
 
     // Sounds
@@ -568,13 +623,14 @@ export default class PlayScene extends Phaser.Scene {
 
   _startCelebration() {
     this._stopCelebration();
-    this._sounds.playLevelComplete();
+    this._sounds.playStartCelebration();
 
     const { width: W, height: H } = this.scale;
     const cx = W / 2;
     const cy = H / 2;
     const colors = [0xffd700, 0xff4466, 0x44ddff, 0x88ff44, 0xff8800, 0xcc44ff, 0xffffff];
     const count = 60;
+    const depth = 650;
 
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -583,8 +639,8 @@ export default class PlayScene extends Phaser.Scene {
       const color = colors[Math.floor(Math.random() * colors.length)];
       const isRect = Math.random() < 0.4;
       const obj = isRect
-        ? this.add.rectangle(cx, cy, size, size * 1.6, color).setDepth(48)
-        : this.add.circle(cx, cy, size / 2, color).setDepth(48);
+        ? this.add.rectangle(cx, cy, size, size * 1.6, color).setDepth(depth)
+        : this.add.circle(cx, cy, size / 2, color).setDepth(depth);
       const destX = cx + Math.cos(angle) * speed * (1.2 + Math.random());
       const destY = cy + Math.sin(angle) * speed * (1.2 + Math.random());
 
@@ -607,7 +663,7 @@ export default class PlayScene extends Phaser.Scene {
       fontSize: '80px',
       color: '#ffd700',
       fontStyle: 'bold',
-    }).setOrigin(0.5).setDepth(48).setAlpha(0);
+    }).setOrigin(0.5).setDepth(depth + 1).setAlpha(0);
     this.tweens.add({
       targets: flash,
       alpha: { from: 0, to: 1 },

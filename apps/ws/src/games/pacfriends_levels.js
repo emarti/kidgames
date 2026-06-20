@@ -634,6 +634,55 @@ function generateBMaze(seed) {
   return result;
 }
 
+function carveLargeLoopLayout(grid, {
+  horizontalRows = [1, 7, 12, 17, 21, 24],
+  verticalCols = [1, 6, 14, 20],
+} = {}) {
+  const keep = new Set([T.HOUSE, T.DOOR, T.TUNNEL, T.PORTAL]);
+  for (let y = 1; y < GRID_H - 1; y++) {
+    for (let x = 1; x < GRID_W - 1; x++) {
+      if (!keep.has(grid[y][x])) grid[y][x] = T.WALL;
+    }
+  }
+
+  const open = (x, y, tile = T.DOT) => {
+    if (x <= 0 || x >= GRID_W - 1 || y <= 0 || y >= GRID_H - 1) return;
+    if (grid[y][x] === T.HOUSE || grid[y][x] === T.DOOR) return;
+    grid[y][x] = tile;
+  };
+
+  for (const y of horizontalRows) {
+    for (let x = 1; x < GRID_W - 1; x++) open(x, y);
+  }
+  for (const x of verticalCols) {
+    for (let y = 1; y < GRID_H - 1; y++) open(x, y);
+  }
+
+  // Keep the house readable: two side approaches, a top door approach,
+  // and a center fruit spine below the house.
+  for (let y = 7; y <= 12; y++) {
+    open(6, y, T.EMPTY);
+    open(14, y, T.EMPTY);
+  }
+  for (let y = 5; y <= 7; y++) open(10, y, T.EMPTY);
+  for (let y = 12; y <= 17; y++) open(10, y);
+
+  // Simple lower arena around the player spawns.
+  for (let x = 6; x <= 14; x++) {
+    open(x, 19);
+    open(x, 21);
+  }
+  for (let y = 17; y <= 21; y++) {
+    open(6, y);
+    open(14, y);
+  }
+
+  grid[7][1] = T.POWER;
+  grid[7][20] = T.POWER;
+  grid[17][1] = T.POWER;
+  grid[17][20] = T.POWER;
+}
+
 // ============================================================
 // Hand-crafted Level 1 — classic symmetric Pac-Man layout
 //
@@ -759,6 +808,11 @@ const L = [
     }
   }
 
+  carveLargeLoopLayout(grid, {
+    horizontalRows: [1, 7, 12, 17, 21, 24],
+    verticalCols: [1, 6, 14, 20],
+  });
+
   // Player spawns: EMPTY (no dot at spawn)
   for (const [sx, sy] of [[9,19],[11,19],[9,21],[11,21]]) {
     if (grid[sy][sx] !== W) grid[sy][sx] = E;
@@ -771,17 +825,6 @@ const L = [
   repairConnectivity(grid);
   eliminateDeadEnds(grid);
   validateMaze(grid, 'handcrafted_1');
-
-  // Debug: print maze as ASCII art
-  const TILE_CHARS = { [W]:'#', [D]:'·', [P]:'P', [E]:' ', [H]:'H', [DR]:'D', [TN]:'T' };
-  const header = '    ' + Array.from({length: GRID_W}, (_,i) => (i % 10).toString()).join('');
-  console.log('[pacfriends] Hand-crafted Level 1 maze:');
-  console.log(header);
-  for (let r = 0; r < GRID_H; r++) {
-    const row = grid[r].map(t => TILE_CHARS[t] ?? '?').join('');
-    console.log(`[pacfriends] ${r.toString().padStart(2)}  ${row}`);
-  }
-  console.log(header);
 
   const toHomeMap = buildToHomeMap(grid, T, GHOST_DOOR_X, GHOST_DOOR_Y);
 
@@ -899,6 +942,11 @@ function handCraftedLevel2() {
     }
   }
 
+  carveLargeLoopLayout(grid, {
+    horizontalRows: [1, 5, 7, 12, 17, 21, 24],
+    verticalCols: [1, 6, 10, 14, 20],
+  });
+
   // Player spawns: EMPTY (no dot at spawn).
   for (const [sx, sy] of [[9,19],[11,19],[9,21],[11,21]]) {
     if (grid[sy][sx] !== W) grid[sy][sx] = E;
@@ -910,16 +958,6 @@ function handCraftedLevel2() {
   repairConnectivity(grid);
   eliminateDeadEnds(grid);
   validateMaze(grid, 'handcrafted_2');
-
-  const TILE_CHARS = { [W]:'#', [D]:'·', [P]:'P', [E]:' ', [H]:'H', [DR]:'D', [TN]:'T' };
-  const header = '    ' + Array.from({length: GRID_W}, (_,i) => (i % 10).toString()).join('');
-  console.log('[pacfriends] Hand-crafted Level 2 maze:');
-  console.log(header);
-  for (let r = 0; r < GRID_H; r++) {
-    const row = grid[r].map(t => TILE_CHARS[t] ?? '?').join('');
-    console.log(`[pacfriends] ${r.toString().padStart(2)}  ${row}`);
-  }
-  console.log(header);
 
   const toHomeMap = buildToHomeMap(grid, T, GHOST_DOOR_X, GHOST_DOOR_Y);
 
@@ -1045,6 +1083,11 @@ function handCraftedLevel3() {
     }
   }
 
+  carveLargeLoopLayout(grid, {
+    horizontalRows: [1, 7, 12, 17, 21, 24],
+    verticalCols: [1, 6, 14, 20],
+  });
+
   // Player spawns: EMPTY (no dot at spawn).
   for (const [sx, sy] of [[9,19],[11,19],[9,21],[11,21]]) {
     if (grid[sy][sx] !== W) grid[sy][sx] = E;
@@ -1056,16 +1099,6 @@ function handCraftedLevel3() {
   repairConnectivity(grid);
   eliminateDeadEnds(grid);
   validateMaze(grid, 'handcrafted_3');
-
-  const TILE_CHARS = { [W]:'#', [D]:'·', [P]:'P', [E]:' ', [H]:'H', [DR]:'D', [TN]:'T', [PT]:'K' };
-  const header = '    ' + Array.from({length: GRID_W}, (_,i) => (i % 10).toString()).join('');
-  console.log('[pacfriends] Hand-crafted Level 3 maze:');
-  console.log(header);
-  for (let r = 0; r < GRID_H; r++) {
-    const row = grid[r].map(t => TILE_CHARS[t] ?? '?').join('');
-    console.log(`[pacfriends] ${r.toString().padStart(2)}  ${row}`);
-  }
-  console.log(header);
 
   const toHomeMap = buildToHomeMap(grid, T, GHOST_DOOR_X, GHOST_DOOR_Y);
 
@@ -1193,6 +1226,11 @@ function handCraftedLevel4() {
     }
   }
 
+  carveLargeLoopLayout(grid, {
+    horizontalRows: [1, 4, 7, 12, 17, 21, 24],
+    verticalCols: [1, 6, 14, 20],
+  });
+
   // Player spawns: EMPTY (no dot at spawn).
   for (const [sx, sy] of [[9,19],[11,19],[9,21],[11,21]]) {
     if (grid[sy][sx] !== W) grid[sy][sx] = E;
@@ -1204,25 +1242,7 @@ function handCraftedLevel4() {
   repairConnectivity(grid);
   eliminateDeadEnds(grid);
 
-  // Keep the upper/lower side entries tighter than the center corridor.
-  for (const x of [5, 15, 16]) {
-    grid[7][x] = W;
-  }
-  for (const x of [5, 6, 8, 9, 12, 13, 15, 16]) {
-    grid[17][x] = W;
-  }
-
   validateMaze(grid, 'handcrafted_4');
-
-  const TILE_CHARS = { [W]:'#', [D]:'·', [P]:'P', [E]:' ', [H]:'H', [DR]:'D', [TN]:'T', [PT]:'K' };
-  const header = '    ' + Array.from({length: GRID_W}, (_,i) => (i % 10).toString()).join('');
-  console.log('[pacfriends] Hand-crafted Level 4 maze:');
-  console.log(header);
-  for (let r = 0; r < GRID_H; r++) {
-    const row = grid[r].map(t => TILE_CHARS[t] ?? '?').join('');
-    console.log(`[pacfriends] ${r.toString().padStart(2)}  ${row}`);
-  }
-  console.log(header);
 
   const toHomeMap = buildToHomeMap(grid, T, GHOST_DOOR_X, GHOST_DOOR_Y);
 

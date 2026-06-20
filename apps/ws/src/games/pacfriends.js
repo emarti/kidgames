@@ -11,23 +11,6 @@ export function createPacfriendsHost() {
     return generateRoomIdUnique(rooms);
   }
 
-  function advanceToNextLevel(room) {
-    const prev = room.state;
-    const nextLevel = prev.level + 1;
-    const next = Sim.newGameState({ level: nextLevel, difficulty: prev.difficulty, speed: prev.speed });
-    for (const pid of [1, 2, 3, 4]) {
-      next.players[pid].color = prev.players[pid].color;
-      next.players[pid].decoration = prev.players[pid].decoration;
-      if (prev.players[pid].connected) {
-        Sim.setPlayerConnected(next, pid, true);
-        next.players[pid].paused = false; // start playing immediately
-      }
-    }
-    next.paused = false;
-    next.reasonPaused = null;
-    room.state = next;
-  }
-
   setInterval(() => {
     const now = nowMs();
     const toDelete = [];
@@ -39,11 +22,7 @@ export function createPacfriendsHost() {
       }
       room.updatedAt = now;
       const didUpdate = Sim.step(room.state, now);
-      // Auto-advance when all dots are eaten (skip level-complete menu)
-      if (room.state.paused && room.state.reasonPaused === 'levelcomplete') {
-        advanceToNextLevel(room);
-        safeBroadcast(room, { type: 'state', state: room.state });
-      } else if (didUpdate) {
+      if (didUpdate) {
         safeBroadcast(room, { type: 'state', state: room.state });
       }
     }

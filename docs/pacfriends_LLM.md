@@ -109,7 +109,7 @@ Portal pairs (topological): stored in `portalPairs[]`. When a player/ghost enter
 
 ## Level structure
 
-- **Levels 1–4**: pre-built hand-crafted layouts in `LEVELS[]`.
+- **Levels 1–4**: pre-built hand-crafted layouts in `LEVELS[]`. They pass through `carveLargeLoopLayout()` so the opener set stays simple: long lanes, a few vertical trunks, larger loops, and fewer tiny branch choices.
 - **Levels 5+**: deterministic procedural layouts via `generateLevel(levelNum)`.
 - Procedural levels use the strict loop-only generator: no dead ends, no non-exempt 2×2 open blocks, connected player space, and hard validation before returning.
 - Procedural levels 5+ intentionally use a simpler reserved-cell mask and low extra-loop density (`0.03`–`0.10`) so they read as cleaner Pac-Man corridors instead of dense labyrinths.
