@@ -232,6 +232,28 @@ RUN cd pacfriends/client && npm run build
 
 
 ########################
+# Submarine client build
+########################
+FROM node:20-slim AS submarine-client-build
+
+WORKDIR /repo
+
+# Shared local package dependency used by clients
+COPY packages/touch-controls/ ./packages/touch-controls/
+
+# Install deps (cache-friendly)
+COPY submarine/client/package*.json ./submarine/client/
+RUN cd submarine/client && npm install --no-audit --no-fund
+
+# App source
+COPY submarine/client/ ./submarine/client/
+
+# Host submarine under /games/submarine/
+ENV VITE_BASE=/games/submarine/
+RUN cd submarine/client && npm run build
+
+
+########################
 # Gateway (Caddy) image
 ########################
 FROM caddy:2-alpine AS gateway
@@ -283,6 +305,10 @@ COPY --from=alphabet-client-build /repo/alphabet/client/dist/ /srv/games/alphabe
 # Pacfriends client build output lives at /games/pacfriends/
 RUN mkdir -p /srv/games/pacfriends
 COPY --from=pacfriends-client-build /repo/pacfriends/client/dist/ /srv/games/pacfriends/
+
+# Submarine client build output lives at /games/submarine/
+RUN mkdir -p /srv/games/submarine
+COPY --from=submarine-client-build /repo/submarine/client/dist/ /srv/games/submarine/
 
 # Caddy config
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile

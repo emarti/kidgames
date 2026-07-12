@@ -77,6 +77,9 @@
     @pacfriendsNoSlash path /games/pacfriends
     redir @pacfriendsNoSlash /games/pacfriends/ 308
 
+    @submarineNoSlash path /games/submarine
+    redir @submarineNoSlash /games/submarine/ 308
+
     # WebSocket endpoint (reverse-proxied to the game server)
     handle /games/snake/ws* {
       reverse_proxy {$GAMES_BACKEND:games-backend:8080}
@@ -119,6 +122,10 @@
     }
 
     handle /games/pacfriends/ws* {
+      reverse_proxy {$GAMES_BACKEND:games-backend:8080}
+    }
+
+    handle /games/submarine/ws* {
       reverse_proxy {$GAMES_BACKEND:games-backend:8080}
     }
 

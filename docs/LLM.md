@@ -4,7 +4,7 @@
 
 This repo contains two kinds of games:
 1. **Game Room** — a multi-player board games platform (Go, Checkers, Morris, Hex, Fox & Geese, Pirates & Bulgars) with shared room infrastructure, side selection, computer players, and hints.
-2. **Standalone co-op games** — arcade-style collaborative games designed for a 5-year-old audience (Snake, Maze, Wallmover, Comet, Archimedes, Fling, Alphabet, Typing).
+2. **Standalone arcade/learning games** — kid-friendly standalone games designed for a 5-year-old audience (Snake, Maze, Wallmover, Comet, Archimedes, Fling, Alphabet, Typing, Submarine).
 
 All games are server-authoritative, use 4-digit room codes for up to 4 players, and run via Docker.
 
@@ -22,6 +22,8 @@ The standalone co-op games additionally follow:
 - **No PvP**: avoid mechanics where one player can "beat" another.
 - **Shared progress**: state changes are visible to and shared by everyone.
 - **Forgiving loops**: failure should be recoverable and non-punitive.
+
+Submarine is the exception: it is soft PvP hunt-and-evade, but still uses forgiving loops, infinite lives, and no chat.
 
 ---
 
@@ -58,7 +60,7 @@ The standalone co-op games additionally follow:
 - `docs/gameroom_LLM.md` — **primary reference**: protocol, side selection, computer player, hint system, per-game state shapes, renderer API, key gotchas
 - `implementation.md` (repo root) — master implementation checklist with per-phase details and cross-cutting conventions
 
-### Standalone co-op games
+### Standalone arcade/learning games
 - `docs/snake_LLM.md` — co-op snake arena with topologies
 - `docs/maze_LLM.md` — cooperative fog-of-war maze exploration
 - `docs/wallmover_LLM.md` — collaborative level editor + maze play
@@ -67,6 +69,7 @@ The standalone co-op games additionally follow:
 - `docs/fling_LLM.md` — cooperative projectile game across 7 planets
 - `docs/alphabet_LLM.md` — alphabet learning game
 - `docs/typing_LLM.md` — typing practice game
+- `docs/submarine_LLM.md` — soft PvP submarine/boat hunt-and-evade game
 
 ### Deployment
 - `docs/DEPLOY_LIGHTSAIL.md` — AWS Lightsail deployment guide
@@ -79,7 +82,7 @@ The standalone co-op games additionally follow:
 
 ## Adding a new game
 
-### Standalone co-op game
+### Standalone arcade/learning game
 - Server: `apps/ws/src/games/<game>.js` (host) + `<game>_sim.js` (sim); register in `server.js`
 - Client: `<game>/client/` (Vite + Phaser); add `<game>-client-build` stage in `Dockerfile`; copy to `gateway` under `/srv/games/<game>/`
 - Docs: create `docs/<game>_LLM.md`
