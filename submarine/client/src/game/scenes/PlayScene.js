@@ -27,7 +27,11 @@ export default class PlayScene extends Phaser.Scene {
     this.roleButtons = {};
     this.teamButtons = {};
     this.visibilityButtons = {};
-    this.touchInput = { throttle: 0, turn: 0, dive: 0, fire: false, altFire: false, sonar: false };
+    this.wrapButtons = {};
+    this.bubbleButtons = {};
+    this.botRows = [];
+    this.touchInput = { throttle: 0, turn: 0, dive: 0, fire: false, torpedo: false, altFire: false, sonar: false };
+    this.touchDirs = { up: false, down: false, left: false, right: false };
     this.lastSentInput = '';
     this.lastInputSentAt = 0;
     this.view = { cameraX: 0, scale: 1, yScale: 1 };
@@ -75,7 +79,7 @@ export default class PlayScene extends Phaser.Scene {
     const { width, height } = this.scale;
     this.rightButtons = [
       this.createButton(width - 86, 26, 'Pause', () => this.togglePause()),
-      this.createHoldButton(width - 86, 72, 'Fire', { fire: true }),
+      this.createHoldButton(width - 86, 72, 'Torpedo', { fire: true, torpedo: true }),
       this.createHoldButton(width - 86, 118, 'Sonar', { sonar: true }),
       this.createHoldButton(width - 86, 164, 'Missile', { altFire: true }),
     ];
@@ -98,10 +102,10 @@ export default class PlayScene extends Phaser.Scene {
   createSetupUI() {
     const { width, height } = this.scale;
     this.setupContainer = this.add.container(width / 2, height / 2).setDepth(100);
-    const bg = this.add.rectangle(0, 0, 700, 430, 0xffffff, 0.95);
+    const bg = this.add.rectangle(0, 0, 820, 640, 0xffffff, 0.95);
     this.setupContainer.add(bg);
 
-    this.setupTitle = this.add.text(0, -184, 'GAME SETUP', {
+    this.setupTitle = this.add.text(0, -284, 'GAME SETUP', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '32px',
       fontStyle: 'bold',
@@ -109,41 +113,79 @@ export default class PlayScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.setupContainer.add(this.setupTitle);
 
-    this.setupContainer.add(this.add.text(-300, -124, 'Vessel:', {
+    this.setupContainer.add(this.add.text(-360, -224, 'Vessel:', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '19px',
       color: '#061826',
     }).setOrigin(0, 0.5));
-    this.roleButtons.submarine = this.setupButton(-132, -124, 'Submarine', () => this.game.net.send('select_role', { role: 'submarine' }));
-    this.roleButtons.destroyer = this.setupButton(36, -124, 'Destroyer', () => this.game.net.send('select_role', { role: 'destroyer' }));
+    this.roleButtons.submarine = this.setupButton(-192, -224, 'Submarine', () => this.game.net.send('select_role', { role: 'submarine' }));
+    this.roleButtons.destroyer = this.setupButton(-24, -224, 'Destroyer', () => this.game.net.send('select_role', { role: 'destroyer' }));
 
-    this.setupContainer.add(this.add.text(-300, -58, 'Color:', {
+    this.setupContainer.add(this.add.text(-360, -164, 'Color:', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '19px',
       color: '#061826',
     }).setOrigin(0, 0.5));
     const teams = ['red', 'white', 'blue', 'yellow'];
     teams.forEach((team, idx) => {
-      this.teamButtons[team] = this.setupButton(-132 + idx * 112, -58, team.toUpperCase(), () => this.game.net.send('select_team', { team }));
+      this.teamButtons[team] = this.setupButton(-192 + idx * 112, -164, team.toUpperCase(), () => this.game.net.send('select_team', { team }));
     });
 
-    this.setupContainer.add(this.add.text(-300, 10, 'Fog:', {
+    this.setupContainer.add(this.add.text(-360, -104, 'Fog:', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '19px',
       color: '#061826',
     }).setOrigin(0, 0.5));
-    this.visibilityButtons.clear = this.setupButton(-132, 10, 'Off', () => this.game.net.send('select_visibility', { mode: 'clear' }));
-    this.visibilityButtons.low = this.setupButton(-22, 10, 'On', () => this.game.net.send('select_visibility', { mode: 'low' }));
+    this.visibilityButtons.clear = this.setupButton(-192, -104, 'Off', () => this.game.net.send('select_visibility', { mode: 'clear' }));
+    this.visibilityButtons.low = this.setupButton(-82, -104, 'On', () => this.game.net.send('select_visibility', { mode: 'low' }));
 
-    this.setupHelp = this.add.text(0, 82, '', {
+    this.setupContainer.add(this.add.text(-360, -44, 'Wrap:', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '19px',
+      color: '#061826',
+    }).setOrigin(0, 0.5));
+    this.wrapButtons.off = this.setupButton(-192, -44, 'Off', () => this.game.net.send('set_wrap', { enabled: false }));
+    this.wrapButtons.on = this.setupButton(-82, -44, 'On', () => this.game.net.send('set_wrap', { enabled: true }));
+
+    this.setupContainer.add(this.add.text(-360, 16, 'Bubbles:', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '19px',
+      color: '#061826',
+    }).setOrigin(0, 0.5));
+    this.bubbleButtons.on = this.setupButton(-192, 16, 'On', () => this.game.net.send('set_bubbles', { enabled: true }));
+    this.bubbleButtons.off = this.setupButton(-82, 16, 'Off', () => this.game.net.send('set_bubbles', { enabled: false }));
+
+    this.setupContainer.add(this.add.text(-360, 76, 'Computer:', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '19px',
+      color: '#061826',
+    }).setOrigin(0, 0.5));
+    this.botRows = [1, 2, 3, 4].map((pid, idx) => {
+      const y = 114 + idx * 36;
+      const label = this.add.text(-244, y, '', {
+        fontFamily: 'Arial, sans-serif',
+        fontSize: '16px',
+        color: '#061826',
+      }).setOrigin(0, 0.5);
+      this.setupContainer.add(label);
+      return {
+        pid,
+        label,
+        primary: this.smallSetupButton(-88, y, '', () => this.handleBotPrimary(pid)),
+        secondary: this.smallSetupButton(44, y, '', () => this.handleBotSecondary(pid)),
+        remove: this.smallSetupButton(174, y, 'Remove', () => this.game.net.send('remove_bot', { playerId: pid })),
+      };
+    });
+
+    this.setupHelp = this.add.text(0, 258, '', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '18px',
       color: '#0f172a',
     }).setOrigin(0.5);
     this.setupContainer.add(this.setupHelp);
 
-    this.startButton = this.setupButton(0, 144, 'Start', () => this.game.net.send('resume'));
-    this.restartSetupButton = this.setupButton(150, 144, 'Restart', () => this.game.net.send('restart'));
+    this.startButton = this.setupButton(0, 292, 'Start', () => this.game.net.send('resume'));
+    this.restartSetupButton = this.setupButton(150, 292, 'Restart', () => this.game.net.send('restart'));
     this.setupContainer.setVisible(false);
 
     this.scale.on('resize', this.positionFixedUI, this);
@@ -156,6 +198,21 @@ export default class PlayScene extends Phaser.Scene {
       color: '#ffffff',
       backgroundColor: '#64748b',
       padding: { x: 12, y: 8 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    txt.on('pointerdown', callback);
+    txt.on('pointerover', () => txt.setBackgroundColor('#475569'));
+    txt.on('pointerout', () => this.updateSetupUI());
+    this.setupContainer.add(txt);
+    return txt;
+  }
+
+  smallSetupButton(x, y, label, callback) {
+    const txt = this.add.text(x, y, label, {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '14px',
+      color: '#ffffff',
+      backgroundColor: '#64748b',
+      padding: { x: 9, y: 6 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
     txt.on('pointerdown', callback);
     txt.on('pointerover', () => txt.setBackgroundColor('#475569'));
@@ -212,11 +269,12 @@ export default class PlayScene extends Phaser.Scene {
   }
 
   setTouchDir(dir, held) {
-    const value = held ? 1 : 0;
-    if (dir === 'UP') this.touchInput.dive = held ? -1 : 0;
-    if (dir === 'DOWN') this.touchInput.dive = value;
-    if (dir === 'LEFT') this.touchInput.throttle = held ? -1 : 0;
-    if (dir === 'RIGHT') this.touchInput.throttle = value;
+    const key = String(dir).toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(this.touchDirs, key)) {
+      this.touchDirs[key] = Boolean(held);
+    }
+    this.touchInput.throttle = (this.touchDirs.right ? 1 : 0) + (this.touchDirs.left ? -1 : 0);
+    this.touchInput.dive = (this.touchDirs.down ? 1 : 0) + (this.touchDirs.up ? -1 : 0);
   }
 
   createInput() {
@@ -264,49 +322,61 @@ export default class PlayScene extends Phaser.Scene {
 
     if (!state) return;
 
-    const world = state.world ?? { w: 1200, h: 800, waterlineY: 160, vehicleLength: 200 };
+    const world = state.world ?? { w: 1800, h: 1200, waterlineY: 240, vehicleLength: 200 };
     const me = state.players?.[this.game.net.playerId];
     const cameraX = world.w / 2;
     const scale = width / world.w;
     const yScale = height / world.h;
+    const wrapX = Boolean(state.settings?.wrapX);
     this.view = { cameraX, scale, yScale };
 
     this.drawOceanFloor(g, world, cameraX, scale, yScale, width, height);
+    this.drawScenery(g, state, world, cameraX, scale, yScale, width, height);
 
     for (const bubble of state.bubbles ?? []) {
-      const sx = (bubble.x - cameraX) * scale + width / 2;
+      if (!this.shouldDrawBubble(bubble, state, me)) continue;
       const sy = bubble.y * yScale;
-      if (sx < -20 || sx > width + 20 || sy < -20 || sy > height + 20) continue;
+      if (sy < -20 || sy > height + 20) continue;
       const age = Date.now() - bubble.bornAt;
       const life = Math.max(1, bubble.lifeMs ?? 1000);
       const alpha = Math.max(0, 1 - age / life) * 0.55;
-      g.lineStyle(1, 0xe0f2fe, alpha);
-      g.strokeCircle(sx, sy, Math.max(2, (bubble.radius ?? 4) * scale));
-    }
-
-    this.drawVehicleTrails(g, state, world, cameraX, scale, yScale, width, height);
-    this.drawWeapons(g, state, cameraX, scale, yScale, width, height);
-    this.drawSonarPulses(g, state, cameraX, scale, yScale, width, height);
-
-    for (const player of Object.values(state.players ?? {})) {
-      if (!player.connected) continue;
-      const sx = (player.x - cameraX) * scale + width / 2;
-      const sy = player.y * yScale;
-      if (sx < -80 || sx > width + 80) continue;
-      const contact = this.contactFor(player, state, me);
-      if (contact.strength < 0.2) continue;
-      if (contact.strength < 0.75) {
-        const offset = contactOffset(player, contact.strength, this.renderTime);
-        this.drawPassiveContact(g, sx + offset.x, sy + offset.y, player, contact, world);
-      } else {
-        this.drawVessel(g, sx, sy, player, player.id === this.game.net.playerId, me, world, yScale);
+      for (const sx of screenXCopies(bubble.x, world, cameraX, scale, width, 20, false)) {
+        g.lineStyle(1, 0xe0f2fe, alpha);
+        g.strokeCircle(sx, sy, Math.max(2, (bubble.radius ?? 4) * scale));
       }
     }
 
-    this.drawHitEffects(g, state, cameraX, scale, yScale, width, height);
+    this.drawVehicleTrails(g, state, world, cameraX, scale, yScale, width, height);
+    this.drawWeapons(g, state, world, cameraX, scale, yScale, width, height);
+    this.drawSonarPulses(g, state, world, cameraX, scale, yScale, width, height);
 
-    this.drawWorldEdges(g, world, cameraX, scale, width, height);
+    for (const player of Object.values(state.players ?? {})) {
+      if (!player.connected) continue;
+      const sy = player.y * yScale;
+      if (sy < -80 || sy > height + 80) continue;
+      const contact = this.contactFor(player, state, me);
+      if (contact.strength < 0.2) continue;
+      for (const sx of screenXCopies(player.x, world, cameraX, scale, width, 90, wrapX)) {
+        if (contact.strength < 0.75) {
+          const offset = contactOffset(player, contact.strength, this.renderTime);
+          this.drawPassiveContact(g, sx + offset.x, sy + offset.y, player, contact, world);
+        } else {
+          this.drawVessel(g, sx, sy, player, player.id === this.game.net.playerId, me, world, yScale);
+        }
+      }
+    }
+
+    this.drawHitEffects(g, state, world, cameraX, scale, yScale, width, height);
+
+    if (!wrapX) this.drawWorldEdges(g, world, cameraX, scale, width, height);
     this.drawWorldFrame(g, width, height);
+  }
+
+  shouldDrawBubble(bubble, state, me) {
+    if (state?.visibilityMode !== 'low') return true;
+    if (!me) return false;
+    const owner = state.players?.[bubble.owner];
+    return Boolean(owner && owner.team === me.team);
   }
 
   drawWorldEdges(g, world, cameraX, scale, width, height) {
@@ -411,6 +481,98 @@ export default class PlayScene extends Phaser.Scene {
     }
   }
 
+  drawScenery(g, state, world, cameraX, scale, yScale, width, height) {
+    const scenery = world?.scenery;
+    if (!scenery) return;
+    const t = this.renderTime / 1000;
+    const s = Math.max(0.55, Math.min(1, 1200 / (world?.w ?? 1200)));
+
+    for (const school of scenery.fishSchools ?? []) {
+      const dir = school.dir >= 0 ? 1 : -1;
+      const baseX = wrapCoordinateClient((school.x ?? 0) + dir * (school.speed ?? 0) * t, world.w);
+      const baseY = school.y ?? world.waterlineY + 200;
+      const count = school.count ?? 8;
+      const spread = school.spread ?? 80;
+      for (let i = 0; i < count; i += 1) {
+        const localX = ((i % 5) - 2) * (spread / 5);
+        const localY = (Math.floor(i / 5) - 1) * 14 + Math.sin(t * 1.5 + i) * 3;
+        const fishX = wrapCoordinateClient(baseX + localX, world.w);
+        const fishY = baseY + localY;
+        for (const sx of screenXCopies(fishX, world, cameraX, scale, width, 20, false)) {
+          this.drawFish(g, sx, fishY * yScale, dir, 10 * s, hexColor(school.color, 0xb7f7ff), 0.42);
+        }
+      }
+    }
+
+    for (const fish of scenery.fish ?? []) {
+      const dir = fish.dir >= 0 ? 1 : -1;
+      const x = wrapCoordinateClient((fish.x ?? 0) + dir * (fish.speed ?? 0) * t, world.w);
+      const y = (fish.y ?? world.waterlineY + 300) + Math.sin(t * 0.9 + String(fish.id).length) * 6;
+      for (const sx of screenXCopies(x, world, cameraX, scale, width, 40, false)) {
+        this.drawFish(g, sx, y * yScale, dir, 24 * (fish.size ?? 1) * s, 0x93c5fd, 0.46);
+      }
+    }
+
+    for (const mammal of scenery.mammals ?? []) {
+      const dir = mammal.dir >= 0 ? 1 : -1;
+      const x = wrapCoordinateClient((mammal.x ?? 0) + dir * (mammal.speed ?? 0) * t, world.w);
+      const y = (mammal.y ?? world.waterlineY + 420) + Math.sin(t * 0.45 + String(mammal.id).length) * 10;
+      for (const sx of screenXCopies(x, world, cameraX, scale, width, 90, false)) {
+        if (mammal.kind === 'spermWhale') {
+          this.drawWhale(g, sx, y * yScale, dir, (mammal.size ?? 1) * s);
+        } else {
+          this.drawDolphin(g, sx, y * yScale, dir, (mammal.size ?? 1) * s);
+        }
+      }
+    }
+
+    for (const crab of scenery.crabs ?? []) {
+      const x = (crab.x ?? world.w * 0.5) + Math.sin(t * 0.7) * 8 * (crab.dir ?? 1);
+      const y = crab.y ?? world.h - 90;
+      for (const sx of screenXCopies(x, world, cameraX, scale, width, 30, false)) {
+        this.drawCrab(g, sx, y * yScale, (crab.size ?? 1) * s);
+      }
+    }
+  }
+
+  drawFish(g, x, y, dir, size, color, alpha) {
+    g.fillStyle(color, alpha);
+    g.fillEllipse(x, y, size * 1.5, size * 0.68);
+    g.fillTriangle(x - dir * size * 0.75, y, x - dir * size * 1.16, y - size * 0.38, x - dir * size * 1.16, y + size * 0.38);
+    g.fillStyle(0xffffff, alpha * 0.75);
+    g.fillCircle(x + dir * size * 0.42, y - size * 0.08, Math.max(1, size * 0.08));
+  }
+
+  drawDolphin(g, x, y, dir, scale) {
+    g.fillStyle(0x94a3b8, 0.34);
+    g.fillEllipse(x, y, 72 * scale, 20 * scale);
+    g.fillTriangle(x - dir * 34 * scale, y, x - dir * 52 * scale, y - 12 * scale, x - dir * 48 * scale, y + 10 * scale);
+    g.fillTriangle(x, y - 7 * scale, x - dir * 12 * scale, y - 25 * scale, x + dir * 10 * scale, y - 8 * scale);
+    g.fillStyle(0xcbd5e1, 0.28);
+    g.fillEllipse(x + dir * 31 * scale, y - 2 * scale, 18 * scale, 7 * scale);
+  }
+
+  drawWhale(g, x, y, dir, scale) {
+    g.fillStyle(0x334155, 0.34);
+    g.fillEllipse(x, y, 126 * scale, 34 * scale);
+    g.fillRoundedRect(x + dir * 20 * scale, y - 12 * scale, 42 * scale, 23 * scale, 9 * scale);
+    g.fillTriangle(x - dir * 63 * scale, y, x - dir * 88 * scale, y - 18 * scale, x - dir * 86 * scale, y + 17 * scale);
+    g.fillStyle(0xe2e8f0, 0.18);
+    g.fillEllipse(x + dir * 28 * scale, y + 9 * scale, 58 * scale, 10 * scale);
+  }
+
+  drawCrab(g, x, y, scale) {
+    g.fillStyle(0xf97316, 0.42);
+    g.fillEllipse(x, y, 24 * scale, 14 * scale);
+    g.fillCircle(x - 18 * scale, y - 5 * scale, 5 * scale);
+    g.fillCircle(x + 18 * scale, y - 5 * scale, 5 * scale);
+    g.lineStyle(2, 0xf97316, 0.35);
+    for (let i = -1; i <= 1; i += 1) {
+      g.lineBetween(x - 5 * scale, y + i * 3 * scale, x - 22 * scale, y + (i * 7 + 6) * scale);
+      g.lineBetween(x + 5 * scale, y + i * 3 * scale, x + 22 * scale, y + (i * 7 + 6) * scale);
+    }
+  }
+
   drawWorldFrame(g, width, height) {
     g.lineStyle(3, 0xffffff, 0.22);
     g.strokeRect(1.5, 1.5, width - 3, height - 3);
@@ -484,72 +646,77 @@ export default class PlayScene extends Phaser.Scene {
     g.strokeCircle(x, y, 28 + pulse * 5);
   }
 
-  drawWeapons(g, state, cameraX, scale, yScale, width, height) {
+  drawWeapons(g, state, world, cameraX, scale, yScale, width, height) {
+    const wrapX = Boolean(state.settings?.wrapX);
     for (const torpedo of state.torpedoes ?? []) {
-      const sx = (torpedo.x - cameraX) * scale + width / 2;
       const sy = torpedo.y * yScale;
-      if (sx < -80 || sx > width + 80 || sy < -40 || sy > height + 40) continue;
+      if (sy < -40 || sy > height + 40) continue;
       const dir = Math.cos(torpedo.heading ?? 0) >= 0 ? 1 : -1;
-      g.lineStyle(4, 0xfef3c7, 0.8);
-      g.lineBetween(sx - dir * 34, sy, sx - dir * 9, sy);
-      g.fillStyle(0xfacc15, 0.95);
-      g.fillEllipse(sx, sy, 34, 10);
-      g.fillTriangle(sx + dir * 18, sy, sx + dir * 4, sy - 8, sx + dir * 4, sy + 8);
-      g.lineStyle(1, 0x0f172a, 0.55);
-      g.strokeEllipse(sx, sy, 34, 10);
+      for (const sx of screenXCopies(torpedo.x, world, cameraX, scale, width, 80, wrapX)) {
+        g.lineStyle(4, 0xfef3c7, 0.8);
+        g.lineBetween(sx - dir * 34, sy, sx - dir * 9, sy);
+        g.fillStyle(0xfacc15, 0.95);
+        g.fillEllipse(sx, sy, 34, 10);
+        g.fillTriangle(sx + dir * 18, sy, sx + dir * 4, sy - 8, sx + dir * 4, sy + 8);
+        g.lineStyle(1, 0x0f172a, 0.55);
+        g.strokeEllipse(sx, sy, 34, 10);
+      }
     }
 
     for (const charge of state.depthCharges ?? []) {
-      const sx = (charge.x - cameraX) * scale + width / 2;
       const sy = charge.y * yScale;
-      if (sx < -80 || sx > width + 80 || sy < -40 || sy > height + 80) continue;
-      g.lineStyle(2, 0xfde68a, 0.34);
-      g.strokeCircle(sx, sy, Math.max(16, (charge.radius ?? 50) * scale));
-      g.fillStyle(0x1e293b, 0.95);
-      g.fillCircle(sx, sy, 9);
-      g.fillStyle(0xf8fafc, 0.8);
-      g.fillCircle(sx - 3, sy - 3, 2.5);
-      g.lineStyle(2, 0x93c5fd, 0.45);
-      g.lineBetween(sx, sy - 20, sx, sy - 8);
-      g.strokeCircle(sx - 8, sy - 28, 3);
-      g.strokeCircle(sx + 7, sy - 36, 2);
+      if (sy < -40 || sy > height + 80) continue;
+      for (const sx of screenXCopies(charge.x, world, cameraX, scale, width, 80, false)) {
+        g.lineStyle(2, 0xfde68a, 0.34);
+        g.strokeCircle(sx, sy, Math.max(16, (charge.radius ?? 50) * scale));
+        g.fillStyle(0x1e293b, 0.95);
+        g.fillCircle(sx, sy, 9);
+        g.fillStyle(0xf8fafc, 0.8);
+        g.fillCircle(sx - 3, sy - 3, 2.5);
+        g.lineStyle(2, 0x93c5fd, 0.45);
+        g.lineBetween(sx, sy - 20, sx, sy - 8);
+        g.strokeCircle(sx - 8, sy - 28, 3);
+        g.strokeCircle(sx + 7, sy - 36, 2);
+      }
     }
 
     for (const missile of state.missiles ?? []) {
-      const sx = (missile.x - cameraX) * scale + width / 2;
       const sy = missile.y * yScale;
       const radius = Math.max(18, (missile.radius ?? 20) * scale);
-      if (sx < -120 || sx > width + 120 || sy < -120 || sy > height + 120) continue;
+      if (sy < -120 || sy > height + 120) continue;
+      for (const sx of screenXCopies(missile.x, world, cameraX, scale, width, 120, false)) {
 
-      if (missile.phase === 'blast') {
-        const age = Date.now() - (missile.explodedAt ?? missile.bornAt);
-        const t = clamp(age / 850, 0, 1);
-        const alpha = Math.max(0, 1 - t);
-        g.lineStyle(4, 0xf97316, 0.72 * alpha);
-        g.strokeCircle(sx, sy, radius);
-        g.lineStyle(2, 0xfef3c7, 0.85 * alpha);
-        g.strokeCircle(sx, sy, radius * (0.55 + t * 0.3));
-        g.fillStyle(0xfacc15, 0.25 * alpha);
-        g.fillCircle(sx, sy, radius * 0.42);
-        continue;
+        if (missile.phase === 'blast') {
+          const age = Date.now() - (missile.explodedAt ?? missile.bornAt);
+          const t = clamp(age / 850, 0, 1);
+          const alpha = Math.max(0, 1 - t);
+          g.lineStyle(4, 0xf97316, 0.72 * alpha);
+          g.strokeCircle(sx, sy, radius);
+          g.lineStyle(2, 0xfef3c7, 0.85 * alpha);
+          g.strokeCircle(sx, sy, radius * (0.55 + t * 0.3));
+          g.fillStyle(0xfacc15, 0.25 * alpha);
+          g.fillCircle(sx, sy, radius * 0.42);
+          continue;
+        }
+
+        g.lineStyle(4, 0xfed7aa, 0.78);
+        g.lineBetween(sx, sy + 36, sx, sy + 9);
+        g.fillStyle(0xf97316, 0.95);
+        g.fillRoundedRect(sx - 5, sy - 16, 10, 30, 5);
+        g.fillStyle(0xfef3c7, 0.95);
+        g.fillTriangle(sx, sy - 24, sx - 7, sy - 10, sx + 7, sy - 10);
+        g.lineStyle(2, 0xe0f2fe, 0.55);
+        g.strokeCircle(sx - 10, sy + 28, 3);
+        g.strokeCircle(sx + 8, sy + 42, 2.5);
       }
-
-      g.lineStyle(4, 0xfed7aa, 0.78);
-      g.lineBetween(sx, sy + 36, sx, sy + 9);
-      g.fillStyle(0xf97316, 0.95);
-      g.fillRoundedRect(sx - 5, sy - 16, 10, 30, 5);
-      g.fillStyle(0xfef3c7, 0.95);
-      g.fillTriangle(sx, sy - 24, sx - 7, sy - 10, sx + 7, sy - 10);
-      g.lineStyle(2, 0xe0f2fe, 0.55);
-      g.strokeCircle(sx - 10, sy + 28, 3);
-      g.strokeCircle(sx + 8, sy + 42, 2.5);
     }
   }
 
-  drawSonarPulses(g, state, cameraX, scale, yScale, width, height) {
+  drawSonarPulses(g, state, world, cameraX, scale, yScale, width, height) {
     const now = Date.now();
+    const localPlayer = state.players?.[this.game.net.playerId];
     for (const pulse of state.pulses ?? []) {
-      const sx = (pulse.x - cameraX) * scale + width / 2;
+      if (!sonarPulseVisibleToLocal(pulse, localPlayer, world, state)) continue;
       const sy = pulse.y * yScale;
       const age = now - pulse.bornAt;
       const life = Math.max(1, pulse.lifeMs ?? 1600);
@@ -557,23 +724,24 @@ export default class PlayScene extends Phaser.Scene {
       const t = clamp(age / life, 0, 1);
       const alpha = Math.max(0, 1 - t) * 0.65;
       const radius = Math.max(12, (pulse.maxRadius ?? 420) * scale * (1 - Math.pow(1 - t, 2)));
-      if (sx + radius < -20 || sx - radius > width + 20 || sy + radius < -20 || sy - radius > height + 20) continue;
+      if (sy + radius < -20 || sy - radius > height + 20) continue;
+      for (const sx of screenXCopies(pulse.x, world, cameraX, scale, width, radius + 20, false)) {
 
-      g.lineStyle(4, 0xbae6fd, alpha);
-      g.strokeCircle(sx, sy, radius);
-      g.lineStyle(2, 0xffffff, alpha * 0.7);
-      g.strokeCircle(sx, sy, radius * 0.72);
-      g.fillStyle(0xe0f2fe, alpha * 0.45);
-      g.fillCircle(sx, sy, Math.max(3, 6 * (1 - t)));
+        g.lineStyle(4, 0xbae6fd, alpha);
+        g.strokeCircle(sx, sy, radius);
+        g.lineStyle(2, 0xffffff, alpha * 0.7);
+        g.strokeCircle(sx, sy, radius * 0.72);
+        g.fillStyle(0xe0f2fe, alpha * 0.45);
+        g.fillCircle(sx, sy, Math.max(3, 6 * (1 - t)));
+      }
     }
   }
 
-  drawHitEffects(g, state, cameraX, scale, yScale, width, height) {
+  drawHitEffects(g, state, world, cameraX, scale, yScale, width, height) {
     const now = Date.now();
     for (const effect of state.hitEffects ?? []) {
-      const sx = (effect.x - cameraX) * scale + width / 2;
       const sy = effect.y * yScale;
-      if (sx < -120 || sx > width + 120 || sy < -120 || sy > height + 120) continue;
+      if (sy < -120 || sy > height + 120) continue;
       const age = now - effect.bornAt;
       const life = Math.max(1, effect.lifeMs ?? 1200);
       const t = clamp(age / life, 0, 1);
@@ -581,24 +749,26 @@ export default class PlayScene extends Phaser.Scene {
       const ease = 1 - Math.pow(1 - t, 2);
       const base = String(effect.id ?? `${effect.x}-${effect.y}`);
       const burstScale = Math.max(0.62, Math.min(scale, yScale) * 1.8);
+      for (const sx of screenXCopies(effect.x, world, cameraX, scale, width, 120, false)) {
 
-      for (let i = 0; i < 24; i += 1) {
-        const sparkSeed = seededSpark(base, i);
-        const angle = (Math.PI * 2 * i) / 24 + (sparkSeed.jitter - 0.5) * 0.22;
-        const speed = (46 + (i % 4) * 14 + sparkSeed.speed * 24) * burstScale;
-        const dist = 10 + speed * ease;
-        const x2 = sx + Math.cos(angle) * dist;
-        const y2 = sy + Math.sin(angle) * dist + 16 * t * t;
-        const tailDist = Math.max(6, dist - 20 * burstScale);
-        const x1 = sx + Math.cos(angle) * tailDist;
-        const y1 = sy + Math.sin(angle) * tailDist + 16 * t * t;
-        const lineWidth = Math.max(2, 4 * burstScale * (1 - t * 0.35));
-        g.lineStyle(lineWidth, FIREWORK_COLORS[i % FIREWORK_COLORS.length], 0.95 * alpha);
-        g.lineBetween(x1, y1, x2, y2);
+        for (let i = 0; i < 24; i += 1) {
+          const sparkSeed = seededSpark(base, i);
+          const angle = (Math.PI * 2 * i) / 24 + (sparkSeed.jitter - 0.5) * 0.22;
+          const speed = (46 + (i % 4) * 14 + sparkSeed.speed * 24) * burstScale;
+          const dist = 10 + speed * ease;
+          const x2 = sx + Math.cos(angle) * dist;
+          const y2 = sy + Math.sin(angle) * dist + 16 * t * t;
+          const tailDist = Math.max(6, dist - 20 * burstScale);
+          const x1 = sx + Math.cos(angle) * tailDist;
+          const y1 = sy + Math.sin(angle) * tailDist + 16 * t * t;
+          const lineWidth = Math.max(2, 4 * burstScale * (1 - t * 0.35));
+          g.lineStyle(lineWidth, FIREWORK_COLORS[i % FIREWORK_COLORS.length], 0.95 * alpha);
+          g.lineBetween(x1, y1, x2, y2);
+        }
+
+        g.fillStyle(0xffffff, 0.85 * alpha);
+        g.fillCircle(sx, sy, Math.max(3, 7 * burstScale * (1 - t * 0.45)));
       }
-
-      g.fillStyle(0xffffff, 0.85 * alpha);
-      g.fillCircle(sx, sy, Math.max(3, 7 * burstScale * (1 - t * 0.45)));
     }
   }
 
@@ -608,69 +778,65 @@ export default class PlayScene extends Phaser.Scene {
     const alpha = resetting ? 0.42 : vesselAlpha(player, localPlayer, isLocal);
     const dir = Math.cos(player.heading ?? 0) >= 0 ? 1 : -1;
     const surfaced = isSurfaceVessel(player, world);
-
-    if (resetting) {
-      g.lineStyle(3, 0xfacc15, 0.85);
-      g.strokeCircle(x, y, 44);
-    }
+    const s = Math.max(0.64, Math.min(1, 1200 / (world?.w ?? 1200)));
 
     if (player.role === 'destroyer' || player.role === 'boat') {
-      const bow = x + dir * 72;
-      const stern = x - dir * 70;
+      const bow = x + dir * 72 * s;
+      const stern = x - dir * 70 * s;
       g.lineStyle(2, 0x082f49, 0.78);
       g.beginPath();
-      g.moveTo(stern, y - 8);
-      g.lineTo(bow - dir * 16, y - 11);
-      g.lineTo(bow, y - 3);
-      g.lineTo(bow - dir * 12, y + 11);
-      g.lineTo(stern + dir * 10, y + 12);
-      g.lineTo(stern - dir * 2, y + 2);
+      g.moveTo(stern, y - 8 * s);
+      g.lineTo(bow - dir * 16 * s, y - 11 * s);
+      g.lineTo(bow, y - 3 * s);
+      g.lineTo(bow - dir * 12 * s, y + 11 * s);
+      g.lineTo(stern + dir * 10 * s, y + 12 * s);
+      g.lineTo(stern - dir * 2 * s, y + 2 * s);
       g.closePath();
       g.strokePath();
       g.fillStyle(color, alpha);
       g.beginPath();
-      g.moveTo(stern, y - 8);
-      g.lineTo(bow - dir * 16, y - 11);
-      g.lineTo(bow, y - 3);
-      g.lineTo(bow - dir * 12, y + 11);
-      g.lineTo(stern + dir * 10, y + 12);
-      g.lineTo(stern - dir * 2, y + 2);
+      g.moveTo(stern, y - 8 * s);
+      g.lineTo(bow - dir * 16 * s, y - 11 * s);
+      g.lineTo(bow, y - 3 * s);
+      g.lineTo(bow - dir * 12 * s, y + 11 * s);
+      g.lineTo(stern + dir * 10 * s, y + 12 * s);
+      g.lineTo(stern - dir * 2 * s, y + 2 * s);
       g.closePath();
       g.fillPath();
       g.fillStyle(0x64748b, alpha * 0.95);
-      g.fillRoundedRect(x - 22, y - 29, 42, 18, 4);
+      g.fillRoundedRect(x - 22 * s, y - 29 * s, 42 * s, 18 * s, 4 * s);
       g.fillStyle(0x94a3b8, alpha * 0.95);
-      g.fillRoundedRect(x - 5, y - 42, 22, 14, 3);
+      g.fillRoundedRect(x - 5 * s, y - 42 * s, 22 * s, 14 * s, 3 * s);
       g.fillStyle(0x0f172a, alpha * 0.82);
-      g.fillRect(x + dir * 36 - 11, y - 18, 22, 6);
-      g.fillCircle(x + dir * 49, y - 15, 5);
+      g.fillRect(x + dir * 36 * s - 11 * s, y - 18 * s, 22 * s, 6 * s);
+      g.fillCircle(x + dir * 49 * s, y - 15 * s, 5 * s);
       g.fillStyle(0xe0f2fe, alpha * 0.9);
-      g.fillRect(x + dir * 2 - 8, y - 24, 16, 5);
+      g.fillRect(x + dir * 2 * s - 8 * s, y - 24 * s, 16 * s, 5 * s);
       g.lineStyle(2, 0x061826, 0.65);
-      g.lineBetween(x - 58, y + 8, x + 58, y + 8);
+      g.lineBetween(x - 58 * s, y + 8 * s, x + 58 * s, y + 8 * s);
       g.lineStyle(2, 0x0f172a, 0.7);
-      g.lineBetween(x + dir * 4, y - 42, x + dir * 4, y - 58);
-      g.lineBetween(x + dir * 4, y - 55, x + dir * 22, y - 55);
-      if (isLocal) drawLocalOutline(g, x, y, player, dir);
+      g.lineBetween(x + dir * 4 * s, y - 42 * s, x + dir * 4 * s, y - 58 * s);
+      g.lineBetween(x + dir * 4 * s, y - 55 * s, x + dir * 22 * s, y - 55 * s);
+      if (isLocal) drawLocalOutline(g, x, y, player, dir, s);
       return;
     }
 
     g.lineStyle(surfaced ? 2 : 3, surfaced ? 0xf8fafc : 0x0f172a, surfaced ? 0.75 : 0.58);
-    g.strokeEllipse(x, y, 132, surfaced ? 26 : 31);
+    g.strokeEllipse(x, y, 132 * s, (surfaced ? 26 : 31) * s);
     g.fillStyle(color, alpha);
-    g.fillEllipse(x, y, 126, surfaced ? 24 : 30);
-    g.fillRoundedRect(x - 11, y - (surfaced ? 23 : 25), 26, 18, 5);
+    g.fillEllipse(x, y, 126 * s, (surfaced ? 24 : 30) * s);
+    g.fillRoundedRect(x - 11 * s, y - (surfaced ? 23 : 25) * s, 26 * s, 18 * s, 5 * s);
     if (surfaced) {
       const waterlineY = (world?.waterlineY ?? 160) * (yScale ?? 1);
       g.lineStyle(2, 0xe0f2fe, 0.8);
-      g.lineBetween(x + 2, y - 25, x + 2, waterlineY - 7);
-      g.lineBetween(x + 2, waterlineY - 7, x + 16 * dir, waterlineY - 7);
+      g.lineBetween(x + 2 * s, y - 25 * s, x + 2 * s, waterlineY - 7 * s);
+      g.lineBetween(x + 2 * s, waterlineY - 7 * s, x + 16 * dir * s, waterlineY - 7 * s);
     } else {
       g.fillStyle(0x082f49, 0.22);
-      g.fillEllipse(x, y + 3, 108, 18);
+      g.fillEllipse(x, y + 3 * s, 108 * s, 18 * s);
     }
-    drawSubPropeller(g, x - 70 * dir, y, dir, alpha);
-    if (isLocal) drawLocalOutline(g, x, y, player, dir);
+    drawSubPropeller(g, x - 70 * dir * s, y, dir, alpha, s);
+    if (isLocal) drawLocalOutline(g, x, y, player, dir, s);
   }
 
   contactFor(player, state, localPlayer) {
@@ -699,8 +865,11 @@ export default class PlayScene extends Phaser.Scene {
     const role = player?.role === 'destroyer' ? 'destroyer' : 'submarine';
     const team = player?.team ?? 'red';
     const fog = state.visibilityMode === 'low' ? 'FOG ON' : 'FOG OFF';
+    const wrap = state.settings?.wrapX ? 'WRAP ON' : 'WRAP OFF';
+    const bubbles = state.settings?.showBubbles === false ? 'BUBBLES OFF' : 'BUBBLES ON';
     const cooldownMs = Math.max(0, (player?.fireReadyAt ?? 0) - Date.now());
-    const fireStatus = cooldownMs > 0 ? `FIRE ${Math.ceil(cooldownMs / 1000)}s` : 'FIRE READY';
+    const primaryLabel = role === 'submarine' ? 'TORPEDO' : 'CHARGE';
+    const fireStatus = cooldownMs > 0 ? `${primaryLabel} ${Math.ceil(cooldownMs / 1000)}s` : `${primaryLabel} READY`;
     const sonarMs = Math.max(0, (player?.sonarReadyAt ?? 0) - Date.now());
     const sonarStatus = sonarMs > 0 ? `SONAR ${Math.ceil(sonarMs / 1000)}s` : 'SONAR READY';
     const missileMs = Math.max(0, (player?.missileReadyAt ?? 0) - Date.now());
@@ -709,7 +878,8 @@ export default class PlayScene extends Phaser.Scene {
       : '';
     const resetMs = Math.max(0, (player?.resettingUntil ?? 0) - Date.now());
     const resetStatus = resetMs > 0 ? `  RESET ${Math.ceil(resetMs / 1000)}s` : '';
-    this.statusText.setText(`${role.toUpperCase()}  ${team.toUpperCase()}  ${fog}  ${state.paused ? 'PAUSED' : 'RUNNING'}  ${fireStatus}  ${sonarStatus}${missileStatus}${resetStatus}`);
+    const runState = player?.paused ? 'PAUSED' : (state.paused ? 'WAITING' : 'RUNNING');
+    this.statusText.setText(`${role.toUpperCase()}  ${team.toUpperCase()}  ${fog}  ${wrap}  ${bubbles}  ${runState}  ${fireStatus}  ${sonarStatus}${missileStatus}${resetStatus}`);
   }
 
   updateButtons() {
@@ -724,7 +894,7 @@ export default class PlayScene extends Phaser.Scene {
     const state = this.state ?? this.game.net.latestState;
     const player = state?.players?.[this.game.net.playerId];
     const isLobby = Boolean(state?.paused && state.reasonPaused === 'start');
-    const isPaused = Boolean(state?.paused || player?.paused);
+    const isPaused = Boolean(isLobby || player?.paused);
     this.setupContainer.setVisible(Boolean(isPaused));
     if (!isPaused) return;
 
@@ -746,6 +916,43 @@ export default class PlayScene extends Phaser.Scene {
     for (const [mode, btn] of Object.entries(this.visibilityButtons)) {
       setButtonSelected(btn, mode === selectedVisibility);
     }
+
+    const wrapEnabled = Boolean(state?.settings?.wrapX);
+    setButtonSelected(this.wrapButtons.off, !wrapEnabled);
+    setButtonSelected(this.wrapButtons.on, wrapEnabled);
+
+    const bubblesEnabled = state?.settings?.showBubbles !== false;
+    setButtonSelected(this.bubbleButtons.on, bubblesEnabled);
+    setButtonSelected(this.bubbleButtons.off, !bubblesEnabled);
+
+    this.updateBotRows(state);
+  }
+
+  updateBotRows(state) {
+    for (const row of this.botRows ?? []) {
+      const player = state?.players?.[row.pid];
+      if (!player?.connected) {
+        row.label.setText(`P${row.pid}: Empty`);
+        setSetupButton(row.primary, 'Sub Bot', true);
+        setSetupButton(row.secondary, 'Destroyer Bot', true);
+        setSetupButton(row.remove, 'Remove', false);
+        continue;
+      }
+
+      const role = player.role === 'destroyer' || player.role === 'boat' ? 'Destroyer' : 'Submarine';
+      const team = String(player.team ?? 'red').toUpperCase();
+      if (player.bot) {
+        row.label.setText(`P${row.pid}: Bot ${role} ${team}`);
+        setSetupButton(row.primary, `Role: ${role}`, true);
+        setSetupButton(row.secondary, `Team: ${team}`, true);
+        setSetupButton(row.remove, 'Remove', true);
+      } else {
+        row.label.setText(`P${row.pid}: Human ${role} ${team}`);
+        setSetupButton(row.primary, 'Human', false);
+        setSetupButton(row.secondary, '', false);
+        setSetupButton(row.remove, '', false);
+      }
+    }
   }
 
   togglePause() {
@@ -759,11 +966,35 @@ export default class PlayScene extends Phaser.Scene {
     }
   }
 
+  handleBotPrimary(pid) {
+    const player = this.state?.players?.[pid];
+    if (!player?.connected) {
+      this.game.net.send('add_bot', { playerId: pid, role: 'submarine' });
+      return;
+    }
+    if (!player.bot) return;
+    const role = player.role === 'destroyer' || player.role === 'boat' ? 'submarine' : 'destroyer';
+    this.game.net.send('configure_bot', { playerId: pid, role });
+  }
+
+  handleBotSecondary(pid) {
+    const player = this.state?.players?.[pid];
+    if (!player?.connected) {
+      this.game.net.send('add_bot', { playerId: pid, role: 'destroyer' });
+      return;
+    }
+    if (!player.bot) return;
+    const teams = ['red', 'white', 'blue', 'yellow'];
+    const idx = teams.indexOf(player.team);
+    const team = teams[(idx + 1 + teams.length) % teams.length];
+    this.game.net.send('configure_bot', { playerId: pid, team });
+  }
+
   handleKeyboardCommands() {
     const just = (name) => this.keys?.[name] && Phaser.Input.Keyboard.JustDown(this.keys[name]);
     const state = this.state ?? this.game.net.latestState;
     const player = state?.players?.[this.game.net.playerId];
-    const setupOpen = Boolean(state?.paused || player?.paused);
+    const setupOpen = Boolean((state?.paused && state.reasonPaused === 'start') || player?.paused);
 
     if (just('esc') || just('p')) {
       this.togglePause();
@@ -793,6 +1024,7 @@ export default class PlayScene extends Phaser.Scene {
       turn: 0,
       dive: clamp(keyboard.dive + this.touchInput.dive, -1, 1),
       fire: Boolean(keyboard.fire || this.touchInput.fire),
+      torpedo: Boolean(keyboard.fire || this.touchInput.fire || this.touchInput.torpedo),
       altFire: Boolean(keyboard.altFire || this.touchInput.altFire),
       sonar: Boolean(keyboard.sonar || this.touchInput.sonar),
     };
@@ -825,6 +1057,8 @@ export default class PlayScene extends Phaser.Scene {
     const fireButton = this.rightButtons?.[1];
     if (!fireButton) return;
     const player = this.state?.players?.[this.game.net.playerId];
+    const isSubmarine = player?.role !== 'destroyer' && player?.role !== 'boat';
+    const label = isSubmarine ? 'Torpedo' : 'Charge';
     const cooldownMs = Math.max(0, (player?.fireReadyAt ?? 0) - Date.now());
     const resetting = (player?.resettingUntil ?? 0) > Date.now();
     if (resetting) {
@@ -832,11 +1066,11 @@ export default class PlayScene extends Phaser.Scene {
       fireButton.setBackgroundColor('#475569');
       fireButton.setColor('#cbd5e1');
     } else if (cooldownMs > 0) {
-      fireButton.setText(`Fire ${Math.ceil(cooldownMs / 1000)}`);
+      fireButton.setText(`${label} ${Math.ceil(cooldownMs / 1000)}`);
       fireButton.setBackgroundColor(this.touchInput.fire ? '#facc15' : '#334155');
       fireButton.setColor(this.touchInput.fire ? '#061826' : '#cbd5e1');
     } else {
-      fireButton.setText('Fire');
+      fireButton.setText(label);
       fireButton.setBackgroundColor(this.touchInput.fire ? '#facc15' : '#0f3b57');
       fireButton.setColor(this.touchInput.fire ? '#061826' : '#e0f2fe');
     }
@@ -952,7 +1186,7 @@ function isSurfaceVessel(player, world) {
 function vesselAlpha(player, localPlayer, isLocal) {
   if (isLocal) return 1;
   if (localPlayer && player.team === localPlayer.team) {
-    return 0.82 + (Number(player.id ?? 0) % 3) * 0.05;
+    return 0.8;
   }
   return 0.7;
 }
@@ -970,6 +1204,25 @@ function worldToScreenX(worldX, cameraX, scale, width) {
   return (worldX - cameraX) * scale + width / 2;
 }
 
+function sonarPulseVisibleToLocal(pulse, localPlayer, world, state) {
+  if (!pulse || !localPlayer?.connected) return false;
+  if (pulse.team === localPlayer.team) return true;
+  const radius = pulse.maxRadius ?? 420;
+  return worldDistance(pulse, localPlayer, world) <= radius;
+}
+
+function worldDistance(a, b, world) {
+  const dx = wrappedDeltaClient((a?.x ?? 0) - (b?.x ?? 0), world?.w ?? 1800, false);
+  return Math.hypot(dx, (a?.y ?? 0) - (b?.y ?? 0));
+}
+
+function wrappedDeltaClient(dx, size, wrapX) {
+  if (!wrapX) return dx;
+  if (dx > size / 2) return dx - size;
+  if (dx < -size / 2) return dx + size;
+  return dx;
+}
+
 function seededSpark(seed, index) {
   let hash = 2166136261;
   const text = `${seed}:${index}`;
@@ -983,26 +1236,63 @@ function seededSpark(seed, index) {
   return { jitter, speed };
 }
 
-function drawLocalOutline(g, x, y, player, dir) {
+function drawLocalOutline(g, x, y, player, dir, scale = 1) {
   if (player.role === 'destroyer' || player.role === 'boat') {
     g.lineStyle(3, 0xffffff, 0.95);
-    g.strokeRoundedRect(x - 69, y - 32, 140, 44, 10);
+    g.strokeRoundedRect(x - 69 * scale, y - 32 * scale, 140 * scale, 44 * scale, 10 * scale);
   }
 }
 
-function drawSubPropeller(g, x, y, dir, alpha) {
+function drawSubPropeller(g, x, y, dir, alpha, scale = 1) {
   g.lineStyle(2, 0x082f49, 0.55 * alpha);
-  g.lineBetween(x + dir * 3, y, x - dir * 12, y);
+  g.lineBetween(x + dir * 3 * scale, y, x - dir * 12 * scale, y);
   g.fillStyle(0xcbd5e1, 0.9 * alpha);
-  g.fillCircle(x - dir * 14, y, 3.5);
+  g.fillCircle(x - dir * 14 * scale, y, 3.5 * scale);
   g.lineStyle(2, 0xe0f2fe, 0.8 * alpha);
-  g.lineBetween(x - dir * 17, y - 9, x - dir * 17, y + 9);
-  g.lineBetween(x - dir * 24, y - 5, x - dir * 10, y + 5);
-  g.lineBetween(x - dir * 10, y - 5, x - dir * 24, y + 5);
+  g.lineBetween(x - dir * 17 * scale, y - 9 * scale, x - dir * 17 * scale, y + 9 * scale);
+  g.lineBetween(x - dir * 24 * scale, y - 5 * scale, x - dir * 10 * scale, y + 5 * scale);
+  g.lineBetween(x - dir * 10 * scale, y - 5 * scale, x - dir * 24 * scale, y + 5 * scale);
 }
 
 function setButtonSelected(button, selected) {
   if (!button) return;
   button.setBackgroundColor(selected ? '#facc15' : '#64748b');
   button.setColor(selected ? '#061826' : '#ffffff');
+}
+
+function setSetupButton(button, label, enabled) {
+  if (!button) return;
+  button.setText(label);
+  button.setVisible(Boolean(enabled));
+  button.disableInteractive();
+  if (enabled) {
+    button.setInteractive({ useHandCursor: true });
+    button.setBackgroundColor('#64748b');
+    button.setColor('#ffffff');
+  }
+}
+
+function screenXCopies(worldX, world, cameraX, scale, width, pad, wrapX) {
+  const sx = worldToScreenX(worldX, cameraX, scale, width);
+  const copies = [];
+  if (sx >= -pad && sx <= width + pad) copies.push(sx);
+  if (!wrapX) return copies;
+  const left = worldToScreenX((worldX ?? 0) - (world?.w ?? 0), cameraX, scale, width);
+  const right = worldToScreenX((worldX ?? 0) + (world?.w ?? 0), cameraX, scale, width);
+  if (left >= -pad && left <= width + pad) copies.push(left);
+  if (right >= -pad && right <= width + pad) copies.push(right);
+  return copies;
+}
+
+function wrapCoordinateClient(value, size) {
+  let n = Number(value) || 0;
+  n %= size;
+  if (n < 0) n += size;
+  return n;
+}
+
+function hexColor(value, fallback) {
+  if (typeof value !== 'string') return fallback;
+  const n = Number.parseInt(value.replace('#', ''), 16);
+  return Number.isFinite(n) ? n : fallback;
 }

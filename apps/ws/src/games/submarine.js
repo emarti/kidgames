@@ -1,6 +1,6 @@
 import * as Sim from './submarine_sim.js';
 import { normalizeRoomCode } from '../shared.js';
-import { countConnectedPlayers, generateRoomIdUnique, nowMs, pickOpenPlayerId, safeBroadcast, send } from './room_utils.js';
+import { countConnectedPlayers, generateRoomIdUnique, nowMs, safeBroadcast, send } from './room_utils.js';
 
 export function createSubmarineHost() {
   const rooms = new Map(); // roomId -> { id, state, clients: [], updatedAt }
@@ -93,7 +93,7 @@ export function createSubmarineHost() {
 
         if (ws.room && ws.room !== roomId) onClose(ws);
 
-        const pid = pickOpenPlayerId(room.state);
+        const pid = Sim.claimHumanSlot(room.state);
         if (!pid) {
           send(ws, { type: 'error', message: 'Room full' });
           return;
@@ -162,6 +162,50 @@ export function createSubmarineHost() {
       case 'set_fog': {
         const room = ws.room ? rooms.get(ws.room) : null;
         if (room && Sim.selectVisibilityMode(room.state, msg.enabled ? 'low' : 'clear')) {
+          safeBroadcast(room, { type: 'state', state: room.state });
+        }
+        break;
+      }
+
+      case 'set_wrap': {
+        const room = ws.room ? rooms.get(ws.room) : null;
+        if (room && Sim.setWrapEnabled(room.state, msg.enabled)) {
+          safeBroadcast(room, { type: 'state', state: room.state });
+        }
+        break;
+      }
+
+      case 'set_bubbles': {
+        const room = ws.room ? rooms.get(ws.room) : null;
+        if (room && Sim.setBubblesEnabled(room.state, msg.enabled)) {
+          safeBroadcast(room, { type: 'state', state: room.state });
+        }
+        break;
+      }
+
+      case 'add_bot': {
+        const room = ws.room ? rooms.get(ws.room) : null;
+        if (!room || !ws.playerId) break;
+        const playerId = Sim.addBot(room.state, msg);
+        if (playerId) {
+          safeBroadcast(room, { type: 'state', state: room.state });
+        } else {
+          send(ws, { type: 'error', message: 'No empty computer slot' });
+        }
+        break;
+      }
+
+      case 'remove_bot': {
+        const room = ws.room ? rooms.get(ws.room) : null;
+        if (room && ws.playerId && Sim.removeBot(room.state, msg.playerId)) {
+          safeBroadcast(room, { type: 'state', state: room.state });
+        }
+        break;
+      }
+
+      case 'configure_bot': {
+        const room = ws.room ? rooms.get(ws.room) : null;
+        if (room && ws.playerId && Sim.configureBot(room.state, msg.playerId, msg)) {
           safeBroadcast(room, { type: 'state', state: room.state });
         }
         break;

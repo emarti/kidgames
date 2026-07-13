@@ -73,18 +73,18 @@ Use these defaults until the user says otherwise:
 - Role labels: use `Submarine` and `Destroyer` in player-facing UI. The server accepts legacy `boat`/`ship` as aliases for `destroyer`.
 - Teams: red, white, blue, yellow. Teammates use the exact same team color. Like Snake, same-team vessels can be drawn with slight alpha differences so players remain distinguishable.
 - Local player marker: draw a thin white outline around the local destroyer only. Do not draw a white circle/ellipse around submarines.
-- World scale: fixed single-screen side-view world; current default is `world.w = 1200`, `world.h = 800`.
+- World scale: fixed single-screen side-view world; current default is `world.w = 1800`, `world.h = 1200`.
 - World edges: hard boundaries. Vehicles cannot pass through them, but there is no crash damage.
 - Waterline: about 20% from the top, meaning about 80% underwater.
 - Surface alignment: destroyers should sit at the waterline with hull straddling/below the water and superstructure above it; submarines should stop at periscope depth, with hull below the water and only the periscope/mast reaching the surface.
-- Submarine combat: horizontal torpedoes should not hit destroyers; submarines use upward missiles to attack destroyers from below.
+- Submarine combat: horizontal torpedoes should not hit destroyers; submarines use upward missiles to attack destroyers from below and to threaten enemy submarines above them.
 - Vessel scale: draw submarines and destroyers as long side-view silhouettes, roughly 50% wider than the first placeholder shapes. Keep server hit geometry elongated enough that bow/stern hits match the visuals.
 - Hits: play a star/fireworks win sound and effect around the boat/submarine that was hit, then reset that player after 3 seconds. Infinite lives.
 - Boats: strictly surface-only.
-- Visibility: start with clear visibility; add low visibility as an option later, not the default.
+- Visibility: default to fog-on low visibility for new rooms; clear visibility remains an option for debugging and casual play.
 - Passive sonar: in low visibility, everyone is always listening; target detectability depends on target speed/noise and distance. Faster is louder, closer is louder.
 - Low visibility sharing: visibility/contact information is shared within each team.
-- Active sonar: available to everyone; temporarily reveals everyone to everyone, including the sonar user to enemies.
+- Active sonar: available to everyone; temporarily reveals in-range targets to the pinger's team and reveals the pinger to in-range enemies.
 - Computer control: defer until after human movement, weapons, setup UI, and visibility are stable.
 
 Questions to revisit before the relevant phase:
@@ -124,8 +124,9 @@ Initial server state:
   tick: 0,
   paused: true,
   reasonPaused: 'start',
-  visibilityMode: 'clear',
-  world: { w: 1200, h: 800, waterlineY: 160, vehicleLength: 200 },
+  visibilityMode: 'low',
+  settings: { wrapX: true, showBubbles: true },
+  world: { w: 1800, h: 1200, waterlineY: 240, vehicleLength: 200 },
   players: {
     1: { connected: false, paused: true, role: 'submarine', team: 'red', color: '#ff4d4d', x: 0, y: 0, vx: 0, vy: 0, heading: 0, resettingUntil: 0, input: {} },
     2: { connected: false, paused: true, role: 'destroyer', team: 'blue', color: '#4d94ff', x: 0, y: 0, vx: 0, vy: 0, heading: 0, resettingUntil: 0, input: {} },
@@ -174,11 +175,12 @@ Goal: vehicles feel heavy, readable, and distinct.
 - [x] Add touch controls sized for kids and tablets.
 - [x] Use shared `@games/touch-controls` D-pad + pause control from Snake/Maze.
 - [x] Use arrow keys/WASD and shared D-pad as the complete movement controls: left/right move, up/down change submarine depth, and destroyers ignore vertical input.
-- [x] Keep right-side buttons to commands only, currently Pause and Fire; do not add separate Surface/Dive buttons.
+- [x] Track held D-pad directions separately so opposite-direction touch presses cancel and release cleanly.
+- [x] Keep right-side buttons to commands only, currently Pause, Torpedo/Charge, Sonar, and Missile; do not add separate Surface/Dive buttons.
 
 Recommended first movement constants, to tune later:
 
-- World width: one-screen arena, currently `1200`.
+- World width: one-screen arena, currently `1800`.
 - World height: enough for sky/surface, midwater, and deep evasion; keep about 80% of visible height underwater.
 - Host tick: 50ms.
 - Boat speed: moderate, surface-only.
@@ -206,7 +208,7 @@ Goal: weapons create pressure without making the game frustrating.
 - [x] Keep all weapon movement and hit detection server-authoritative.
 - [x] Use elongated hull hit geometry so the longer vessel visuals and server collision agree.
 - [x] Ignore same-team hits for v1 so team play stays forgiving.
-- [x] Add touch Fire button and keyboard Space fire input.
+- [x] Add touch Torpedo/Charge button and keyboard Space primary-weapon input.
 
 ## Phase 4 - Setup Screen, Teams, And Switching
 
@@ -319,8 +321,8 @@ Current tuning defaults:
 - Active sonar radius: about `420` world units.
 - Active sonar reveal: about `2.5` seconds.
 - Passive close contact: vague ping only below exact silhouette threshold.
-- Upward missile reload: about `5.5` seconds.
-- Upward missile target: enemy destroyers only; teammates are ignored.
+- Upward missile reload: `10` seconds.
+- Upward missile target: enemy destroyers and enemy submarines; teammates are ignored.
 - Upward missile control: keyboard `X` or right-side `Missile` button.
 - Submarine ceiling: periscope depth only; the submarine hull cannot surface.
 - Regeneration after a hit respawns the player at a random role-appropriate location.
@@ -329,12 +331,61 @@ Current tuning defaults:
 
 Goal: add optional AI later without changing the room model.
 
-- [ ] Decide whether computer control claims a color, a role, or a disconnected player slot.
-- [ ] Add server-side bot input generation.
-- [ ] Start with simple patrol/search behavior.
-- [ ] Add separate behavior for ship and submarine.
-- [ ] Make bot difficulty tune movement, firing, sonar use, and evasion.
-- [ ] Keep computer control optional and off by default.
+- [x] Use ordinary disconnected player slots for computer-controlled players.
+- [x] Mark bots with `bot: true` while keeping them in `players[1..4]`.
+- [x] Let humans replace the lowest-numbered bot when joining a full bot-filled room.
+- [x] Add server messages: `add_bot`, `remove_bot`, and `configure_bot`.
+- [x] Add server-side bot input generation before normal movement.
+- [x] Start with simple patrol/search behavior.
+- [x] Add separate destroyer and submarine behavior.
+- [x] Make destroyer bots patrol, chase detected submarines, drop depth charges, use sonar while searching, and dodge upward missiles.
+- [x] Make submarine bots patrol depth bands, chase detected submarines with torpedoes, attack destroyers with upward missiles, use sonar while searching, and evade depth charges.
+- [x] Keep low-visibility bots limited by team-shared contact strength instead of giving them perfect knowledge.
+- [x] Add compact setup/pause UI controls for adding, removing, and cycling bot role/team.
+- [x] Keep computer control optional and off by default.
+
+Current Phase 9 defaults:
+
+- Bots consume normal player slots and count as connected players in state.
+- `easy` is the default bot difficulty; `normal` remains accepted, but richer difficulty tuning is deferred.
+- Bots are full team members for shared passive/active visibility.
+- Bots do not add scoring, terrain collision, hazards, or a win condition.
+- After Phase 9, the planned v1 roadmap is complete; future work should be planned after manual playtesting.
+
+## Post-Phase 9 - Polish Options, Larger World, And Scenery
+
+Goal: add room options and visual polish while preserving the manual-test workflow.
+
+- [x] Enlarge the one-screen arena from `1200x800` to `1800x1200`.
+- [x] Keep vehicles visually smaller relative to the larger full-world view.
+- [x] Add room settings `wrapX` and `showBubbles`.
+- [x] Add setup/pause menu toggles for Wrap and Bubbles.
+- [x] Make ordinary pause/resume local to the specific player instead of freezing the room.
+- [x] Keep the lobby/start overlay behavior through `reasonPaused: 'start'`.
+- [x] Set torpedo, depth-charge, and upward-missile reloads to 10 seconds.
+- [x] Make depth charges damp horizontal drift and approach a vertical terminal sink speed.
+- [x] Rename submarine-facing primary weapon UI from Fire to Torpedo while preserving `input.fire` compatibility.
+- [x] Add deterministic decorative sea-life scenery with no collision, sonar, scoring, or damage behavior.
+- [x] Render wrapping duplicates for vessels near side edges.
+- [x] Keep depth charges, missiles, sonar pulses, bubbles, and hit effects from wrapping; submarines, destroyers, and torpedoes wrap when Wrap is on.
+- [x] Shrink the submarine upward missile surface blast after playtesting feedback; current radius is `64`.
+- [x] Hide active sonar pulse rings from enemy clients outside the pulse range.
+- [x] Hide reset/appearing circles around vessels; fireworks remain the hit/reset feedback.
+- [x] Let upward submarine missiles reset enemy submarines as well as enemy destroyers.
+- [x] Slightly increase submarine horizontal acceleration and max speed after playtesting feedback.
+- [x] Default new rooms to fog-on and wrap-on.
+- [x] In fog mode, hide submarine ballast/depth bubbles from enemy teams while keeping teammate bubbles visible.
+- [x] Let torpedoes wrap horizontally in wrap mode and expire after traveling `0.75 * world.w`.
+
+Current polish defaults:
+
+- `visibilityMode` defaults to `low`; clear mode remains available from the setup/pause menu.
+- `settings.wrapX` defaults to `true`; hard side bounds are available by turning Wrap off.
+- Torpedoes wrap horizontally when Wrap is on, but expire after traveling about `0.75 * world.w` (`1350` units in the current world).
+- `settings.showBubbles` defaults to `true`; when false, new ballast bubble entities are not created.
+- With fog on, bubbles are visible only to the owning team. With fog off, bubbles are visible to everyone.
+- Scenery is hand-drawn client-side from `world.scenery` metadata only.
+- Wrap and bubble settings are room-wide because they affect fairness and stealth.
 
 ## Checks And User Testing
 
