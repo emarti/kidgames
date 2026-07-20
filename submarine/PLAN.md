@@ -6,7 +6,7 @@ Do not implement more than the current requested phase. Do not game-test or brow
 
 ## Game Vision
 
-Submarine is a soft PvP hunt-and-evade game for 1-4 players. Players choose a role, either submarine or surface boat/ship, and a team color: red, white, blue, or yellow. The submarine uses torpedoes. The surface boat, likely a destroyer-style ship, uses depth charges. Hits should feel playful and forgiving: a tag, splash, reset, forced surface/dive, or short stun rather than a harsh elimination.
+Submarine is a soft PvP hunt-and-evade game for 1-6 players. Players choose a role, either submarine or surface boat/ship, and a team color: red, white, blue, or yellow. The submarine uses torpedoes. The surface boat, likely a destroyer-style ship, uses depth charges. Hits should feel playful and forgiving: a tag, splash, reset, forced surface/dive, or short stun rather than a harsh elimination.
 
 The game is a 2D side-view ocean. The waterline stays near the top of the world/screen, leaving most of the vertical space underwater for submarines. Treat "water level near the top, maybe 80%" as: roughly 80% of the visible height is underwater and roughly 20% is sky/surface area, unless the user clarifies otherwise.
 
@@ -332,7 +332,7 @@ Current tuning defaults:
 Goal: add optional AI later without changing the room model.
 
 - [x] Use ordinary disconnected player slots for computer-controlled players.
-- [x] Mark bots with `bot: true` while keeping them in `players[1..4]`.
+- [x] Mark bots with `bot: true` while keeping them in `players[1..6]`.
 - [x] Let humans replace the lowest-numbered bot when joining a full bot-filled room.
 - [x] Add server messages: `add_bot`, `remove_bot`, and `configure_bot`.
 - [x] Add server-side bot input generation before normal movement.
@@ -377,15 +377,34 @@ Goal: add room options and visual polish while preserving the manual-test workfl
 - [x] In fog mode, hide submarine ballast/depth bubbles from enemy teams while keeping teammate bubbles visible.
 - [x] Let torpedoes wrap horizontally in wrap mode and expire after traveling `0.75 * world.w`.
 
+## Post-Phase 9 - Reload, Six Players, And Visibility Tuning
+
+Goal: streamline room setup and tune late-v1 multiplayer play.
+
+- [x] Remove Wrap and Bubbles controls from the setup/pause menu while keeping compatibility messages and default-on settings.
+- [x] Add room-wide weapon reload controls: `2 s`, `5 s`, and `10 s` default.
+- [x] Apply reload settings to torpedoes, depth charges, and submarine upward missiles; sonar cooldown remains separate.
+- [x] Expand Submarine rooms from 4 to 6 player/bot slots.
+- [x] Add defaults for player 5 as red submarine and player 6 as blue destroyer.
+- [x] Increase submarine horizontal acceleration and max speed by about 30%.
+- [x] Keep passive sonar detection scaled against the new submarine max speeds.
+- [x] Let destroyers visually spot other destroyers over about two-thirds of the screen.
+- [x] Keep destroyer/periscope-submarine visual spotting at about half the screen.
+- [x] Increase destroyer active sonar radius by 30%.
+- [x] Hide regenerated vessels from enemy passive/visual detection until they move, fire, or use sonar.
+- [x] Add a toggleable LA-class-inspired submarine silhouette with the previous symmetric style retained as `classic`.
+
 Current polish defaults:
 
 - `visibilityMode` defaults to `low`; clear mode remains available from the setup/pause menu.
-- `settings.wrapX` defaults to `true`; hard side bounds are available by turning Wrap off.
+- `settings.wrapX` defaults to `true`; hard side bounds remain available through compatibility messages, but the setup UI no longer exposes Wrap.
 - Torpedoes wrap horizontally when Wrap is on, but expire after traveling about `0.75 * world.w` (`1350` units in the current world).
-- `settings.showBubbles` defaults to `true`; when false, new ballast bubble entities are not created.
+- `settings.showBubbles` defaults to `true`; when false through compatibility messages, new ballast bubble entities are not created.
+- `settings.reloadMs` defaults to `10000`; supported room-wide weapon reload values are `2000`, `5000`, and `10000`.
+- `SUBMARINE_SILHOUETTE_STYLE` in `PlayScene.js` defaults to `la_class`; set it to `classic` to restore the earlier symmetric submarine.
 - With fog on, bubbles are visible only to the owning team. With fog off, bubbles are visible to everyone.
 - Scenery is hand-drawn client-side from `world.scenery` metadata only.
-- Wrap and bubble settings are room-wide because they affect fairness and stealth.
+- Wrap, bubble, and reload settings are room-wide because they affect fairness and stealth.
 
 ## Checks And User Testing
 

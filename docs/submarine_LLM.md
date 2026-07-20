@@ -1,6 +1,6 @@
 # Submarine — LLM notes
 
-Submarine is a soft PvP hunt-and-evade game for up to 4 players. Players choose a role (`submarine` or `destroyer`) and a team (`red`, `white`, `blue`, `yellow`). The current implementation supports room flow, per-player setup/pause overlay selection, server-authoritative movement/weapons, single-screen arena rendering, shared touch D-pad controls, optional submarine bubbles, clear-mode readable wakes/trails, low-visibility passive sonar, range-limited active sonar pulses, submarine upward missiles, decorative ocean-floor/sea-life world hooks, optional side wrapping, and optional server-side computer players.
+Submarine is a soft PvP hunt-and-evade game for up to 6 players. Players choose a role (`submarine` or `destroyer`) and a team (`red`, `white`, `blue`, `yellow`). The current implementation supports room flow, per-player setup/pause overlay selection, server-authoritative movement/weapons, single-screen arena rendering, shared touch D-pad controls, submarine bubbles, clear-mode readable wakes/trails, low-visibility passive sonar, range-limited active sonar pulses, submarine upward missiles, decorative ocean-floor/sea-life world hooks, side wrapping, room-wide weapon reload settings, and optional server-side computer players.
 
 ## Current implementation status
 
@@ -50,8 +50,9 @@ Setup/control:
 - `select_team { team: "red" | "white" | "blue" | "yellow" }`
 - `select_visibility { mode: "clear" | "low" }`
 - `set_fog { enabled: boolean }` (compatibility helper; maps to `clear`/`low`)
-- `set_wrap { enabled: boolean }`
-- `set_bubbles { enabled: boolean }`
+- `set_wrap { enabled: boolean }` (compatibility helper; the setup UI no longer exposes this and rooms default to wrap on)
+- `set_bubbles { enabled: boolean }` (compatibility helper; the setup UI no longer exposes this and rooms default to bubbles on)
+- `set_reload { ms: 2000 | 5000 | 10000 }`
 - `add_bot { role, team?, difficulty?, playerId? }`
 - `remove_bot { playerId? }`
 - `configure_bot { playerId, role?, team?, difficulty? }`
@@ -71,7 +72,7 @@ Current movement controls:
 Client controls:
 - Keyboard: arrow keys or WASD for complete movement: left/right move horizontally, up rises toward periscope depth, down dives; Space fires the primary weapon; `X` launches submarine upward missile; `Q` or `E` fires active sonar. Setup/pause overlay shortcuts are `1` Submarine, `2` Destroyer, `3-6` team colors, `F` fog, `Enter` resume, and `P`/`Esc` pause.
 - Touch: shared `@games/touch-controls` D-pad + pause button for movement/pause; D-pad left/right move horizontally, up/down controls submarine depth. Track held D-pad directions separately so opposite presses cancel and release cleanly. Right-side command buttons are Pause, Torpedo/Charge, Sonar, and Missile.
-- Setup overlay: start/pause menu selects Submarine/Destroyer, team color, fog on/off, wrap on/off, bubbles on/off, and optional computer player slots.
+- Setup overlay: start/pause menu selects Submarine/Destroyer, team color, fog on/off, weapon reload time (`2 s`, `5 s`, `10 s` default), and optional computer player slots.
 
 Server to client:
 - `hello_ack { gameId }`
@@ -87,13 +88,13 @@ See `docs/STATE.md` for shared conventions.
 Submarine state fields:
 - `tick`
 - `paused`, `reasonPaused`
-- `settings`: `{ wrapX, showBubbles }`; `wrapX` defaults on and applies only to player vessels, not weapons, sonar pulses, bubbles, hit effects, scenery, or sea life.
+- `settings`: `{ wrapX, showBubbles, reloadMs }`; `wrapX` and `showBubbles` default on, `reloadMs` defaults to `10000`, and supported reload values are `2000`, `5000`, and `10000`.
 - `visibilityMode`: `"low"` by default. In `"low"`, clients render vessels through the team-shared passive-sonar mask; clear mode remains available from setup/pause.
 - `world`: `{ w, h, waterlineY, vehicleLength, floor, scenery }`; current default is a single-screen `1800x1200` arena. `floor` contains deterministic decorative ridges, vents, and volcanoes plus `collision: false` and `hazards: false`. `scenery` contains decorative sea life only.
 - `teams`: `["red", "white", "blue", "yellow"]`
 - `roles`: `["submarine", "destroyer"]`
 - `teamColors`: team name to hex color
-- `players[1..4]`: `{ id, connected, bot, botDifficulty, botMode, botTargetId, botWaypointX, botWaypointY, botNextThinkAt, paused, role, team, color, x, y, vx, vy, heading, resettingUntil, fireReadyAt, sonarReadyAt, missileReadyAt, lastFireInput, lastSonarInput, lastAltFireInput, input }`
+- `players[1..6]`: `{ id, connected, bot, botDifficulty, botMode, botTargetId, botWaypointX, botWaypointY, botNextThinkAt, paused, role, team, color, x, y, vx, vy, heading, resettingUntil, respawnHidden, fireReadyAt, sonarReadyAt, missileReadyAt, lastFireInput, lastSonarInput, lastAltFireInput, input }`
 - `bubbles`: transient submarine bubble objects
 - `torpedoes`, `depthCharges`, `missiles`: active server-authoritative weapon objects. Server hit checks use elongated hull geometry so hits match the longer side-view vessel shapes. Torpedoes wrap horizontally when Wrap is on and expire after traveling `0.75 * world.w`.
 - `hitEffects`: transient star/fireworks hit effect objects
@@ -105,27 +106,28 @@ Submarine state fields:
 - Boats are strictly surface-only once movement is implemented.
 - Ordinary pause/resume is per-player. One paused human opens their own setup overlay but does not freeze other players, bots, weapons, effects, or scenery.
 - Player-facing role label is Destroyer, not Boat. The server keeps `boat` as an accepted alias.
-- Submarines should move faster at periscope depth than deep underwater.
+- Submarines should move faster at periscope depth than deep underwater. Current horizontal acceleration and max speed are about 30% faster than the earlier v1 tuning; passive sonar normalizes submarine speed against those higher max speeds.
 - Submarine depth changes create bubbles, especially when rising/blowing ballast. Diving from periscope depth is intentionally faster than it used to be.
 - Do not add separate Surface/Dive buttons. Up/down arrows or D-pad control depth, and rising stops at periscope depth rather than true surfacing.
 - Destroyers sit at the surface with hull straddling/below the waterline and military superstructure above it. Submarines cannot fully surface; their hull stays below the water and only the periscope/mast reaches the surface.
 - Submarines and destroyers are drawn as longer side-view silhouettes, roughly 50% wider than the first placeholder vessels. Submarines have a rounded nose and a visible stern propeller, not triangle fins on both ends.
+- Submarine rendering uses `SUBMARINE_SILHOUETTE_STYLE` in `PlayScene.js`. The default `la_class` style uses LA-class-inspired minimalist cues: forward sail, tighter bow, stern planes, and a small stern propulsor. Set it to `classic` to restore the earlier symmetric ellipse silhouette.
 - Hits trigger a star/fireworks win sound and Snake-style rainbow firework effect around the target, then reset that player after 3 seconds. Infinite lives.
 - Same-team weapons do not reset teammates in v1.
 - In low visibility, passive sonar is always on and shared within each team. Contacts are based on target speed/noise and distance; stopped vessels vanish at range regardless of depth, fast movement is louder, and very close stopped enemies remain vague pings for playability.
-- At periscope depth, submarines and destroyers visually spot each other out to about half the screen width, and that reveal is shared with the whole team.
+- At periscope depth, submarines and destroyers visually spot each other out to about half the screen width, and that reveal is shared with the whole team. Destroyers visually spot other destroyers out to about two-thirds of the screen width.
 - Destroyers are louder than submarines at the same speed. Submarine listeners get a small passive range advantage.
 - Active sonar is available to everyone and is range-limited: it reveals in-range targets to the pinger's whole team, and reveals the pinger to enemy teams that have a player in range.
 - Active sonar rings should not be a global giveaway; enemy clients outside pulse range should not render the pulse ring.
-- Current active sonar tuning: about 9.5s cooldown, 2.5s reveal window, 1.8s visual pulse lifetime, and a 420 world-unit radius.
-- Primary weapon reloads are 10 seconds for submarine torpedoes and destroyer depth charges. Submarine upward missile reload is also 10 seconds.
+- Current active sonar tuning: about 9.5s cooldown, 2.5s reveal window, 1.8s visual pulse lifetime, and a 420 world-unit submarine radius. Destroyer active sonar uses a 30% larger radius.
+- Primary weapon and submarine upward missile reloads use the room-wide `settings.reloadMs` value: 2, 5, or 10 seconds.
 - Depth charges inherit some horizontal ship velocity on drop, then horizontal drift damps out while vertical speed approaches terminal sink speed.
 - Submarine upward missile is a separate `altFire` weapon. It rises to the surface, can reset enemy submarines on the way up, and can reset enemy vessels in its smaller surface blast; teammates are ignored.
-- Hit regeneration respawns the target at a random role-appropriate location.
+- Hit regeneration respawns the target at a random role-appropriate location. Regenerated vessels set `respawnHidden: true`, suppressing enemy passive/visual detection until they move, fire, or use sonar; teammates and active sonar can still reveal them.
 - Teammates use the exact same team color; same-team vessels may use alpha differences for readability.
 - The local destroyer can have a thin white outline. Do not draw a white circle/ellipse around submarines.
-- World edges wrap horizontally by default; when `settings.wrapX` is false, submarines and destroyers use hard side bounds. Torpedoes also wrap in wrap mode, but depth charges, missiles, sonar pulses, bubbles, hit effects, scenery, and sea life do not wrap.
-- `settings.showBubbles` controls whether new submarine ballast/depth bubbles are created. Existing wake/trail readability effects are separate. In fog mode, bubbles are visible only to the owner's team; in clear mode, bubbles are visible to everyone.
+- World edges wrap horizontally by default; when `settings.wrapX` is false through compatibility messages, submarines and destroyers use hard side bounds. Torpedoes also wrap in wrap mode, but depth charges, missiles, sonar pulses, bubbles, hit effects, scenery, and sea life do not wrap.
+- `settings.showBubbles` controls whether new submarine ballast/depth bubbles are created through compatibility messages. Existing wake/trail readability effects are separate. In fog mode, bubbles are visible only to the owner's team; in clear mode, bubbles are visible to everyone.
 - The ocean floor, vents, volcano, fish schools, larger fish, dolphin/whale silhouettes, and crab are visual-only scenery. They do not collide, damage, push, hide, score, or affect sonar.
 - Clear baseline renders every connected player and projectile for everyone. Same-team vessels share the exact team color and use alpha differences for readability.
 - Optional bots consume ordinary player slots, are marked with `bot: true`, and are off by default. Human joins prefer empty slots, then replace the lowest-numbered bot slot if needed.

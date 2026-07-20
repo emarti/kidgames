@@ -183,6 +183,14 @@ export function createSubmarineHost() {
         break;
       }
 
+      case 'set_reload': {
+        const room = ws.room ? rooms.get(ws.room) : null;
+        if (room && Sim.setReloadMs(room.state, msg.ms)) {
+          safeBroadcast(room, { type: 'state', state: room.state });
+        }
+        break;
+      }
+
       case 'add_bot': {
         const room = ws.room ? rooms.get(ws.room) : null;
         if (!room || !ws.playerId) break;

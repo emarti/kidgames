@@ -21,8 +21,8 @@ export function generateRoomIdUnique(rooms) {
 
 export function countConnectedPlayers(state) {
   let n = 0;
-  for (const pid of [1, 2, 3, 4]) {
-    if (state.players?.[pid]?.connected) n++;
+  for (const player of Object.values(state.players ?? {})) {
+    if (player?.connected) n++;
   }
   return n;
 }

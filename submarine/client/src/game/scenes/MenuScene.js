@@ -134,7 +134,7 @@ export default class MenuScene extends Phaser.Scene {
   updateRoomList(rooms = []) {
     this.roomListContainer.removeAll(true);
     rooms.slice(0, 6).forEach((room, idx) => {
-      const btn = this.add.text(0, idx * 38, `${room.id} (${room.players}/4)`, {
+      const btn = this.add.text(0, idx * 38, `${room.id} (${room.players}/6)`, {
         fontFamily: 'Arial, sans-serif',
         fontSize: '17px',
         color: '#061826',

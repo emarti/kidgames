@@ -19,6 +19,9 @@ const FIREWORK_COLORS = [
   0xff00ff,
 ];
 
+// Switch to 'classic' to restore the earlier symmetric ellipse submarine.
+const SUBMARINE_SILHOUETTE_STYLE = 'la_class';
+
 export default class PlayScene extends Phaser.Scene {
   constructor() {
     super({ key: 'PlayScene' });
@@ -27,8 +30,7 @@ export default class PlayScene extends Phaser.Scene {
     this.roleButtons = {};
     this.teamButtons = {};
     this.visibilityButtons = {};
-    this.wrapButtons = {};
-    this.bubbleButtons = {};
+    this.reloadButtons = {};
     this.botRows = [];
     this.touchInput = { throttle: 0, turn: 0, dive: 0, fire: false, torpedo: false, altFire: false, sonar: false };
     this.touchDirs = { up: false, down: false, left: false, right: false };
@@ -139,29 +141,22 @@ export default class PlayScene extends Phaser.Scene {
     this.visibilityButtons.clear = this.setupButton(-192, -104, 'Off', () => this.game.net.send('select_visibility', { mode: 'clear' }));
     this.visibilityButtons.low = this.setupButton(-82, -104, 'On', () => this.game.net.send('select_visibility', { mode: 'low' }));
 
-    this.setupContainer.add(this.add.text(-360, -44, 'Wrap:', {
+    this.setupContainer.add(this.add.text(-360, -44, 'Reload:', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '19px',
       color: '#061826',
     }).setOrigin(0, 0.5));
-    this.wrapButtons.off = this.setupButton(-192, -44, 'Off', () => this.game.net.send('set_wrap', { enabled: false }));
-    this.wrapButtons.on = this.setupButton(-82, -44, 'On', () => this.game.net.send('set_wrap', { enabled: true }));
+    this.reloadButtons[2000] = this.setupButton(-192, -44, '2 s', () => this.game.net.send('set_reload', { ms: 2000 }));
+    this.reloadButtons[5000] = this.setupButton(-82, -44, '5 s', () => this.game.net.send('set_reload', { ms: 5000 }));
+    this.reloadButtons[10000] = this.setupButton(28, -44, '10 s', () => this.game.net.send('set_reload', { ms: 10000 }));
 
-    this.setupContainer.add(this.add.text(-360, 16, 'Bubbles:', {
+    this.setupContainer.add(this.add.text(-360, 16, 'Computer:', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '19px',
       color: '#061826',
     }).setOrigin(0, 0.5));
-    this.bubbleButtons.on = this.setupButton(-192, 16, 'On', () => this.game.net.send('set_bubbles', { enabled: true }));
-    this.bubbleButtons.off = this.setupButton(-82, 16, 'Off', () => this.game.net.send('set_bubbles', { enabled: false }));
-
-    this.setupContainer.add(this.add.text(-360, 76, 'Computer:', {
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '19px',
-      color: '#061826',
-    }).setOrigin(0, 0.5));
-    this.botRows = [1, 2, 3, 4].map((pid, idx) => {
-      const y = 114 + idx * 36;
+    this.botRows = [1, 2, 3, 4, 5, 6].map((pid, idx) => {
+      const y = 54 + idx * 36;
       const label = this.add.text(-244, y, '', {
         fontFamily: 'Arial, sans-serif',
         fontSize: '16px',
@@ -821,6 +816,15 @@ export default class PlayScene extends Phaser.Scene {
       return;
     }
 
+    if (SUBMARINE_SILHOUETTE_STYLE === 'classic') {
+      this.drawClassicSubmarine(g, x, y, color, alpha, dir, surfaced, world, yScale, s);
+    } else {
+      this.drawLaClassSubmarine(g, x, y, color, alpha, dir, surfaced, world, yScale, s);
+    }
+    if (isLocal) drawLocalOutline(g, x, y, player, dir, s);
+  }
+
+  drawClassicSubmarine(g, x, y, color, alpha, dir, surfaced, world, yScale, s) {
     g.lineStyle(surfaced ? 2 : 3, surfaced ? 0xf8fafc : 0x0f172a, surfaced ? 0.75 : 0.58);
     g.strokeEllipse(x, y, 132 * s, (surfaced ? 26 : 31) * s);
     g.fillStyle(color, alpha);
@@ -836,7 +840,73 @@ export default class PlayScene extends Phaser.Scene {
       g.fillEllipse(x, y + 3 * s, 108 * s, 18 * s);
     }
     drawSubPropeller(g, x - 70 * dir * s, y, dir, alpha, s);
-    if (isLocal) drawLocalOutline(g, x, y, player, dir, s);
+  }
+
+  drawLaClassSubmarine(g, x, y, color, alpha, dir, surfaced, world, yScale, s) {
+    const bowTipX = x + dir * 84 * s;
+    const bowNoseX = x + dir * 78 * s;
+    const bowShoulderX = x + dir * 61 * s;
+    const foreBodyX = x + dir * 36 * s;
+    const aftBodyX = x - dir * 36 * s;
+    const sternShoulderX = x - dir * 58 * s;
+    const sternNeckX = x - dir * 73 * s;
+    const sternX = x - dir * 84 * s;
+    const topY = y - (surfaced ? 11 : 14) * s;
+    const bottomY = y + (surfaced ? 11 : 14) * s;
+    const sternTopY = y - 4 * s;
+    const sternBottomY = y + 4 * s;
+
+    const traceHull = () => {
+      g.moveTo(sternX, sternTopY);
+      g.lineTo(sternNeckX, y - 6 * s);
+      g.lineTo(sternShoulderX, y - 9 * s);
+      g.lineTo(aftBodyX, topY);
+      g.lineTo(foreBodyX, topY);
+      g.lineTo(bowShoulderX, y - (surfaced ? 10 : 12) * s);
+      g.lineTo(bowNoseX, y - 5 * s);
+      g.lineTo(bowTipX, y);
+      g.lineTo(bowNoseX, y + 5 * s);
+      g.lineTo(bowShoulderX, y + (surfaced ? 10 : 12) * s);
+      g.lineTo(foreBodyX, bottomY);
+      g.lineTo(aftBodyX, bottomY);
+      g.lineTo(sternShoulderX, y + 9 * s);
+      g.lineTo(sternNeckX, y + 6 * s);
+      g.lineTo(sternX, sternBottomY);
+      g.closePath();
+    };
+
+    g.lineStyle(surfaced ? 2 : 3, surfaced ? 0xf8fafc : 0x0f172a, surfaced ? 0.75 : 0.58);
+    g.beginPath();
+    traceHull();
+    g.strokePath();
+
+    g.fillStyle(color, alpha);
+    g.beginPath();
+    traceHull();
+    g.fillPath();
+
+    const sailX = x + dir * 24 * s;
+    g.fillStyle(color, alpha * 0.92);
+    g.fillRoundedRect(sailX - 13 * s, y - (surfaced ? 31 : 34) * s, 30 * s, 21 * s, 5 * s);
+    g.fillStyle(0x0f172a, alpha * 0.28);
+    g.fillRect(sailX - 9 * s, y - (surfaced ? 20 : 23) * s, 23 * s, 4 * s);
+
+    g.fillStyle(0x082f49, alpha * 0.34);
+    g.fillTriangle(sternShoulderX, y - 7 * s, sternShoulderX - dir * 15 * s, y - 18 * s, sternShoulderX - dir * 7 * s, y - 5 * s);
+    g.fillTriangle(sternShoulderX, y + 7 * s, sternShoulderX - dir * 15 * s, y + 18 * s, sternShoulderX - dir * 7 * s, y + 5 * s);
+    g.fillTriangle(sternX + dir * 4 * s, y, sternX - dir * 9 * s, y - 4 * s, sternX - dir * 9 * s, y + 4 * s);
+
+    if (surfaced) {
+      const waterlineY = (world?.waterlineY ?? 160) * (yScale ?? 1);
+      g.lineStyle(2, 0xe0f2fe, 0.8);
+      g.lineBetween(sailX + 2 * dir * s, y - 34 * s, sailX + 2 * dir * s, waterlineY - 7 * s);
+      g.lineBetween(sailX + 2 * dir * s, waterlineY - 7 * s, sailX + 15 * dir * s, waterlineY - 7 * s);
+    } else {
+      g.fillStyle(0x082f49, 0.22);
+      g.fillEllipse(x - dir * 8 * s, y + 4 * s, 108 * s, 17 * s);
+    }
+
+    drawSubPropeller(g, x - 91 * dir * s, y, dir, alpha * 0.72, s * 0.5);
   }
 
   contactFor(player, state, localPlayer) {
@@ -865,8 +935,7 @@ export default class PlayScene extends Phaser.Scene {
     const role = player?.role === 'destroyer' ? 'destroyer' : 'submarine';
     const team = player?.team ?? 'red';
     const fog = state.visibilityMode === 'low' ? 'FOG ON' : 'FOG OFF';
-    const wrap = state.settings?.wrapX ? 'WRAP ON' : 'WRAP OFF';
-    const bubbles = state.settings?.showBubbles === false ? 'BUBBLES OFF' : 'BUBBLES ON';
+    const reload = `RELOAD ${Math.ceil((state.settings?.reloadMs ?? 10000) / 1000)}S`;
     const cooldownMs = Math.max(0, (player?.fireReadyAt ?? 0) - Date.now());
     const primaryLabel = role === 'submarine' ? 'TORPEDO' : 'CHARGE';
     const fireStatus = cooldownMs > 0 ? `${primaryLabel} ${Math.ceil(cooldownMs / 1000)}s` : `${primaryLabel} READY`;
@@ -879,7 +948,7 @@ export default class PlayScene extends Phaser.Scene {
     const resetMs = Math.max(0, (player?.resettingUntil ?? 0) - Date.now());
     const resetStatus = resetMs > 0 ? `  RESET ${Math.ceil(resetMs / 1000)}s` : '';
     const runState = player?.paused ? 'PAUSED' : (state.paused ? 'WAITING' : 'RUNNING');
-    this.statusText.setText(`${role.toUpperCase()}  ${team.toUpperCase()}  ${fog}  ${wrap}  ${bubbles}  ${runState}  ${fireStatus}  ${sonarStatus}${missileStatus}${resetStatus}`);
+    this.statusText.setText(`${role.toUpperCase()}  ${team.toUpperCase()}  ${fog}  ${reload}  ${runState}  ${fireStatus}  ${sonarStatus}${missileStatus}${resetStatus}`);
   }
 
   updateButtons() {
@@ -899,7 +968,7 @@ export default class PlayScene extends Phaser.Scene {
     if (!isPaused) return;
 
     this.setupTitle.setText(isLobby ? 'GAME SETUP' : 'PAUSED');
-    this.setupHelp.setText(isLobby ? 'Choose a vessel, color, and fog setting.' : 'Adjust setup or resume.');
+    this.setupHelp.setText(isLobby ? 'Choose a vessel, color, fog, and reload time.' : 'Adjust setup or resume.');
     this.startButton.setText(isLobby ? 'Start' : 'Resume');
 
     const selectedRole = player?.role === 'destroyer' || player?.role === 'boat' ? 'destroyer' : 'submarine';
@@ -917,13 +986,12 @@ export default class PlayScene extends Phaser.Scene {
       setButtonSelected(btn, mode === selectedVisibility);
     }
 
-    const wrapEnabled = Boolean(state?.settings?.wrapX);
-    setButtonSelected(this.wrapButtons.off, !wrapEnabled);
-    setButtonSelected(this.wrapButtons.on, wrapEnabled);
-
-    const bubblesEnabled = state?.settings?.showBubbles !== false;
-    setButtonSelected(this.bubbleButtons.on, bubblesEnabled);
-    setButtonSelected(this.bubbleButtons.off, !bubblesEnabled);
+    const reloadMs = [2000, 5000, 10000].includes(Number(state?.settings?.reloadMs))
+      ? Number(state.settings.reloadMs)
+      : 10000;
+    for (const [ms, btn] of Object.entries(this.reloadButtons)) {
+      setButtonSelected(btn, Number(ms) === reloadMs);
+    }
 
     this.updateBotRows(state);
   }

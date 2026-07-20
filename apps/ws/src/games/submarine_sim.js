@@ -1,6 +1,9 @@
 const TEAMS = ['red', 'white', 'blue', 'yellow'];
 const ROLES = ['submarine', 'destroyer'];
 const VISIBILITY_MODES = ['clear', 'low'];
+const PLAYER_IDS = [1, 2, 3, 4, 5, 6];
+const RELOAD_OPTIONS_MS = [2000, 5000, 10000];
+const DEFAULT_RELOAD_MS = 10000;
 
 const TEAM_COLORS = {
   red: '#ff4d4d',
@@ -14,6 +17,8 @@ const DEFAULT_ROLES = {
   2: 'destroyer',
   3: 'submarine',
   4: 'destroyer',
+  5: 'submarine',
+  6: 'destroyer',
 };
 
 const DEFAULT_TEAMS = {
@@ -21,6 +26,8 @@ const DEFAULT_TEAMS = {
   2: 'blue',
   3: 'white',
   4: 'yellow',
+  5: 'red',
+  6: 'blue',
 };
 
 export const WORLD = {
@@ -90,10 +97,10 @@ const BOAT = {
 const SUB = {
   surfacedY: SUB_MIN_Y,
   surfaceBand: 90,
-  accelSurfaced: 132,
-  accelSubmerged: 76,
-  maxSurfaced: 138,
-  maxSubmerged: 83,
+  accelSurfaced: 172,
+  accelSubmerged: 99,
+  maxSurfaced: 179,
+  maxSubmerged: 108,
   damping: 0.955,
   diveAccel: 46,
   periscopeDiveBoost: 2.2,
@@ -109,7 +116,6 @@ const HIT_EFFECT_LIFE_MS = 1400;
 const TORPEDO = {
   speed: 118,
   lifeMs: 9000,
-  reloadMs: 10000,
   hitRadius: 26,
   spawnOffset: 96,
   maxTravel: WORLD.w * 0.75,
@@ -122,7 +128,6 @@ const DEPTH_CHARGE = {
   inheritedVx: 0.35,
   horizontalDamping: 0.88,
   lifeMs: 10500,
-  reloadMs: 10000,
   hitRadius: 58,
   spawnOffset: 34,
 };
@@ -132,12 +137,12 @@ const SONAR = {
   revealMs: 2500,
   pulseLifeMs: 1800,
   maxRadius: 420,
+  destroyerRadiusScale: 1.3,
 };
 
 const MISSILE = {
   riseSpeed: 96,
   lifeMs: 7000,
-  reloadMs: 10000,
   spawnOffsetY: 28,
   surfaceY: WORLD.waterlineY + 10,
   blastRadius: 64,
@@ -191,7 +196,7 @@ function spawnForPlayer(playerId, role = DEFAULT_ROLES[playerId] ?? 'submarine')
 }
 
 function makePlayer(playerId) {
-  const role = DEFAULT_ROLES[playerId] ?? 'submarine';
+  const role = DEFAULT_ROLES[playerId] ?? (playerId % 2 === 0 ? 'destroyer' : 'submarine');
   const team = DEFAULT_TEAMS[playerId] ?? TEAMS[(playerId - 1) % TEAMS.length];
   const spawn = spawnForPlayer(playerId, role);
   return {
@@ -222,6 +227,7 @@ function makePlayer(playerId) {
     lastAltFireInput: false,
     noisyUntil: 0,
     lastNoise: null,
+    respawnHidden: false,
     input: {
       throttle: 0,
       turn: 0,
@@ -242,18 +248,14 @@ export function newGameState() {
     settings: {
       wrapX: true,
       showBubbles: true,
+      reloadMs: DEFAULT_RELOAD_MS,
     },
     visibilityMode: 'low',
     world: { ...WORLD },
     teams: [...TEAMS],
     roles: [...ROLES],
     teamColors: { ...TEAM_COLORS },
-    players: {
-      1: makePlayer(1),
-      2: makePlayer(2),
-      3: makePlayer(3),
-      4: makePlayer(4),
-    },
+    players: Object.fromEntries(PLAYER_IDS.map((pid) => [pid, makePlayer(pid)])),
     torpedoes: [],
     depthCharges: [],
     missiles: [],
@@ -279,6 +281,7 @@ export function setPlayerConnected(state, playerId, connected) {
   player.lastAltFireInput = false;
   player.noisyUntil = 0;
   player.lastNoise = null;
+  player.respawnHidden = false;
   updatePauseState(state);
 }
 
@@ -303,10 +306,12 @@ export function restart(state) {
   fresh.settings = {
     wrapX: previousSettings?.wrapX !== false,
     showBubbles: previousSettings?.showBubbles !== false,
+    reloadMs: normalizeReloadMs(previousSettings?.reloadMs),
   };
-  for (const pid of [1, 2, 3, 4]) {
+  for (const pid of PLAYER_IDS) {
     const prev = previousPlayers[pid];
     const next = fresh.players[pid];
+    if (!prev || !next) continue;
     next.connected = Boolean(prev.connected);
     if (prev.bot) {
       next.bot = true;
@@ -333,6 +338,7 @@ export function restart(state) {
     next.lastAltFireInput = false;
     next.noisyUntil = 0;
     next.lastNoise = null;
+    next.respawnHidden = false;
   }
   Object.assign(state, fresh);
   updatePauseState(state);
@@ -340,10 +346,10 @@ export function restart(state) {
 }
 
 export function claimHumanSlot(state) {
-  for (const pid of [1, 2, 3, 4]) {
+  for (const pid of PLAYER_IDS) {
     if (!state.players?.[pid]?.connected) return pid;
   }
-  for (const pid of [1, 2, 3, 4]) {
+  for (const pid of PLAYER_IDS) {
     const player = state.players?.[pid];
     if (!player?.bot) continue;
     setPlayerConnected(state, pid, false);
@@ -374,6 +380,7 @@ export function selectRole(state, playerId, role) {
   player.lastAltFireInput = false;
   player.noisyUntil = 0;
   player.lastNoise = null;
+  player.respawnHidden = false;
   player.input = makePlayer(playerId).input;
   updateVisibility(state);
   return true;
@@ -383,7 +390,7 @@ export function addBot(state, options = {}) {
   let playerId = Number(options.playerId);
   if (!state.players?.[playerId] || state.players[playerId].connected) {
     playerId = null;
-    for (const pid of [1, 2, 3, 4]) {
+    for (const pid of PLAYER_IDS) {
       if (!state.players?.[pid]?.connected) {
         playerId = pid;
         break;
@@ -394,7 +401,7 @@ export function addBot(state, options = {}) {
 
   const role = normalizeRole(options.role);
   const player = state.players[playerId];
-  const normalizedRole = ROLES.includes(role) ? role : DEFAULT_ROLES[playerId] ?? 'submarine';
+  const normalizedRole = ROLES.includes(role) ? role : DEFAULT_ROLES[playerId] ?? (playerId % 2 === 0 ? 'destroyer' : 'submarine');
   const team = TEAMS.includes(options.team) ? options.team : player.team;
   prepareBotPlayer(player, playerId, normalizedRole, team, options.difficulty);
   updatePauseState(state);
@@ -405,7 +412,7 @@ export function addBot(state, options = {}) {
 export function removeBot(state, playerId = null) {
   const targetId = playerId
     ? Number(playerId)
-    : [4, 3, 2, 1].find((pid) => state.players?.[pid]?.bot);
+    : [...PLAYER_IDS].reverse().find((pid) => state.players?.[pid]?.bot);
   const player = state.players[targetId];
   if (!player?.bot) return false;
   setPlayerConnected(state, targetId, false);
@@ -432,6 +439,7 @@ export function configureBot(state, playerId, options = {}) {
   player.vx = 0;
   player.vy = 0;
   player.resettingUntil = 0;
+  player.respawnHidden = false;
   resetBotDecision(player);
   updateVisibility(state);
   return true;
@@ -454,6 +462,14 @@ export function setBubblesEnabled(state, enabled) {
   state.settings = normalizeSettings(state.settings);
   state.settings.showBubbles = Boolean(enabled);
   if (!state.settings.showBubbles) state.bubbles = [];
+  return true;
+}
+
+export function setReloadMs(state, ms) {
+  const reloadMs = Number(ms);
+  if (!RELOAD_OPTIONS_MS.includes(reloadMs)) return false;
+  state.settings = normalizeSettings(state.settings);
+  state.settings.reloadMs = reloadMs;
   return true;
 }
 
@@ -541,6 +557,7 @@ function prepareBotPlayer(player, playerId, role, team, difficulty) {
   player.lastAltFireInput = false;
   player.noisyUntil = 0;
   player.lastNoise = null;
+  player.respawnHidden = false;
   player.input = makePlayer(playerId).input;
 }
 
@@ -574,7 +591,13 @@ function normalizeSettings(settings) {
   return {
     wrapX: settings?.wrapX !== false,
     showBubbles: settings?.showBubbles !== false,
+    reloadMs: normalizeReloadMs(settings?.reloadMs),
   };
+}
+
+function normalizeReloadMs(ms) {
+  const reloadMs = Number(ms);
+  return RELOAD_OPTIONS_MS.includes(reloadMs) ? reloadMs : DEFAULT_RELOAD_MS;
 }
 
 function hasActivePlayers(state) {
@@ -616,6 +639,7 @@ function stepBoat(state, player) {
   player.x += player.vx * DT;
   player.y = BOAT_Y;
   clampToWorld(state, player, WORLD.vehicleLength * 0.5, true);
+  clearRespawnHiddenOnMotion(player, throttle);
 }
 
 function stepSubmarine(state, player, now) {
@@ -639,6 +663,7 @@ function stepSubmarine(state, player, now) {
   player.x += player.vx * DT;
   player.y += player.vy * DT;
   clampToWorld(state, player, WORLD.vehicleLength * 0.5, false);
+  clearRespawnHiddenOnMotion(player, throttle);
 
   if (state.settings?.showBubbles !== false && Math.abs(dive) > 0.15 && state.tick % 3 === 0) {
     addBubble(state, player, dive, now);
@@ -660,6 +685,7 @@ function stepReset(state, player, now) {
   player.fireReadyAt = now + 900;
   player.sonarReadyAt = now + 900;
   player.missileReadyAt = now + 900;
+  player.respawnHidden = true;
   return false;
 }
 
@@ -894,11 +920,12 @@ function handleFireInput(state, player, now) {
 
   if (player.role === 'destroyer') {
     spawnDepthCharge(state, player, now);
-    player.fireReadyAt = now + DEPTH_CHARGE.reloadMs;
+    player.fireReadyAt = now + reloadMs(state);
   } else {
     spawnTorpedo(state, player, now);
-    player.fireReadyAt = now + TORPEDO.reloadMs;
+    player.fireReadyAt = now + reloadMs(state);
   }
+  player.respawnHidden = false;
   markNoisy(player, now, 1800, 'fire');
 }
 
@@ -910,7 +937,8 @@ function handleAltFireInput(state, player, now) {
   if (!isNewPress || now < (player.missileReadyAt ?? 0)) return;
 
   spawnMissile(state, player, now);
-  player.missileReadyAt = now + MISSILE.reloadMs;
+  player.missileReadyAt = now + reloadMs(state);
+  player.respawnHidden = false;
   markNoisy(player, now, 1800, 'missile');
 }
 
@@ -929,9 +957,10 @@ function handleSonarInput(state, player, now) {
     bornAt: now,
     lifeMs: SONAR.pulseLifeMs,
     revealUntil: now + SONAR.revealMs,
-    maxRadius: SONAR.maxRadius,
+    maxRadius: sonarRadiusFor(player),
   });
   player.sonarReadyAt = now + SONAR.cooldownMs;
+  player.respawnHidden = false;
 }
 
 function spawnTorpedo(state, player, now) {
@@ -1275,6 +1304,22 @@ function markNoisy(player, now, durationMs, reason) {
   player.lastNoise = reason;
 }
 
+function reloadMs(state) {
+  return normalizeReloadMs(state.settings?.reloadMs);
+}
+
+function sonarRadiusFor(player) {
+  const scale = normalizeRole(player.role) === 'destroyer' ? SONAR.destroyerRadiusScale : 1;
+  return SONAR.maxRadius * scale;
+}
+
+function clearRespawnHiddenOnMotion(player, throttle) {
+  if (!player.respawnHidden) return;
+  if (Math.abs(throttle) > 0.15 || Math.abs(player.vx ?? 0) > 8 || Math.abs(player.vy ?? 0) > 8) {
+    player.respawnHidden = false;
+  }
+}
+
 function makeVisibilityState(mode) {
   const teams = {};
   for (const team of TEAMS) teams[team] = { contacts: {} };
@@ -1305,6 +1350,7 @@ function updateVisibility(state, now = Date.now()) {
 function teamContactStrength(state, players, viewerTeam, target, now) {
   if (target.team === viewerTeam) return 1;
   let best = activeSonarContactStrength(state, players, viewerTeam, target, now);
+  if (target.respawnHidden) return best;
   for (const listener of players) {
     if (!listener.connected || listener.team !== viewerTeam || listener.id === target.id) continue;
     best = Math.max(best, passiveContactStrength(state, listener, target, now));
@@ -1355,7 +1401,6 @@ function periscopeVisualContactStrength(state, listener, target) {
   const listenerRole = normalizeRole(listener.role);
   const targetRole = normalizeRole(target.role);
   const distance = distanceBetween(listener, target, state);
-  if (distance > PERISCOPE_VISUAL_RANGE) return 0;
 
   const subAtPeriscopeSeesDestroyer = listenerRole === 'submarine'
     && isAtPeriscopeDepth(listener)
@@ -1363,9 +1408,13 @@ function periscopeVisualContactStrength(state, listener, target) {
   const destroyerSeesPeriscopeSub = listenerRole === 'destroyer'
     && targetRole === 'submarine'
     && isAtPeriscopeDepth(target);
-  if (!subAtPeriscopeSeesDestroyer && !destroyerSeesPeriscopeSub) return 0;
+  const destroyerSeesDestroyer = listenerRole === 'destroyer'
+    && targetRole === 'destroyer';
+  const range = destroyerSeesDestroyer ? WORLD.w * (2 / 3) : PERISCOPE_VISUAL_RANGE;
+  if (distance > range) return 0;
+  if (!subAtPeriscopeSeesDestroyer && !destroyerSeesPeriscopeSub && !destroyerSeesDestroyer) return 0;
 
-  const distanceT = clampNumber(distance / PERISCOPE_VISUAL_RANGE, 0, 1, 1);
+  const distanceT = clampNumber(distance / range, 0, 1, 1);
   return 0.78 + (1 - distanceT) * 0.22;
 }
 
